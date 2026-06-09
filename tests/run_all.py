@@ -25,10 +25,22 @@ passes them to :func:`gather_tests` — and run it the same way:
 
 
 from tests.framework import env, gather_tests
-from tests.modules import test_bedtools
+from tests.modules import (
+    test_bedtools,
+    test_catadditionalfasta,
+    test_gffread,
+    test_gtf2bed,
+    test_gtffilter,
+    test_samtools,
+)
 
 ALL_TESTS = [
     *test_bedtools.tests,
+    *test_catadditionalfasta.tests,
+    *test_gffread.tests,
+    *test_gtf2bed.tests,
+    *test_gtffilter.tests,
+    *test_samtools.tests,
 ]
 
 

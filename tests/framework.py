@@ -148,6 +148,29 @@ async def fixture(rel_path: str) -> File:
     return await File.from_local(local)
 
 
+async def assert_nonempty(file: File, *, label: str = "") -> None:
+    """Assert ``file`` exists and has nonzero length (a "run-to-green" check).
+
+    Used for outputs whose bytes aren't reproducible enough to md5 — e.g.
+    tool reports that embed the command line, version banner, or a
+    timestamp, and compressed outputs whose block layout depends on the
+    thread count. We still want to prove the wrapper ran and produced the
+    file, just not pin its exact content.
+    """
+    size = 0
+    async with file.open("rb") as fh:
+        while True:
+            chunk = await fh.read(1 << 20)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size:
+                break
+    if size == 0:
+        prefix = f"{label}: " if label else ""
+        raise AssertionError(f"{prefix}expected a nonempty file, got 0 bytes")
+
+
 async def assert_md5(file: File, expected: str, *, label: str = "") -> None:
     """Assert that ``file``'s md5 matches ``expected``.
 
@@ -233,4 +256,4 @@ async def gather_tests(tests: list[Test]) -> str:
     return summary
 
 
-__all__ = ["assert_md5", "env", "fixture", "gather_tests"]
+__all__ = ["assert_md5", "assert_nonempty", "env", "fixture", "gather_tests"]

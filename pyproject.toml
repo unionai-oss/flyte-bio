@@ -43,3 +43,9 @@ select = [
     "LOG", "PIE", "Q", "RSE", "FLY", "PGH", "PLC", "PLE", "FURB", "RUF",
 ]
 ignore = ["PGH003", "PLC0415"]
+
+[tool.ruff.lint.per-file-ignores]
+# Vendored helper scripts (flyte_bio.scripts) preserve upstream logic
+# verbatim — don't restyle them. The package __init__ is ours and stays
+# strict (it trips none of these rules).
+"src/flyte_bio/scripts/*.py" = ["PLW2901", "E501"]
