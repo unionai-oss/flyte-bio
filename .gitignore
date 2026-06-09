@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# uv / virtualenvs
+.venv/
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# Test fixtures (downloaded on demand)
+tests/**/_fixtures/
+
+# OS
+.DS_Store
+
+# Agents
+AGENTS.md
