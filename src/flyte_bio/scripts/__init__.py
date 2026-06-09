@@ -1,29 +1,30 @@
 """Vendored helper scripts that tool biocontainers don't ship themselves.
 
 Some upstream tool wrappers aren't a single CLI invocation — they drive a
-small helper that lives alongside the tool definition, not inside the
-tool's container image. We vendor those helpers here as **real script
-files** (core logic preserved; the original templated entry point swapped
-for a plain argv/argparse interface), in two flavours:
+small helper (Python/Perl/R) that lives alongside the tool definition, not
+inside the tool's container image. We vendor those helpers here as **real
+script files** (core logic preserved; the original Nextflow ``template``
+entry point swapped for a plain argparse CLI).
 
-- **Pure-Python, stdlib-only helpers** (e.g. :mod:`gtffilter`,
-  :mod:`catadditionalfasta`) are imported and called directly from a native
-  Flyte ``@env.task`` — no biocontainer involved.
+Every one runs the same way: a **shell task** on a stock interpreter
+biocontainer, with the script handed in as a normal **File input** (staged
+into the container like any input). That keeps tool pods self-contained —
+no custom image build, and crucially no pod ever needs ``flyte_bio``
+installed (a native Flyte task would, because the worker imports its
+defining module; a shell task is just a serialized command). The wrapper in
+each module materializes the script File from :func:`path`.
 
-- **Perl / R helpers** (e.g. ``gtf2bed.pl``) need their interpreter from the
-  tool's biocontainer. A biocontainer never receives Flyte's code bundle
-  (only native-Python task pods do), so we hand the script to the shell task
-  as a normal **File input**, staged into the container like any input — no
-  custom image build. The caller materializes that File from :func:`path`.
-
-The catch: a loose ``.pl``/``.r`` isn't an imported module, so Flyte's
-default ``loaded_modules`` code bundle would drop it. :func:`ship_in_bundle`
-fixes that without forcing ``--copy-style all`` on every run: Flyte bundles
-the files backing ``sys.modules`` entries (and applies no ``.py`` filter —
-see ``flyte._code_bundle._utils.list_imported_modules_as_files``), so we
+The catch: a script file used only as data isn't an imported module, so
+Flyte's default ``loaded_modules`` code bundle would drop it.
+:func:`ship_in_bundle` fixes that without forcing ``--copy-style all``:
+Flyte bundles the files backing ``sys.modules`` entries (and applies no
+``.py`` filter — see
+``flyte._code_bundle._utils.list_imported_modules_as_files``), so we
 register each script as a stub module whose ``__file__`` points at it. The
 bundler then copies the file at its path relative to the project root, so
-:func:`path` resolves both locally and in-cluster.
+:func:`path` resolves in our dev runs. (For an external consumer the script
+ships inside the installed wheel, so :func:`path` resolves in site-packages
+and no bundling is needed.)
 """
 
 
@@ -56,8 +57,9 @@ def ship_in_bundle(*names: str) -> None:
         sys.modules[key] = stub
 
 
-# Vendored non-Python scripts that ride into a biocontainer as File inputs.
-ship_in_bundle("gtf2bed.pl")
+# Vendored scripts that ride into a biocontainer as File inputs. Listed here
+# (not imported anywhere) so the default code bundle still ships them.
+ship_in_bundle("gtffilter.py", "catadditionalfasta.py", "gtf2bed.pl")
 
 
 __all__ = ["path", "ship_in_bundle"]

@@ -1,18 +1,22 @@
+#!/usr/bin/env python
 """Vendored helper: append an extra FASTA (e.g. spike-ins) to a genome.
 
 Generates a minimal GTF describing each record of the additional FASTA,
 then concatenates the additional FASTA onto the genome FASTA and the
-generated GTF onto the genome GTF. Pure-stdlib Python, called directly from
-a native Flyte task — see :mod:`flyte_bio.modules.catadditionalfasta`.
+generated GTF onto the genome GTF. Runs as a stock-python-biocontainer
+shell task (staged in as a File input) — see
+:mod:`flyte_bio.modules.catadditionalfasta` — so no tool pod needs
+``flyte_bio`` installed.
 
 The FASTA parsing and GTF-line generation are preserved verbatim from the
 upstream origin (MIT-licensed; originally by Pranathi Vemuri, modified by
 Jonathan Manning). Only the entry point changed: the Nextflow ``template``
-is replaced by :func:`cat_additional_fasta`.
+is replaced by an argparse CLI.
 """
 
 
 
+import argparse
 import os
 from itertools import groupby
 from typing import Iterator, Tuple
@@ -60,3 +64,15 @@ def cat_additional_fasta(fasta: str, gtf: str, add_fasta: str, biotype: str, out
     fasta_to_gtf(add_fasta, add_gtf, biotype)
     concat_bytes([fasta, add_fasta], out_fasta)
     concat_bytes([gtf, add_gtf], out_gtf)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--fasta", required=True)
+    parser.add_argument("--gtf", required=True)
+    parser.add_argument("--add-fasta", required=True)
+    parser.add_argument("--biotype", default="")
+    parser.add_argument("--out-fasta", required=True)
+    parser.add_argument("--out-gtf", required=True)
+    args = parser.parse_args()
+    cat_additional_fasta(args.fasta, args.gtf, args.add_fasta, args.biotype, args.out_fasta, args.out_gtf)

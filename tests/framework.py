@@ -171,6 +171,19 @@ async def assert_nonempty(file: File, *, label: str = "") -> None:
         raise AssertionError(f"{prefix}expected a nonempty file, got 0 bytes")
 
 
+async def assert_dir_nonempty(directory, *, label: str = "") -> None:
+    """Assert ``directory`` (a :class:`Dir`) holds at least one file.
+
+    A run-to-green check for outputs like a built index, whose individual
+    files aren't reproducible enough to md5 but whose presence proves the
+    tool ran.
+    """
+    files = await directory.list_files()
+    if not files:
+        prefix = f"{label}: " if label else ""
+        raise AssertionError(f"{prefix}expected a nonempty directory, got 0 files")
+
+
 async def assert_md5(file: File, expected: str, *, label: str = "") -> None:
     """Assert that ``file``'s md5 matches ``expected``.
 
@@ -256,4 +269,4 @@ async def gather_tests(tests: list[Test]) -> str:
     return summary
 
 
-__all__ = ["assert_md5", "assert_nonempty", "env", "fixture", "gather_tests"]
+__all__ = ["assert_dir_nonempty", "assert_md5", "assert_nonempty", "env", "fixture", "gather_tests"]

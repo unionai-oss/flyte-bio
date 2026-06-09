@@ -1,18 +1,19 @@
+#!/usr/bin/env python
 """Vendored helper: filter a GTF down to a genome's sequences.
 
-Pure-stdlib Python, so it's imported and called directly from a native
-Flyte task (no biocontainer, no subprocess) — see
-:mod:`flyte_bio.modules.gtffilter`. Importing it also guarantees Flyte's
-code bundle ships it.
+Runs as a stock-python-biocontainer shell task (the script is staged into
+the container as a File input) — see :mod:`flyte_bio.modules.gtffilter`. So
+no tool pod needs ``flyte_bio`` installed.
 
 Filtering logic preserved verbatim from its upstream origin (MIT-licensed;
 originally by Olga Botvinnik, reworked by Jonathan Manning and Nico
 Trummer). Only the entry point changed: the original Nextflow ``template``
-with ``${...}`` interpolation is replaced by :func:`filter_gtf`.
+with ``${...}`` interpolation is replaced by an argparse CLI.
 """
 
 
 
+import argparse
 import gzip
 import logging
 import os
@@ -76,3 +77,13 @@ def filter_gtf(fasta: Optional[str], gtf_in: str, filtered_gtf_out: str, skip_tr
             raise ValueError("All GTF lines removed by filters")
 
     logger.info(f"Extracted {line_count} matching sequences from {gtf_in} into {filtered_gtf_out}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--gtf", required=True)
+    parser.add_argument("--fasta", default="")
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--skip-transcript-id-check", action="store_true", default=False)
+    args = parser.parse_args()
+    filter_gtf(args.fasta or None, args.gtf, args.output, args.skip_transcript_id_check)

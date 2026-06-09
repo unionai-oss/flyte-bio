@@ -48,4 +48,4 @@ ignore = ["PGH003", "PLC0415"]
 # Vendored helper scripts (flyte_bio.scripts) preserve upstream logic
 # verbatim — don't restyle them. The package __init__ is ours and stays
 # strict (it trips none of these rules).
-"src/flyte_bio/scripts/*.py" = ["PLW2901", "E501"]
+"src/flyte_bio/scripts/*.py" = ["PLW2901", "E501", "EXE001"]

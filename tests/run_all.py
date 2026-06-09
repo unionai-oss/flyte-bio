@@ -31,7 +31,9 @@ from tests.modules import (
     test_gffread,
     test_gtf2bed,
     test_gtffilter,
+    test_salmon,
     test_samtools,
+    test_star,
 )
 
 ALL_TESTS = [
@@ -40,7 +42,9 @@ ALL_TESTS = [
     *test_gffread.tests,
     *test_gtf2bed.tests,
     *test_gtffilter.tests,
+    *test_salmon.tests,
     *test_samtools.tests,
+    *test_star.tests,
 ]
 
 

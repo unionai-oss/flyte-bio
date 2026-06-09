@@ -11,7 +11,9 @@ across its tasks:
 - :mod:`flyte_bio.modules.gtf2bed` — derive a BED12 gene model from a GTF.
 - :mod:`flyte_bio.modules.gtffilter` — restrict a GTF to a genome's sequences.
 - :mod:`flyte_bio.modules.gunzip` — single-file gzip decompression.
+- :mod:`flyte_bio.modules.salmon` — transcript quantification (index).
 - :mod:`flyte_bio.modules.samtools` — alignment sort/index/stats/faidx.
+- :mod:`flyte_bio.modules.star` — spliced RNA-seq aligner (index).
 - :mod:`flyte_bio.modules.untar` — tar archive extraction.
 
 The module-level :data:`env` here is an aggregate
@@ -32,7 +34,9 @@ from .gffread import env as gffread_env
 from .gtf2bed import env as gtf2bed_env
 from .gtffilter import env as gtffilter_env
 from .gunzip import env as gunzip_env
+from .salmon import env as salmon_env
 from .samtools import env as samtools_env
+from .star import env as star_env
 from .untar import env as untar_env
 
 env = flyte.TaskEnvironment(
@@ -45,7 +49,9 @@ env = flyte.TaskEnvironment(
         gtf2bed_env,
         gtffilter_env,
         gunzip_env,
+        salmon_env,
         samtools_env,
+        star_env,
         untar_env,
     ],
 )
@@ -59,6 +65,8 @@ __all__ = [
     "gtf2bed_env",
     "gtffilter_env",
     "gunzip_env",
+    "salmon_env",
     "samtools_env",
+    "star_env",
     "untar_env",
 ]

@@ -2,34 +2,47 @@
 
 Concatenates an additional FASTA (e.g. spike-ins / transgenes) onto the
 genome FASTA, and a generated GTF describing it onto the genome GTF. Pure
-Python, so it's a native Flyte task importing the vendored logic directly —
-no biocontainer, no shell.
+Python, but it runs as a shell task on a stock python biocontainer with the
+vendored script staged in as a File input — so the tool pod is
+self-contained and needs no ``flyte_bio`` install.
 """
 
 
 
-from pathlib import Path
-
 import flyte
+from flyte.extras import shell
 from flyte.io import File
 
-from flyte_bio.scripts.catadditionalfasta import cat_additional_fasta as cat_additional_fasta_impl
+from flyte_bio.scripts import path
+
+# Pinned biocontainer URI (a bare Python interpreter).
+CATADDITIONALFASTA_IMAGE = "quay.io/biocontainers/python:3.12"
 
 DEFAULT_RESOURCES = flyte.Resources(cpu=1, memory="6Gi")
 
-env = flyte.TaskEnvironment(
-    name="catadditionalfasta",
-    image=flyte.Image.from_debian_base(),
+cat_additional_fasta_cmd = shell.create(
+    name="cat_additional_fasta",
+    image=CATADDITIONALFASTA_IMAGE,
     resources=DEFAULT_RESOURCES,
+    inputs={"script": File, "fasta": File, "gtf": File, "add_fasta": File, "biotype": str},
+    outputs={"out_fasta": File, "out_gtf": File},
+    script=(
+        "python {inputs.script} --fasta {inputs.fasta} --gtf {inputs.gtf} "
+        "--add-fasta {inputs.add_fasta} --biotype {inputs.biotype} "
+        "--out-fasta {outputs.out_fasta} --out-gtf {outputs.out_gtf}\n"
+    ),
 )
 
 
-@env.task
+env = flyte.TaskEnvironment.from_task(
+    "catadditionalfasta",
+    cat_additional_fasta_cmd.as_task(),
+)
+
+
 async def cat_additional_fasta(fasta: File, gtf: File, add_fasta: File, biotype: str = "") -> tuple[File, File]:
     """Return ``(genome+add FASTA, genome+generated GTF)``."""
-    fasta_local = await fasta.download(Path("in") / (fasta.name or "genome.fasta"))
-    gtf_local = await gtf.download(Path("in") / (gtf.name or "genome.gtf"))
-    add_local = await add_fasta.download(Path("in") / (add_fasta.name or "add.fasta"))
-
-    cat_additional_fasta_impl(fasta_local, gtf_local, add_local, biotype, "out.fasta", "out.gtf")
-    return await File.from_local("out.fasta"), await File.from_local("out.gtf")
+    script = await File.from_local(str(path("catadditionalfasta.py")))
+    return await cat_additional_fasta_cmd(
+        script=script, fasta=fasta, gtf=gtf, add_fasta=add_fasta, biotype=biotype
+    )
