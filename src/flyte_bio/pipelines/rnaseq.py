@@ -9,6 +9,9 @@ Composes :mod:`flyte_bio.modules` tasks into the ``star_salmon`` path:
   transcriptome BAM), then sort / index / stats the genome BAM.
 - :func:`quantify_salmon_bam` — salmon alignment-mode quantification of the
   transcriptome BAM.
+- :func:`merge_quantifications` — tx2gene + tximport across all samples into
+  gene/transcript count, TPM and length matrices, bundled as gene- and
+  transcript-level SummarizedExperiment RDS files.
 - :func:`rnaseq` — run all of the above, samples in parallel.
 
 These are plain async functions, not tasks: they run inside the caller's
@@ -17,13 +20,16 @@ task and fan out to the module tasks, so the caller's
 
 Not yet covered (the rest of the upstream default path): read QC/trimming,
 bbsplit, rRNA removal, strandedness inference, UMI deduplication, duplicate
-marking, tximport/SummarizedExperiment merging and the QC reports. Samples
+marking and the QC reports. Samples
 with ``strandedness="auto"`` are quantified with salmon's own library-type
 auto-detection (``A``) instead of upstream's subsampled inference.
 """
 
 import asyncio
+import csv
+import tempfile
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from flyte.io import Dir, File
 
@@ -43,6 +49,9 @@ from flyte_bio.modules.samtools import (
     samtools_stats,
 )
 from flyte_bio.modules.star import star_align, star_genome_generate
+from flyte_bio.modules.summarizedexperiment import summarized_experiment
+from flyte_bio.modules.tx2gene import tx2gene
+from flyte_bio.modules.tximport import TximportResult, collect_quants, tximport
 
 STRANDEDNESS = ("auto", "forward", "reverse", "unstranded")
 
@@ -108,9 +117,18 @@ class SampleResult:
 
 
 @dataclass
+class MergedQuantification:
+    tx2gene: File
+    tximport: TximportResult
+    gene_rds: File  # gene-level SummarizedExperiment
+    transcript_rds: File  # transcript-level SummarizedExperiment
+
+
+@dataclass
 class RnaseqResult:
     genome: Genome
     samples: list[SampleResult]
+    salmon: MergedQuantification
 
 
 async def maybe_gunzip(file: File | None) -> File | None:
@@ -279,6 +297,65 @@ async def run_sample(sample: Sample, genome: Genome, seq_platform: str, seq_cent
     return SampleResult(sample=sample.id, alignment=alignment, salmon=salmon)
 
 
+async def write_samplesheet(samples: list[Sample]) -> File:
+    """Write the samples as an upstream-style samplesheet CSV (one row per run).
+
+    Used as the SummarizedExperiment column metadata, as upstream passes its
+    input samplesheet; the ``.csv`` name tells the reader the delimiter.
+    """
+    out = Path(tempfile.mkdtemp(prefix="samplesheet_")) / "samplesheet.csv"
+    with out.open("w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["sample", "fastq_1", "fastq_2", "strandedness"])
+        for s in samples:
+            mates = s.fastq_2 or [None] * len(s.fastq_1)
+            for r1, r2 in zip(s.fastq_1, mates):
+                writer.writerow([s.id, r1.path, r2.path if r2 is not None else "", s.strandedness])
+    return await File.from_local(out)
+
+
+async def merge_quantifications(
+    samples: list[Sample],
+    salmon_results: dict[str, Dir],
+    gtf: File,
+    gene_id: str = "gene_id",
+    extra_attributes: str = "gene_name",
+) -> MergedQuantification:
+    """Upstream's tximport + SummarizedExperiment merge of per-sample salmon results.
+
+    tx2gene only needs one sample's quant file to discover the transcript ID
+    attribute (all samples share a transcriptome), as upstream does.
+    """
+    first = next(iter(salmon_results.values()))
+    tx2gene_tsv, quants, coldata = await asyncio.gather(
+        tx2gene(gtf, first, quant_type="salmon", gene_id=gene_id, extra=extra_attributes, prefix="salmon.merged"),
+        collect_quants(salmon_results),
+        write_samplesheet(samples),
+    )
+    txi = await tximport(quants, tx2gene_tsv, quant_type="salmon", prefix="salmon.merged")
+    gene_rds, transcript_rds = await asyncio.gather(
+        summarized_experiment(
+            {
+                "counts": txi.counts_gene,
+                "counts_length_scaled": txi.counts_gene_length_scaled,
+                "counts_scaled": txi.counts_gene_scaled,
+                "lengths": txi.lengths_gene,
+                "tpm": txi.tpm_gene,
+            },
+            rowdata=tx2gene_tsv,
+            coldata=coldata,
+            prefix="salmon.merged.gene",
+        ),
+        summarized_experiment(
+            {"counts": txi.counts_transcript, "lengths": txi.lengths_transcript, "tpm": txi.tpm_transcript},
+            rowdata=tx2gene_tsv,
+            coldata=coldata,
+            prefix="salmon.merged.transcript",
+        ),
+    )
+    return MergedQuantification(tx2gene=tx2gene_tsv, tximport=txi, gene_rds=gene_rds, transcript_rds=transcript_rds)
+
+
 async def rnaseq(
     samples: list[Sample],
     fasta: File,
@@ -302,4 +379,5 @@ async def rnaseq(
         additional_fasta=additional_fasta,
     )
     results = await asyncio.gather(*(run_sample(s, genome, seq_platform, seq_center) for s in samples))
-    return RnaseqResult(genome=genome, samples=list(results))
+    merged = await merge_quantifications(samples, {r.sample: r.salmon for r in results}, genome.gtf)
+    return RnaseqResult(genome=genome, samples=list(results), salmon=merged)

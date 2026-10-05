@@ -59,7 +59,14 @@ def ship_in_bundle(*names: str) -> None:
 
 # Vendored scripts that ride into a biocontainer as File inputs. Listed here
 # (not imported anywhere) so the default code bundle still ships them.
-ship_in_bundle("gtffilter.py", "catadditionalfasta.py", "gtf2bed.pl")
+ship_in_bundle(
+    "gtffilter.py",
+    "catadditionalfasta.py",
+    "gtf2bed.pl",
+    "tx2gene.py",
+    "tximport.r",
+    "summarizedexperiment.r",
+)
 
 
 __all__ = ["path", "ship_in_bundle"]

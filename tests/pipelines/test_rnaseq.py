@@ -3,12 +3,13 @@
 Uses the samplesheet and references from rnaseq 3.26.0's ``test`` profile
 (7 runs → 5 samples, mixed single/paired-end, two multi-run samples, a
 GFP additional FASTA). Outputs aren't byte-reproducible, so this is a
-run-to-green check of every per-sample and reference output.
+run-to-green check of every per-sample, merged and reference output.
 """
 
 import asyncio
 import csv
 import io
+from dataclasses import fields
 
 from flyte.io import File
 
@@ -100,6 +101,18 @@ async def test_rnaseq_star_salmon() -> None:
         quant = await r.salmon.get_file("quant.sf")
         assert quant is not None, f"{r.sample}: salmon results have no quant.sf"
         await assert_nonempty(quant, label=f"{r.sample} quant.sf")
+
+    m = result.salmon
+    await assert_nonempty(m.tx2gene, label="salmon.merged tx2gene")
+    for field in fields(m.tximport):
+        await assert_nonempty(getattr(m.tximport, field.name), label=f"salmon.merged {field.name}")
+    await assert_nonempty(m.gene_rds, label="gene SummarizedExperiment")
+    await assert_nonempty(m.transcript_rds, label="transcript SummarizedExperiment")
+
+    # Every sample (and nothing else) is a column of the merged gene matrix.
+    async with m.tximport.counts_gene.open("rb") as fh:
+        header = bytes(await fh.read()).decode().splitlines()[0].split("\t")
+    assert sorted(header[2:]) == sorted(s.id for s in samples), header
 
 
 tests = [test_rnaseq_star_salmon]

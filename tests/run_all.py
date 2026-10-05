@@ -35,6 +35,9 @@ from tests.modules import (
     test_salmon,
     test_samtools,
     test_star,
+    test_summarizedexperiment,
+    test_tx2gene,
+    test_tximport,
 )
 from tests.pipelines import test_rnaseq
 
@@ -48,6 +51,9 @@ ALL_TESTS = [
     *test_salmon.tests,
     *test_samtools.tests,
     *test_star.tests,
+    *test_summarizedexperiment.tests,
+    *test_tx2gene.tests,
+    *test_tximport.tests,
     *test_rnaseq.tests,
 ]
 

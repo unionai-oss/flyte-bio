@@ -64,6 +64,7 @@ import asyncio
 import gzip
 import hashlib
 import os
+import tarfile
 import tempfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -72,7 +73,7 @@ from urllib.parse import urlsplit
 import flyte
 import flyte.storage as storage
 import requests
-from flyte.io import File
+from flyte.io import Dir, File
 
 from flyte_bio.modules import env as modules_env
 
@@ -151,6 +152,21 @@ async def fixture(rel_path: str) -> File:
     else:
         local = await storage.get(url)
     return await File.from_local(local)
+
+
+async def fixture_dir(rel_path: str, member: str = "") -> Dir:
+    """Extract a ``.tar.gz`` fixture and upload (part of) it as a Flyte :class:`Dir`.
+
+    ``member`` selects a subdirectory of the archive to upload (default: the
+    whole archive). Runs in the calling test's pod; the archive download
+    itself is cached via :func:`fixture`.
+    """
+    archive = await fixture(rel_path)
+    local = await archive.download()
+    root = Path(tempfile.mkdtemp())
+    with tarfile.open(local) as tar:
+        tar.extractall(root, filter="data")
+    return await Dir.from_local(root / member)
 
 
 async def assert_nonempty(file: File, *, label: str = "") -> None:
