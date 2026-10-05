@@ -30,16 +30,21 @@ QUANT_RESOURCES = flyte.Resources(cpu=2, memory="12Gi")
 # When a genome FASTA is supplied, build a decoy-aware index: the genome
 # sequence names become decoys and the transcript+genome concatenation
 # ("gentrome") is indexed. Inputs are already decompressed upstream.
+# `list[File]` (0 or 1 item) rather than `File | None` until flyteorg/flyte#8118
+# is deployed: copilot stages a set optional File as a bare path, not the
+# per-input dir the shell glob expects, so it was silently ignored.
 salmon_index = shell.create(
     name="salmon_index",
     image=SALMON_IMAGE,
     resources=INDEX_RESOURCES,
-    inputs={"transcript_fasta": File, "genome_fasta": File | None},
+    inputs={"transcript_fasta": File, "genome_fasta": list[File]},
+    defaults={"genome_fasta": []},
     outputs={"index": Dir},
     script=r"""
-        if [ -e {inputs.genome_fasta} ]; then
-            grep '^>' {inputs.genome_fasta} | cut -d ' ' -f 1 | sed 's/>//g' > decoys.txt
-            cat {inputs.transcript_fasta} {inputs.genome_fasta} > gentrome.fa
+        shopt -s nullglob; GENOME=({inputs.genome_fasta}); shopt -u nullglob
+        if [ ${#GENOME[@]} -gt 0 ]; then
+            grep '^>' "${GENOME[0]}" | cut -d ' ' -f 1 | sed 's/>//g' > decoys.txt
+            cat {inputs.transcript_fasta} "${GENOME[0]}" > gentrome.fa
             salmon index --threads 2 -t gentrome.fa -d decoys.txt -i {outputs.index}
         else
             salmon index --threads 2 -t {inputs.transcript_fasta} -i {outputs.index}
@@ -53,23 +58,28 @@ salmon_index = shell.create(
 # directly. (Requires Flyte platform >=2.0.23, which supports nested-directory
 # blob uploads; flyteorg/flyte#7490.)
 #
-# Reads mode: `reads` is a 1-file (single-end) or 2-file (paired) list. An
-# empty lib_type means auto-detect ('A').
+# Reads mode: mates are separate inputs (`reads_2` empty for single-end) so
+# R1/R2 order is explicit — a list[File] is staged under original basenames
+# and globbed alphabetically, which can swap the mates. An empty lib_type
+# means auto-detect ('A').
+# `list[File]` (0 or 1 item) rather than `File | None` until flyteorg/flyte#8118
+# is deployed: copilot stages a set optional File as a bare path, not the
+# per-input dir the shell glob expects, so it was silently ignored.
 salmon_quant_reads = shell.create(
     name="salmon_quant_reads",
     image=SALMON_IMAGE,
     resources=QUANT_RESOURCES,
-    inputs={"reads": list[File], "index": Dir, "gtf": File, "lib_type": str},
-    defaults={"lib_type": ""},
+    inputs={"reads_1": File, "reads_2": list[File], "index": Dir, "gtf": File, "lib_type": str},
+    defaults={"reads_2": [], "lib_type": ""},
     outputs={"results": Dir},
     script=r"""
         LT={inputs.lib_type}
         [ -z "$LT" ] && LT="A"
-        READS=({inputs.reads})
-        if [ ${#READS[@]} -eq 1 ]; then
-            RR="-r ${READS[0]}"
+        shopt -s nullglob; R2=({inputs.reads_2}); shopt -u nullglob
+        if [ ${#R2[@]} -eq 0 ]; then
+            RR="-r {inputs.reads_1}"
         else
-            RR="-1 ${READS[0]} -2 ${READS[1]}"
+            RR="-1 {inputs.reads_1} -2 ${R2[0]}"
         fi
         salmon quant \
             --geneMap {inputs.gtf} \

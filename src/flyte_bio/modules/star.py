@@ -74,25 +74,35 @@ star_genome_generate = shell.create(
 )
 
 
-# `reads` is a 1-file (single-end) or 2-file (paired) list; the glob expands
-# to "R1" or "R1 R2", which STAR reads as the mate(s). STAR-specific options
-# (output type, wig, transcriptome quant, readFilesCommand for gzipped input,
-# ...) ride in via `args`. Everything STAR writes lands in the output Dir.
+# Mates are separate inputs (`reads_2` empty for single-end) so R1/R2 order
+# is explicit — a list[File] is staged under original basenames and globbed
+# alphabetically, which can swap the mates. The nullglob array expands to
+# nothing when there's no R2. STAR-specific options (output type, wig,
+# transcriptome quant, readFilesCommand for gzipped input, ...) ride in via
+# `args`, expanded unquoted so each flag is its own argument — STAR does not
+# re-split a single argument, and a multi-word option like --readFilesCommand
+# would otherwise swallow every flag after it. Everything STAR writes lands in
+# the output Dir.
+# `list[File]` (0 or 1 item) rather than `File | None` until flyteorg/flyte#8118
+# is deployed: copilot stages a set optional File as a bare path, not the
+# per-input dir the shell glob expects, so it was silently ignored.
 star_align = shell.create(
     name="star_align",
     image=STAR_IMAGE,
     resources=ALIGN_RESOURCES,
-    inputs={"reads": list[File], "index": Dir, "gtf": File, "args": str},
-    defaults={"args": ""},
+    inputs={"reads_1": File, "reads_2": list[File], "index": Dir, "gtf": File, "args": str},
+    defaults={"reads_2": [], "args": ""},
     outputs={"output": Dir},
     script=r"""
+        shopt -s nullglob; R2=({inputs.reads_2}); shopt -u nullglob
+        ARGS={inputs.args}
         STAR \
             --genomeDir {inputs.index} \
-            --readFilesIn {inputs.reads} \
+            --readFilesIn {inputs.reads_1} "${R2[@]}" \
             --sjdbGTFfile {inputs.gtf} \
             --runThreadN 4 \
             --outFileNamePrefix {outputs.output}/ \
-            {inputs.args}
+            $ARGS
     """,
 )
 

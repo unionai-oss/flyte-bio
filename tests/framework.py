@@ -61,6 +61,7 @@ deployment. Nothing is cached by hand.
 
 
 import asyncio
+import gzip
 import hashlib
 import os
 import tempfile
@@ -131,7 +132,8 @@ async def fixture(rel_path: str) -> File:
     """Download a test-data fixture and stage it as a Flyte :class:`File`.
 
     ``rel_path`` is resolved against :data:`TEST_DATA_BASE`
-    (e.g. ``genomics/sarscov2/illumina/bam/test.paired_end.bam``).
+    (e.g. ``genomics/sarscov2/illumina/bam/test.paired_end.bam``); an
+    absolute URL (anything with ``://``) is used as-is.
 
     Dispatches on the URL scheme: ``http(s)`` is streamed directly with
     :func:`download_http` (see there for why we bypass fsspec), while other
@@ -140,7 +142,10 @@ async def fixture(rel_path: str) -> File:
     a one-line :data:`TEST_DATA_BASE` edit. ``cache="auto"`` does the real
     caching, so the same path is fetched at most once per deployment.
     """
-    url = TEST_DATA_BASE + rel_path.lstrip("/")
+    if "://" in rel_path:
+        url = rel_path  # already absolute, e.g. a pipeline's own test data
+    else:
+        url = TEST_DATA_BASE + rel_path.lstrip("/")
     if url.startswith(("http://", "https://")):
         local = await asyncio.to_thread(download_http, url)
     else:
@@ -205,6 +210,24 @@ async def assert_md5(file: File, expected: str, *, label: str = "") -> None:
         prefix = f"{label}: " if label else ""
         raise AssertionError(
             f"{prefix}md5 mismatch (expected {expected}, got {actual})"
+        )
+
+
+async def assert_gunzipped_md5(file: File, expected: str, *, label: str = "") -> None:
+    """Assert the md5 of ``file``'s *decompressed* content matches ``expected``.
+
+    nf-test snapshots hash ``.gz`` outputs after decompressing them, so use
+    this (not :func:`assert_md5`) for gzipped outputs. Handles multi-member
+    gzip (e.g. concatenated FASTQ shards). Reads the whole file into memory,
+    so keep it to test-sized fixtures.
+    """
+    async with file.open("rb") as fh:
+        raw = bytes(await fh.read())
+    actual = hashlib.md5(gzip.decompress(raw)).hexdigest()
+    if actual != expected:
+        prefix = f"{label}: " if label else ""
+        raise AssertionError(
+            f"{prefix}gunzipped md5 mismatch (expected {expected}, got {actual})"
         )
 
 

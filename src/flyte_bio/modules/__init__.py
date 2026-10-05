@@ -11,9 +11,9 @@ across its tasks:
 - :mod:`flyte_bio.modules.gtf2bed` — derive a BED12 gene model from a GTF.
 - :mod:`flyte_bio.modules.gtffilter` — restrict a GTF to a genome's sequences.
 - :mod:`flyte_bio.modules.gunzip` — single-file gzip decompression.
-- :mod:`flyte_bio.modules.salmon` — transcript quantification (index).
+- :mod:`flyte_bio.modules.salmon` — transcript quantification (index, quant).
 - :mod:`flyte_bio.modules.samtools` — alignment sort/index/stats/faidx.
-- :mod:`flyte_bio.modules.star` — spliced RNA-seq aligner (index).
+- :mod:`flyte_bio.modules.star` — spliced RNA-seq aligner (index, align).
 - :mod:`flyte_bio.modules.untar` — tar archive extraction.
 
 The module-level :data:`env` here is an aggregate

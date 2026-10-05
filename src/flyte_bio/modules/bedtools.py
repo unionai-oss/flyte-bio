@@ -71,7 +71,8 @@ bedtools_intersect = shell.create(
         "split": bool,
         # Sorted-input optimisation
         "sorted": bool,
-        "g": File | None,
+        # Genome file (0 or 1 item); list[File] until flyteorg/flyte#8118 deploys.
+        "g": list[File],
         "nonamecheck": bool,
         # Multi-database controls
         "names": str | None,  # space-separated aliases, one per -b file
@@ -92,7 +93,7 @@ bedtools_intersect = shell.create(
         "s": False, "S": False,
         "r": False, "e": False,
         "split": False,
-        "sorted": False, "nonamecheck": False,
+        "sorted": False, "g": [], "nonamecheck": False,
         "filenames": False, "sortout": False,
         "header": False, "nobuf": False,
     },
@@ -124,11 +125,13 @@ bedtools_sort = shell.create(
         "i": File,
         # Sort orderings — `chrThenSizeA` and friends are bool flags.
         "header": bool,
-        # Genome file: enforces a chromosome sort order across files.
-        "g": File | None,
+        # Genome file (0 or 1 item): enforces a chromosome sort order across
+        # files. list[File] until flyteorg/flyte#8118 deploys.
+        "g": list[File],
     },
     defaults={
         "header": False,
+        "g": [],
     },
     outputs={
         "sorted": File,

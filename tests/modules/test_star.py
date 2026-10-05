@@ -35,7 +35,7 @@ async def test_align() -> None:
     index = await star_genome_generate(fasta=fasta, gtf=gtf, args="--genomeSAindexNbases 9")
     r1 = await fixture("genomics/homo_sapiens/illumina/fastq/test_rnaseq_1.fastq.gz")
     r2 = await fixture("genomics/homo_sapiens/illumina/fastq/test_rnaseq_2.fastq.gz")
-    out = await star_align(reads=[r1, r2], index=index, gtf=gtf, args=ALIGN_ARGS)
+    out = await star_align(reads_1=r1, reads_2=[r2], index=index, gtf=gtf, args=ALIGN_ARGS)
     await assert_dir_nonempty(out, label="star align")
 
 
