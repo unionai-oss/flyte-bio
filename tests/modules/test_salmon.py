@@ -29,8 +29,8 @@ async def test_quant_reads() -> None:
     index = await salmon_index(transcript_fasta=transcripts, genome_fasta=genome)
     reads = await fixture("genomics/sarscov2/illumina/fastq/test_1.fastq.gz")
     gtf = await fixture("genomics/sarscov2/genome/genome.gtf")
-    out = await salmon_quant_reads(reads=[reads], index=index, gtf=gtf)
-    await assert_dir_nonempty(out, label="salmon quant reads")
+    results = await salmon_quant_reads(reads=[reads], index=index, gtf=gtf)
+    await assert_dir_nonempty(results, label="salmon quant results")
 
 
 tests = [test_index, test_quant_reads]

@@ -48,8 +48,13 @@ salmon_index = shell.create(
 )
 
 
+# salmon's results dir is nested (aux_info/, libParams/, logs/). We return it
+# whole as a Dir — downstream (tximport) consumes the salmon results directory
+# directly. (Requires Flyte platform >=2.0.23, which supports nested-directory
+# blob uploads; flyteorg/flyte#7490.)
+#
 # Reads mode: `reads` is a 1-file (single-end) or 2-file (paired) list. An
-# empty lib_type means auto-detect ('A'). Output is the salmon results dir.
+# empty lib_type means auto-detect ('A').
 salmon_quant_reads = shell.create(
     name="salmon_quant_reads",
     image=SALMON_IMAGE,
