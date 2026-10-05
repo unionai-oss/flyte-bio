@@ -68,6 +68,7 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
 - `bedtools` — `bedtools_intersect`, `bedtools_sort`, `bedtools_merge`
 - `cat` — `cat_fastq`
 - `catadditionalfasta` — `cat_additional_fasta`
+- `fastqc` — `fastqc`
 - `gffread` — `gffread_gff_to_gtf`, `gffread_transcripts_fasta`
 - `gtf2bed` — `gtf2bed`
 - `gtffilter` — `gtf_filter`
@@ -76,6 +77,7 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
 - `samtools` — `samtools_faidx`, `samtools_sort`, `samtools_index`, `samtools_stats`, `samtools_flagstat`, `samtools_idxstats`
 - `star` — `star_genome_generate`, `star_align`
 - `summarizedexperiment` — `summarized_experiment`
+- `trimgalore` — `trimgalore`
 - `tx2gene` — `tx2gene`
 - `tximport` — `tximport`, `collect_quants`
 - `untar` — `untar`
@@ -110,13 +112,16 @@ To revert:
 1. Inputs back to `File | None` and drop their `[]` defaults:
    `salmon_index.genome_fasta`, `salmon_quant_reads.reads_2`,
    `star_align.reads_2`, `bedtools_intersect.g`, `bedtools_sort.g`,
-   `summarized_experiment_cmd.rowdata` / `.coldata`
+   `summarized_experiment_cmd.rowdata` / `.coldata`, `fastqc.reads_2`,
+   `trimgalore_cmd.reads_2`
    (each is marked with a `flyteorg/flyte#8118` comment).
 2. Update the scripts that read them through a `nullglob` array
-   (salmon index/quant, STAR, summarizedexperiment); the bedtools `-g` flag
+   (salmon index/quant, STAR, summarizedexperiment, fastqc, trimgalore); the
+   bedtools `-g` flag
    needs no script change.
 3. Update callers: `align_star` in `pipelines/rnaseq.py` (`reads_2=[...]`),
-   the `summarized_experiment` wrapper (`rowdata=[...]` / `coldata=[...]`),
+   the `summarized_experiment` and `trimgalore` wrappers, the `fastqc` call in
+   `pipelines/rnaseq.py`, `tests/modules/test_fastqc.py`,
    `tests/modules/test_star.py` and `tests/modules/test_salmon.py`.
 4. Rerun the suite. `test_index` asserts the salmon index really has decoys
    and the rnaseq pipeline test exercises paired-end STAR, so a staging

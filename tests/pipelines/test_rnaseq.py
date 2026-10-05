@@ -84,6 +84,7 @@ async def test_rnaseq_star_salmon() -> None:
         await assert_nonempty(f, label=f"genome {label}")
     await assert_dir_nonempty(g.star_index, label="star index")
 
+    assert result.failed_trimming == {}, result.failed_trimming
     assert [r.sample for r in result.samples] == [s.id for s in samples]
     for r in result.samples:
         a = r.alignment
@@ -98,6 +99,19 @@ async def test_rnaseq_star_salmon() -> None:
             ("SJ.out.tab", a.splice_junctions),
         ]:
             await assert_nonempty(f, label=f"{r.sample} {label}")
+        pre = r.preprocessing
+        assert pre.raw_fastqc is not None and pre.trimming is not None
+        mates = ["_1", "_2"] if pre.reads_2 is not None else [""]
+        for mate in mates:
+            for kind in ("raw", "trimmed"):
+                qc = pre.raw_fastqc if kind == "raw" else pre.trimming.results
+                stem = f"{r.sample}_raw{mate}" if kind == "raw" else (
+                    f"{r.sample}_trimmed{mate}_val{mate}" if mate else f"{r.sample}_trimmed_trimmed"
+                )
+                assert await qc.get_file(f"{stem}_fastqc.html") is not None, f"{r.sample}: no {stem}_fastqc.html"
+        for report in pre.trimming.reports:
+            await assert_nonempty(report, label=f"{r.sample} trimming report")
+        assert pre.reads_after_trimming is not None and pre.reads_after_trimming >= 10000, pre.reads_after_trimming
         quant = await r.salmon.get_file("quant.sf")
         assert quant is not None, f"{r.sample}: salmon results have no quant.sf"
         await assert_nonempty(quant, label=f"{r.sample} quant.sf")

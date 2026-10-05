@@ -5,7 +5,10 @@ Composes :mod:`flyte_bio.modules` tasks into the ``star_salmon`` path:
 - :func:`prepare_genome` — decompress references, filter the GTF to the
   genome's sequences, append an additional FASTA, derive the gene BED,
   transcript FASTA and chrom sizes, and build the STAR index.
-- :func:`align_star` — merge a sample's runs, align with STAR (emitting a
+- :func:`preprocess_reads` — merge a sample's runs, FastQC the raw reads,
+  trim with Trim Galore (FastQC on the trimmed reads) and count the reads
+  that survive; samples below ``min_trimmed_reads`` are dropped, as upstream.
+- :func:`align_star` — align the trimmed reads with STAR (emitting a
   transcriptome BAM), then sort / index / stats the genome BAM.
 - :func:`quantify_salmon_bam` — salmon alignment-mode quantification of the
   transcriptome BAM.
@@ -18,8 +21,8 @@ These are plain async functions, not tasks: they run inside the caller's
 task and fan out to the module tasks, so the caller's
 :class:`flyte.TaskEnvironment` must ``depends_on`` :data:`flyte_bio.modules.env`.
 
-Not yet covered (the rest of the upstream default path): read QC/trimming,
-bbsplit, rRNA removal, strandedness inference, UMI deduplication, duplicate
+Not yet covered (the rest of the upstream default path): bbsplit, rRNA
+removal, strandedness inference, UMI deduplication, duplicate
 marking and the QC reports. Samples
 with ``strandedness="auto"`` are quantified with salmon's own library-type
 auto-detection (``A``) instead of upstream's subsampled inference.
@@ -35,6 +38,7 @@ from flyte.io import Dir, File
 
 from flyte_bio.modules.cat import cat_fastq
 from flyte_bio.modules.catadditionalfasta import cat_additional_fasta
+from flyte_bio.modules.fastqc import fastqc
 from flyte_bio.modules.gffread import gffread_gff_to_gtf, gffread_transcripts_fasta
 from flyte_bio.modules.gtf2bed import gtf2bed
 from flyte_bio.modules.gtffilter import gtf_filter
@@ -50,6 +54,7 @@ from flyte_bio.modules.samtools import (
 )
 from flyte_bio.modules.star import star_align, star_genome_generate
 from flyte_bio.modules.summarizedexperiment import summarized_experiment
+from flyte_bio.modules.trimgalore import TrimGaloreResult, trimgalore
 from flyte_bio.modules.tx2gene import tx2gene
 from flyte_bio.modules.tximport import TximportResult, collect_quants, tximport
 
@@ -110,8 +115,18 @@ class StarAlignment:
 
 
 @dataclass
+class PreprocessedReads:
+    reads_1: File  # trimmed (or merged, when trimming is skipped)
+    reads_2: File | None
+    raw_fastqc: Dir | None  # <sample>_raw[_1|_2]_fastqc.{html,zip}
+    trimming: TrimGaloreResult | None  # reports + trimmed-read FastQC
+    reads_after_trimming: float | None
+
+
+@dataclass
 class SampleResult:
     sample: str
+    preprocessing: PreprocessedReads
     alignment: StarAlignment
     salmon: Dir
 
@@ -129,6 +144,8 @@ class RnaseqResult:
     genome: Genome
     samples: list[SampleResult]
     salmon: MergedQuantification
+    # Samples dropped for too few reads after trimming -> surviving read count.
+    failed_trimming: dict[str, float] = field(default_factory=dict)
 
 
 async def maybe_gunzip(file: File | None) -> File | None:
@@ -229,15 +246,52 @@ async def star_file(output: Dir, name: str) -> File:
     return found
 
 
-async def align_star(sample: Sample, genome: Genome, seq_platform: str = "", seq_center: str = "") -> StarAlignment:
-    """Merge the sample's runs, align with STAR, then sort / index / stats the BAM."""
-    if any(c.isspace() for c in sample.id):
-        raise ValueError(f"sample id {sample.id!r} must not contain whitespace")
-
+async def preprocess_reads(sample: Sample, skip_fastqc: bool = False, skip_trimming: bool = False) -> PreprocessedReads:
+    """Merge the sample's runs, then raw FastQC alongside Trim Galore (as upstream)."""
     reads_1, reads_2 = await asyncio.gather(
         cat_fastq(sample.fastq_1),
         cat_fastq(sample.fastq_2) if sample.fastq_2 else asyncio.sleep(0, result=None),
     )
+
+    async def raw_qc() -> Dir | None:
+        if skip_fastqc:
+            return None
+        return await fastqc(
+            reads_1=reads_1,
+            reads_2=[reads_2] if reads_2 is not None else [],
+            prefix=f"{sample.id}_raw",
+            args="--quiet",
+        )
+
+    async def trim() -> TrimGaloreResult | None:
+        if skip_trimming:
+            return None
+        return await trimgalore(reads_1, reads_2, prefix=f"{sample.id}_trimmed", fastqc=not skip_fastqc)
+
+    raw_fastqc, trimming = await asyncio.gather(raw_qc(), trim())
+    if trimming is None:
+        return PreprocessedReads(reads_1, reads_2, raw_fastqc, None, None)
+    return PreprocessedReads(
+        reads_1=trimming.reads_1,
+        reads_2=trimming.reads_2,
+        raw_fastqc=raw_fastqc,
+        trimming=trimming,
+        reads_after_trimming=await trimming.reads_after_filtering(),
+    )
+
+
+async def align_star(
+    sample: Sample,
+    reads_1: File,
+    reads_2: File | None,
+    genome: Genome,
+    seq_platform: str = "",
+    seq_center: str = "",
+) -> StarAlignment:
+    """Align one sample's (trimmed) reads with STAR, then sort / index / stats the BAM."""
+    if any(c.isspace() for c in sample.id):
+        raise ValueError(f"sample id {sample.id!r} must not contain whitespace")
+
     output = await star_align(
         reads_1=reads_1,
         reads_2=[reads_2] if reads_2 is not None else [],
@@ -291,10 +345,28 @@ async def quantify_salmon_bam(sample: Sample, alignment: StarAlignment, genome: 
     )
 
 
-async def run_sample(sample: Sample, genome: Genome, seq_platform: str, seq_center: str) -> SampleResult:
-    alignment = await align_star(sample, genome, seq_platform, seq_center)
-    salmon = await quantify_salmon_bam(sample, alignment, genome)
-    return SampleResult(sample=sample.id, alignment=alignment, salmon=salmon)
+@dataclass
+class RunOptions:
+    seq_platform: str = ""
+    seq_center: str = ""
+    skip_fastqc: bool = False
+    skip_trimming: bool = False
+    min_trimmed_reads: int = 10000
+
+
+async def run_sample(sample: Sample, genome: "asyncio.Task[Genome]", opts: RunOptions) -> SampleResult | float:
+    """Preprocess, align and quantify one sample.
+
+    Returns the surviving read count instead of a result when trimming left
+    fewer than ``opts.min_trimmed_reads`` reads (the sample is dropped).
+    """
+    reads = await preprocess_reads(sample, opts.skip_fastqc, opts.skip_trimming)
+    if reads.reads_after_trimming is not None and reads.reads_after_trimming < opts.min_trimmed_reads:
+        return reads.reads_after_trimming
+    ref = await genome
+    alignment = await align_star(sample, reads.reads_1, reads.reads_2, ref, opts.seq_platform, opts.seq_center)
+    salmon = await quantify_salmon_bam(sample, alignment, ref)
+    return SampleResult(sample=sample.id, preprocessing=reads, alignment=alignment, salmon=salmon)
 
 
 async def write_samplesheet(samples: list[Sample]) -> File:
@@ -365,19 +437,34 @@ async def rnaseq(
     additional_fasta: File | None = None,
     seq_platform: str = "",
     seq_center: str = "",
+    skip_fastqc: bool = False,
+    skip_trimming: bool = False,
+    min_trimmed_reads: int = 10000,
 ) -> RnaseqResult:
-    """Prepare the genome once, then align and quantify every sample in parallel."""
+    """Prepare the genome while preprocessing every sample, then align and quantify them in parallel."""
     ids = [s.id for s in samples]
     if len(ids) != len(set(ids)):
         raise ValueError("sample ids must be unique; put a sample's runs in one Sample")
 
-    genome = await prepare_genome(
-        fasta=fasta,
-        gtf=gtf,
-        gff=gff,
-        transcript_fasta=transcript_fasta,
-        additional_fasta=additional_fasta,
+    genome = asyncio.create_task(
+        prepare_genome(
+            fasta=fasta,
+            gtf=gtf,
+            gff=gff,
+            transcript_fasta=transcript_fasta,
+            additional_fasta=additional_fasta,
+        )
     )
-    results = await asyncio.gather(*(run_sample(s, genome, seq_platform, seq_center) for s in samples))
-    merged = await merge_quantifications(samples, {r.sample: r.salmon for r in results}, genome.gtf)
-    return RnaseqResult(genome=genome, samples=list(results), salmon=merged)
+    opts = RunOptions(seq_platform, seq_center, skip_fastqc, skip_trimming, min_trimmed_reads)
+    try:
+        outcomes = await asyncio.gather(*(run_sample(s, genome, opts) for s in samples))
+        ref = await genome
+    finally:
+        if not genome.done():
+            genome.cancel()
+    passed = [o for o in outcomes if isinstance(o, SampleResult)]
+    failed = {s.id: o for s, o in zip(samples, outcomes) if not isinstance(o, SampleResult)}
+    if not passed:
+        raise RuntimeError(f"no samples passed the {min_trimmed_reads}-read trimming threshold: {failed}")
+    merged = await merge_quantifications(samples, {r.sample: r.salmon for r in passed}, ref.gtf)
+    return RnaseqResult(genome=ref, samples=passed, salmon=merged, failed_trimming=failed)
