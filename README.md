@@ -69,6 +69,7 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
 - `cat` — `cat_fastq`
 - `catadditionalfasta` — `cat_additional_fasta`
 - `fastqc` — `fastqc`
+- `fq` — `fq_subsample`
 - `gffread` — `gffread_gff_to_gtf`, `gffread_transcripts_fasta`
 - `gtf2bed` — `gtf2bed`
 - `gtffilter` — `gtf_filter`
@@ -86,8 +87,9 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
 
 - `rnaseq` — STAR alignment + salmon quantification (the `star_salmon` path
   of rnaseq 3.26.0): `prepare_genome`, `align_star`, `quantify_salmon_bam`,
-  `rnaseq`. Trimming/QC, strandedness inference, UMI dedup and the
-  count-matrix/QC reports are not ported yet.
+  `rnaseq`, with read QC/trimming, strandedness inference and the
+  tximport/SummarizedExperiment merge. bbsplit, rRNA removal, UMI dedup and
+  the QC reports are not ported yet.
 
 More tools and pipelines are added as needed. Contributions following the same
 pattern (one file per tool family, sharing one biocontainer image, exposing a
@@ -113,14 +115,14 @@ To revert:
    `salmon_index.genome_fasta`, `salmon_quant_reads.reads_2`,
    `star_align.reads_2`, `bedtools_intersect.g`, `bedtools_sort.g`,
    `summarized_experiment_cmd.rowdata` / `.coldata`, `fastqc.reads_2`,
-   `trimgalore_cmd.reads_2`
+   `trimgalore_cmd.reads_2`, `fq_subsample_cmd.reads_2`
    (each is marked with a `flyteorg/flyte#8118` comment).
 2. Update the scripts that read them through a `nullglob` array
-   (salmon index/quant, STAR, summarizedexperiment, fastqc, trimgalore); the
+   (salmon index/quant, STAR, summarizedexperiment, fastqc, trimgalore, fq); the
    bedtools `-g` flag
    needs no script change.
 3. Update callers: `align_star` in `pipelines/rnaseq.py` (`reads_2=[...]`),
-   the `summarized_experiment` and `trimgalore` wrappers, the `fastqc` call in
+   the `summarized_experiment`, `trimgalore` and `fq_subsample` wrappers, the `fastqc` call in
    `pipelines/rnaseq.py`, `tests/modules/test_fastqc.py`,
    `tests/modules/test_star.py` and `tests/modules/test_salmon.py`.
 4. Rerun the suite. `test_index` asserts the salmon index really has decoys

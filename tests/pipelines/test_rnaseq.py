@@ -14,7 +14,7 @@ from dataclasses import fields
 from flyte.io import File
 
 from flyte_bio.pipelines.rnaseq import Sample, rnaseq
-from tests.framework import assert_dir_nonempty, assert_nonempty, env, fixture
+from tests.framework import assert_dir_nonempty, assert_nonempty, env, fixture, fixture_dir
 
 DATA = "https://raw.githubusercontent.com/nf-core/test-datasets/626c8fab639062eade4b10747e919341cbf9b41a/"
 SAMPLESHEET = DATA + "samplesheet/v3.10/samplesheet_test.csv"
@@ -22,6 +22,7 @@ FASTA = DATA + "reference/genome.fasta"
 GTF = DATA + "reference/genes_with_empty_tid.gtf.gz"
 TRANSCRIPT_FASTA = DATA + "reference/transcriptome.fasta"
 ADDITIONAL_FASTA = DATA + "reference/gfp.fa.gz"
+SALMON_INDEX = DATA + "reference/salmon.tar.gz"
 
 
 async def load_samples(samplesheet: File) -> list[Sample]:
@@ -55,6 +56,7 @@ async def test_rnaseq_star_salmon() -> None:
     samplesheet, fasta, gtf, transcript_fasta, additional_fasta = await asyncio.gather(
         fixture(SAMPLESHEET), fixture(FASTA), fixture(GTF), fixture(TRANSCRIPT_FASTA), fixture(ADDITIONAL_FASTA)
     )
+    salmon_index = await fixture_dir(SALMON_INDEX, "salmon")
     samples = await load_samples(samplesheet)
     assert [s.id for s in samples] == [
         "WT_REP1",
@@ -70,6 +72,7 @@ async def test_rnaseq_star_salmon() -> None:
         gtf=gtf,
         transcript_fasta=transcript_fasta,
         additional_fasta=additional_fasta,
+        salmon_index_dir=salmon_index,
     )
 
     g = result.genome
@@ -86,6 +89,17 @@ async def test_rnaseq_star_salmon() -> None:
 
     assert result.failed_trimming == {}, result.failed_trimming
     assert [r.sample for r in result.samples] == [s.id for s in samples]
+    # Strandedness: only WT_REP1 is 'auto'; the GSE110004 libraries are
+    # reverse-stranded (every other sample is declared 'reverse').
+    for r in result.samples:
+        if r.sample == "WT_REP1":
+            assert r.strandedness_analysis is not None
+            await assert_nonempty(r.strandedness_analysis.lib_format_counts, label="WT_REP1 lib_format_counts")
+            assert r.strandedness_analysis.inferred == "reverse", r.strandedness_analysis
+        else:
+            assert r.strandedness_analysis is None
+        assert r.strandedness == "reverse", (r.sample, r.strandedness)
+
     for r in result.samples:
         a = r.alignment
         for label, f in [

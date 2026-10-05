@@ -8,6 +8,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.cat` — file concatenation (``cat_fastq``).
 - :mod:`flyte_bio.modules.fastqc` — read quality-control reports.
 - :mod:`flyte_bio.modules.catadditionalfasta` — append an extra FASTA + GTF.
+- :mod:`flyte_bio.modules.fq` — FASTQ subsampling.
 - :mod:`flyte_bio.modules.gffread` — GFF/GTF conversion + transcript FASTA.
 - :mod:`flyte_bio.modules.gtf2bed` — derive a BED12 gene model from a GTF.
 - :mod:`flyte_bio.modules.gtffilter` — restrict a GTF to a genome's sequences.
@@ -36,6 +37,7 @@ from .bedtools import env as bedtools_env
 from .cat import env as cat_env
 from .catadditionalfasta import env as catadditionalfasta_env
 from .fastqc import env as fastqc_env
+from .fq import env as fq_env
 from .gffread import env as gffread_env
 from .gtf2bed import env as gtf2bed_env
 from .gtffilter import env as gtffilter_env
@@ -56,6 +58,7 @@ env = flyte.TaskEnvironment(
         cat_env,
         catadditionalfasta_env,
         fastqc_env,
+        fq_env,
         gffread_env,
         gtf2bed_env,
         gtffilter_env,
@@ -77,6 +80,7 @@ __all__ = [
     "catadditionalfasta_env",
     "env",
     "fastqc_env",
+    "fq_env",
     "gffread_env",
     "gtf2bed_env",
     "gtffilter_env",

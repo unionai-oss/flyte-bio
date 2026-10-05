@@ -61,7 +61,8 @@ salmon_index = shell.create(
 # Reads mode: mates are separate inputs (`reads_2` empty for single-end) so
 # R1/R2 order is explicit — a list[File] is staged under original basenames
 # and globbed alphabetically, which can swap the mates. An empty lib_type
-# means auto-detect ('A').
+# means auto-detect ('A'). Extra salmon options (e.g. --skipQuant) ride in via
+# `args`, expanded unquoted so each flag is its own argument.
 # `list[File]` (0 or 1 item) rather than `File | None` until flyteorg/flyte#8118
 # is deployed: copilot stages a set optional File as a bare path, not the
 # per-input dir the shell glob expects, so it was silently ignored.
@@ -69,8 +70,8 @@ salmon_quant_reads = shell.create(
     name="salmon_quant_reads",
     image=SALMON_IMAGE,
     resources=QUANT_RESOURCES,
-    inputs={"reads_1": File, "reads_2": list[File], "index": Dir, "gtf": File, "lib_type": str},
-    defaults={"reads_2": [], "lib_type": ""},
+    inputs={"reads_1": File, "reads_2": list[File], "index": Dir, "gtf": File, "lib_type": str, "args": str},
+    defaults={"reads_2": [], "lib_type": "", "args": ""},
     outputs={"results": Dir},
     script=r"""
         LT={inputs.lib_type}
@@ -81,13 +82,15 @@ salmon_quant_reads = shell.create(
         else
             RR="-1 {inputs.reads_1} -2 ${R2[0]}"
         fi
+        ARGS={inputs.args}
         salmon quant \
             --geneMap {inputs.gtf} \
             --threads 2 \
             --libType=$LT \
             --index {inputs.index} \
             $RR \
-            -o {outputs.results}
+            -o {outputs.results} \
+            $ARGS
     """,
 )
 

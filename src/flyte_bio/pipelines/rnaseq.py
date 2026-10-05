@@ -8,6 +8,9 @@ Composes :mod:`flyte_bio.modules` tasks into the ``star_salmon`` path:
 - :func:`preprocess_reads` — merge a sample's runs, FastQC the raw reads,
   trim with Trim Galore (FastQC on the trimmed reads) and count the reads
   that survive; samples below ``min_trimmed_reads`` are dropped, as upstream.
+- :func:`infer_strandedness` — for ``strandedness="auto"`` samples, subsample
+  the trimmed reads and run salmon (``--skipQuant``) to classify the library
+  as forward / reverse / unstranded, as upstream does.
 - :func:`align_star` — align the trimmed reads with STAR (emitting a
   transcriptome BAM), then sort / index / stats the genome BAM.
 - :func:`quantify_salmon_bam` — salmon alignment-mode quantification of the
@@ -22,16 +25,14 @@ task and fan out to the module tasks, so the caller's
 :class:`flyte.TaskEnvironment` must ``depends_on`` :data:`flyte_bio.modules.env`.
 
 Not yet covered (the rest of the upstream default path): bbsplit, rRNA
-removal, strandedness inference, UMI deduplication, duplicate
-marking and the QC reports. Samples
-with ``strandedness="auto"`` are quantified with salmon's own library-type
-auto-detection (``A``) instead of upstream's subsampled inference.
+removal, UMI deduplication, duplicate marking and the QC reports.
 """
 
 import asyncio
 import csv
+import json
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from flyte.io import Dir, File
@@ -39,11 +40,12 @@ from flyte.io import Dir, File
 from flyte_bio.modules.cat import cat_fastq
 from flyte_bio.modules.catadditionalfasta import cat_additional_fasta
 from flyte_bio.modules.fastqc import fastqc
+from flyte_bio.modules.fq import fq_subsample
 from flyte_bio.modules.gffread import gffread_gff_to_gtf, gffread_transcripts_fasta
 from flyte_bio.modules.gtf2bed import gtf2bed
 from flyte_bio.modules.gtffilter import gtf_filter
 from flyte_bio.modules.gunzip import gunzip
-from flyte_bio.modules.salmon import salmon_quant_bam
+from flyte_bio.modules.salmon import salmon_index, salmon_quant_bam, salmon_quant_reads
 from flyte_bio.modules.samtools import (
     samtools_faidx,
     samtools_flagstat,
@@ -124,8 +126,21 @@ class PreprocessedReads:
 
 
 @dataclass
+class StrandednessAnalysis:
+    """Upstream's salmon-based strandedness call for an ``auto`` sample."""
+
+    inferred: str  # forward / reverse / unstranded / undetermined
+    forward_pct: float  # % of fragments
+    reverse_pct: float
+    unstranded_pct: float
+    lib_format_counts: File  # salmon's lib_format_counts.json for the subsample
+
+
+@dataclass
 class SampleResult:
     sample: str
+    strandedness: str  # as used for quantification (inferred for ``auto`` samples)
+    strandedness_analysis: StrandednessAnalysis | None  # set for ``auto`` samples
     preprocessing: PreprocessedReads
     alignment: StarAlignment
     salmon: Dir
@@ -326,6 +341,84 @@ async def align_star(
     )
 
 
+def calculate_strandedness(
+    forward: float,
+    reverse: float,
+    unstranded: float,
+    stranded_threshold: float = 0.8,
+    unstranded_threshold: float = 0.1,
+) -> tuple[str, float, float, float]:
+    """Upstream's strandedness call from fragment counts.
+
+    Returns ``(strandedness, forward %, reverse %, unstranded %)``. A library
+    is forward/reverse when that strand holds at least ``stranded_threshold``
+    of the stranded fragments, unstranded when the two strands differ by at
+    most ``unstranded_threshold``, and ``undetermined`` otherwise.
+    """
+    total = forward + reverse + unstranded
+    stranded = forward + reverse
+    strandedness = "undetermined"
+    if stranded > 0:
+        forward_prop, reverse_prop = forward / stranded, reverse / stranded
+        if forward_prop >= stranded_threshold:
+            strandedness = "forward"
+        elif reverse_prop >= stranded_threshold:
+            strandedness = "reverse"
+        elif abs(forward_prop - reverse_prop) <= unstranded_threshold:
+            strandedness = "unstranded"
+    pct = (lambda n: n / total * 100) if total else (lambda n: 0.0)
+    return strandedness, pct(forward), pct(reverse), pct(unstranded)
+
+
+def salmon_strandedness(
+    lib_format_counts: dict, stranded_threshold: float = 0.8, unstranded_threshold: float = 0.1
+) -> tuple[str, float, float, float]:
+    """Upstream's strandedness call from salmon's ``lib_format_counts.json``."""
+    def total(keys: tuple[str, ...]) -> float:
+        return sum(lib_format_counts.get(k) or 0 for k in keys)
+
+    return calculate_strandedness(
+        total(("SF", "ISF", "MSF", "OSF")),
+        total(("SR", "ISR", "MSR", "OSR")),
+        total(("IU", "U", "MU")),
+        stranded_threshold,
+        unstranded_threshold,
+    )
+
+
+async def infer_strandedness(
+    sample: Sample,
+    reads_1: File,
+    reads_2: File | None,
+    index: Dir,
+    genome: Genome,
+    stranded_threshold: float = 0.8,
+    unstranded_threshold: float = 0.1,
+) -> StrandednessAnalysis:
+    """Subsample the reads and let salmon classify the library, as upstream does."""
+    sub_1, sub_2 = await fq_subsample(
+        reads_1, reads_2, args="--record-count 1000000 --seed 1", prefix=f"{sample.id}.subsampled"
+    )
+    results = await salmon_quant_reads(
+        reads_1=sub_1,
+        reads_2=[sub_2] if sub_2 is not None else [],
+        index=index,
+        gtf=genome.gtf,
+        lib_type="A",
+        args="--skipQuant",
+    )
+    counts_file = await results.get_file("lib_format_counts.json")
+    if counts_file is None:
+        raise RuntimeError(
+            f"salmon produced no lib_format_counts.json for sample {sample.id!r} (strandedness 'auto'); "
+            "check that the salmon index matches the reads, or set strandedness explicitly"
+        )
+    async with counts_file.open("rb") as fh:
+        counts = json.loads(bytes(await fh.read()))
+    inferred, fwd, rev, unstr = salmon_strandedness(counts, stranded_threshold, unstranded_threshold)
+    return StrandednessAnalysis(inferred, fwd, rev, unstr, counts_file)
+
+
 def salmon_lib_type(sample: Sample) -> str:
     """Map samplesheet strandedness to a salmon library type, as upstream does."""
     single = {"forward": "SF", "reverse": "SR", "unstranded": "U"}
@@ -352,10 +445,17 @@ class RunOptions:
     skip_fastqc: bool = False
     skip_trimming: bool = False
     min_trimmed_reads: int = 10000
+    stranded_threshold: float = 0.8
+    unstranded_threshold: float = 0.1
 
 
-async def run_sample(sample: Sample, genome: "asyncio.Task[Genome]", opts: RunOptions) -> SampleResult | float:
-    """Preprocess, align and quantify one sample.
+async def run_sample(
+    sample: Sample,
+    genome: "asyncio.Task[Genome]",
+    strandedness_index: "asyncio.Task[Dir] | None",
+    opts: RunOptions,
+) -> SampleResult | float:
+    """Preprocess, (infer strandedness,) align and quantify one sample.
 
     Returns the surviving read count instead of a result when trimming left
     fewer than ``opts.min_trimmed_reads`` reads (the sample is dropped).
@@ -364,9 +464,33 @@ async def run_sample(sample: Sample, genome: "asyncio.Task[Genome]", opts: RunOp
     if reads.reads_after_trimming is not None and reads.reads_after_trimming < opts.min_trimmed_reads:
         return reads.reads_after_trimming
     ref = await genome
+
+    analysis = None
+    if sample.strandedness == "auto":
+        assert strandedness_index is not None
+        analysis = await infer_strandedness(
+            sample,
+            reads.reads_1,
+            reads.reads_2,
+            await strandedness_index,
+            ref,
+            opts.stranded_threshold,
+            opts.unstranded_threshold,
+        )
+        # As upstream, an undetermined library is treated as unstranded.
+        inferred = "unstranded" if analysis.inferred == "undetermined" else analysis.inferred
+        sample = replace(sample, strandedness=inferred)
+
     alignment = await align_star(sample, reads.reads_1, reads.reads_2, ref, opts.seq_platform, opts.seq_center)
     salmon = await quantify_salmon_bam(sample, alignment, ref)
-    return SampleResult(sample=sample.id, preprocessing=reads, alignment=alignment, salmon=salmon)
+    return SampleResult(
+        sample=sample.id,
+        strandedness=sample.strandedness,
+        strandedness_analysis=analysis,
+        preprocessing=reads,
+        alignment=alignment,
+        salmon=salmon,
+    )
 
 
 async def write_samplesheet(samples: list[Sample]) -> File:
@@ -435,13 +559,21 @@ async def rnaseq(
     gff: File | None = None,
     transcript_fasta: File | None = None,
     additional_fasta: File | None = None,
+    salmon_index_dir: Dir | None = None,
     seq_platform: str = "",
     seq_center: str = "",
     skip_fastqc: bool = False,
     skip_trimming: bool = False,
     min_trimmed_reads: int = 10000,
+    stranded_threshold: float = 0.8,
+    unstranded_threshold: float = 0.1,
 ) -> RnaseqResult:
-    """Prepare the genome while preprocessing every sample, then align and quantify them in parallel."""
+    """Prepare the genome while preprocessing every sample, then align and quantify them in parallel.
+
+    ``salmon_index_dir`` is only used to infer strandedness for
+    ``strandedness="auto"`` samples; without it one is built from the genome
+    and transcript FASTA (decoy-aware), and only if some sample is ``auto``.
+    """
     ids = [s.id for s in samples]
     if len(ids) != len(set(ids)):
         raise ValueError("sample ids must be unique; put a sample's runs in one Sample")
@@ -455,13 +587,30 @@ async def rnaseq(
             additional_fasta=additional_fasta,
         )
     )
-    opts = RunOptions(seq_platform, seq_center, skip_fastqc, skip_trimming, min_trimmed_reads)
+    opts = RunOptions(
+        seq_platform=seq_platform,
+        seq_center=seq_center,
+        skip_fastqc=skip_fastqc,
+        skip_trimming=skip_trimming,
+        min_trimmed_reads=min_trimmed_reads,
+        stranded_threshold=stranded_threshold,
+        unstranded_threshold=unstranded_threshold,
+    )
+
+    async def strandedness_index() -> Dir:
+        if salmon_index_dir is not None:
+            return salmon_index_dir
+        ref = await genome
+        return await salmon_index(transcript_fasta=ref.transcript_fasta, genome_fasta=[ref.fasta])
+
+    index = asyncio.create_task(strandedness_index()) if any(s.strandedness == "auto" for s in samples) else None
     try:
-        outcomes = await asyncio.gather(*(run_sample(s, genome, opts) for s in samples))
+        outcomes = await asyncio.gather(*(run_sample(s, genome, index, opts) for s in samples))
         ref = await genome
     finally:
-        if not genome.done():
-            genome.cancel()
+        for task in (genome, index):
+            if task is not None and not task.done():
+                task.cancel()
     passed = [o for o in outcomes if isinstance(o, SampleResult)]
     failed = {s.id: o for s, o in zip(samples, outcomes) if not isinstance(o, SampleResult)}
     if not passed:
