@@ -1,7 +1,9 @@
 """flyte_bio.pipelines — higher-level pipelines composed from module tasks.
 
-Empty for now. Pipelines like ``rnaseq`` and variant-calling workflows will
-live as submodules here (e.g. ``flyte_bio.pipelines.rnaseq``), each
-exposing its own ``TaskEnvironment`` that depends on whichever module envs
-its tasks need.
+- :mod:`flyte_bio.pipelines.rnaseq` — RNA-seq STAR alignment + salmon
+  quantification (the ``star_salmon`` path).
+
+Pipelines are plain async functions that run inside the caller's task and
+fan out to module tasks, so the caller's ``TaskEnvironment`` must
+``depends_on`` :data:`flyte_bio.modules.env`.
 """

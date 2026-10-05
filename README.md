@@ -66,18 +66,55 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
 ### Modules (`flyte_bio.modules`)
 
 - `bedtools` — `bedtools_intersect`, `bedtools_sort`, `bedtools_merge`
-- `gunzip` — `gunzip`
-- `untar` — `untar`
 - `cat` — `cat_fastq`
+- `catadditionalfasta` — `cat_additional_fasta`
+- `gffread` — `gffread_gff_to_gtf`, `gffread_transcripts_fasta`
+- `gtf2bed` — `gtf2bed`
+- `gtffilter` — `gtf_filter`
+- `gunzip` — `gunzip`
+- `salmon` — `salmon_index`, `salmon_quant_reads`, `salmon_quant_bam`
+- `samtools` — `samtools_faidx`, `samtools_sort`, `samtools_index`, `samtools_stats`, `samtools_flagstat`, `samtools_idxstats`
+- `star` — `star_genome_generate`, `star_align`
+- `untar` — `untar`
 
 ### Pipelines (`flyte_bio.pipelines`)
 
-_None yet — to be added._
+- `rnaseq` — STAR alignment + salmon quantification (the `star_salmon` path
+  of rnaseq 3.26.0): `prepare_genome`, `align_star`, `quantify_salmon_bam`,
+  `rnaseq`. Trimming/QC, strandedness inference, UMI dedup and the
+  count-matrix/QC reports are not ported yet.
 
 More tools and pipelines are added as needed. Contributions following the same
 pattern (one file per tool family, sharing one biocontainer image, exposing a
 module-level `env`) are welcome once the plugin is ready to stabilize. The
 top-level `flyte_bio.env` is intended to grow alongside the modules.
+
+## Workarounds pending upstream fixes
+
+### Optional File inputs are `list[File]` (flyteorg/flyte#8118)
+
+Optional file inputs that should be `File | None` are declared as `list[File]`
+(0 or 1 item, default `[]`). On the cluster, copilot stages a *set*
+`Optional[File]` as a bare path instead of the per-input directory that shell
+scripts glob, so the input was silently ignored. Revert once
+[flyteorg/flyte#8118](https://github.com/flyteorg/flyte/pull/8118) is
+**merged and deployed** (for Union clusters: the `flyte2` submodule pin in the
+`cloud` repo includes it and the cluster has been redeployed). Merging alone
+doesn't change what the cluster runs.
+
+To revert:
+
+1. Inputs back to `File | None` and drop their `[]` defaults:
+   `salmon_index.genome_fasta`, `salmon_quant_reads.reads_2`,
+   `star_align.reads_2`, `bedtools_intersect.g`, `bedtools_sort.g`
+   (each is marked with a `flyteorg/flyte#8118` comment).
+2. Update the scripts that read them through a `nullglob` array
+   (salmon index/quant, STAR); the bedtools `-g` flag needs no script change.
+3. Update callers: `align_star` in `pipelines/rnaseq.py` (`reads_2=[...]`),
+   `tests/modules/test_star.py` and `tests/modules/test_salmon.py`.
+4. Rerun the suite. `test_index` asserts the salmon index really has decoys
+   and the rnaseq pipeline test exercises paired-end STAR, so a staging
+   regression fails loudly.
 
 ## Porting an nf-core module
 

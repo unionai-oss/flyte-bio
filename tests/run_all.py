@@ -27,6 +27,7 @@ passes them to :func:`gather_tests` — and run it the same way:
 from tests.framework import env, gather_tests
 from tests.modules import (
     test_bedtools,
+    test_cat,
     test_catadditionalfasta,
     test_gffread,
     test_gtf2bed,
@@ -35,9 +36,11 @@ from tests.modules import (
     test_samtools,
     test_star,
 )
+from tests.pipelines import test_rnaseq
 
 ALL_TESTS = [
     *test_bedtools.tests,
+    *test_cat.tests,
     *test_catadditionalfasta.tests,
     *test_gffread.tests,
     *test_gtf2bed.tests,
@@ -45,6 +48,7 @@ ALL_TESTS = [
     *test_salmon.tests,
     *test_samtools.tests,
     *test_star.tests,
+    *test_rnaseq.tests,
 ]
 
 
