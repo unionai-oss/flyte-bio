@@ -5,9 +5,11 @@ Composes :mod:`flyte_bio.modules` tasks into the ``star_salmon`` path:
 - :func:`prepare_genome` — decompress references, filter the GTF to the
   genome's sequences, append an additional FASTA, derive the gene BED,
   transcript FASTA and chrom sizes, and build the STAR index.
-- :func:`preprocess_reads` — merge a sample's runs, FastQC the raw reads,
-  trim with Trim Galore (FastQC on the trimmed reads) and count the reads
-  that survive; samples below ``min_trimmed_reads`` are dropped, as upstream.
+- :func:`preprocess_reads` — merge a sample's runs, lint them, FastQC the
+  raw reads, trim with Trim Galore (FastQC on the trimmed reads), lint again
+  and count the reads that survive (samples below ``min_trimmed_reads`` are
+  dropped), then optionally BBSplit away reads from other genomes (and lint
+  the result) — all as upstream.
 - :func:`infer_strandedness` — for ``strandedness="auto"`` samples, subsample
   the trimmed reads and run salmon (``--skipQuant``) to classify the library
   as forward / reverse / unstranded, as upstream does.
@@ -24,8 +26,8 @@ These are plain async functions, not tasks: they run inside the caller's
 task and fan out to the module tasks, so the caller's
 :class:`flyte.TaskEnvironment` must ``depends_on`` :data:`flyte_bio.modules.env`.
 
-Not yet covered (the rest of the upstream default path): bbsplit, rRNA
-removal, UMI deduplication, duplicate marking and the QC reports.
+Not yet covered (the rest of the upstream default path): rRNA removal, UMI
+deduplication, duplicate marking and the QC reports.
 """
 
 import asyncio
@@ -37,10 +39,11 @@ from pathlib import Path
 
 from flyte.io import Dir, File
 
+from flyte_bio.modules.bbmap import BBSplitResult, bbsplit, bbsplit_index
 from flyte_bio.modules.cat import cat_fastq
 from flyte_bio.modules.catadditionalfasta import cat_additional_fasta
 from flyte_bio.modules.fastqc import fastqc
-from flyte_bio.modules.fq import fq_subsample
+from flyte_bio.modules.fq import fq_lint, fq_subsample
 from flyte_bio.modules.gffread import gffread_gff_to_gtf, gffread_transcripts_fasta
 from flyte_bio.modules.gtf2bed import gtf2bed
 from flyte_bio.modules.gtffilter import gtf_filter
@@ -61,6 +64,9 @@ from flyte_bio.modules.tx2gene import tx2gene
 from flyte_bio.modules.tximport import TximportResult, collect_quants, tximport
 
 STRANDEDNESS = ("auto", "forward", "reverse", "unstranded")
+
+# Upstream's BBSplit options (index build and split alike).
+BBSPLIT_ARGS = "build=1 ambiguous2=all maxindel=150000 ow=f"
 
 
 @dataclass
@@ -118,11 +124,13 @@ class StarAlignment:
 
 @dataclass
 class PreprocessedReads:
-    reads_1: File  # trimmed (or merged, when trimming is skipped)
+    reads_1: File  # reads to align: after trimming / BBSplit, whichever ran last
     reads_2: File | None
     raw_fastqc: Dir | None  # <sample>_raw[_1|_2]_fastqc.{html,zip}
     trimming: TrimGaloreResult | None  # reports + trimmed-read FastQC
     reads_after_trimming: float | None
+    bbsplit: BBSplitResult | None = None
+    lint: dict[str, File] = field(default_factory=dict)  # stage (raw/trimmed/bbsplit) -> fq lint log
 
 
 @dataclass
@@ -261,12 +269,36 @@ async def star_file(output: Dir, name: str) -> File:
     return found
 
 
-async def preprocess_reads(sample: Sample, skip_fastqc: bool = False, skip_trimming: bool = False) -> PreprocessedReads:
-    """Merge the sample's runs, then raw FastQC alongside Trim Galore (as upstream)."""
+async def lint(reads_1: File, reads_2: File | None, args: str = "") -> File:
+    """fq lint the reads; the task fails (failing the run) on invalid input."""
+    return await fq_lint(reads_1=reads_1, reads_2=[reads_2] if reads_2 is not None else [], args=args)
+
+
+async def preprocess_reads(
+    sample: Sample,
+    opts: "RunOptions",
+    bbsplit_index_dir: "asyncio.Task[Dir] | None" = None,
+) -> PreprocessedReads:
+    """Merge, lint, QC, trim, filter and (optionally) BBSplit one sample's reads, as upstream.
+
+    When trimming leaves fewer than ``opts.min_trimmed_reads`` reads the
+    sample stops there (BBSplit is skipped); the caller drops it.
+    """
+    skip_fastqc, skip_trimming = opts.skip_fastqc, opts.skip_trimming
+    # Upstream's merged-read names: <sample>.merged.fastq.gz / <sample>_{1,2}.merged.fastq.gz
+    mate_1, mate_2 = ("", "") if sample.single_end else ("_1", "_2")
     reads_1, reads_2 = await asyncio.gather(
-        cat_fastq(sample.fastq_1),
-        cat_fastq(sample.fastq_2) if sample.fastq_2 else asyncio.sleep(0, result=None),
+        cat_fastq(sample.fastq_1, prefix=f"{sample.id}{mate_1}.merged"),
+        cat_fastq(sample.fastq_2, prefix=f"{sample.id}{mate_2}.merged")
+        if sample.fastq_2
+        else asyncio.sleep(0, result=None),
     )
+    # Upstream's `withName: 'FQ_LINT'` args also reach its aliased lint steps
+    # (after trimming / BBSplit), so every lint gets extra_fqlint_args — by
+    # default `--disable-validator P001`, since SRA-style headers carry /1 /2.
+    lint_logs: dict[str, File] = {}
+    if not opts.skip_linting:
+        lint_logs["raw"] = await lint(reads_1, reads_2, opts.extra_fqlint_args)
 
     async def raw_qc() -> Dir | None:
         if skip_fastqc:
@@ -284,15 +316,22 @@ async def preprocess_reads(sample: Sample, skip_fastqc: bool = False, skip_trimm
         return await trimgalore(reads_1, reads_2, prefix=f"{sample.id}_trimmed", fastqc=not skip_fastqc)
 
     raw_fastqc, trimming = await asyncio.gather(raw_qc(), trim())
-    if trimming is None:
-        return PreprocessedReads(reads_1, reads_2, raw_fastqc, None, None)
-    return PreprocessedReads(
-        reads_1=trimming.reads_1,
-        reads_2=trimming.reads_2,
-        raw_fastqc=raw_fastqc,
-        trimming=trimming,
-        reads_after_trimming=await trimming.reads_after_filtering(),
-    )
+    reads_after_trimming = None
+    if trimming is not None:
+        reads_1, reads_2 = trimming.reads_1, trimming.reads_2
+        if not opts.skip_linting:
+            lint_logs["trimmed"] = await lint(reads_1, reads_2, opts.extra_fqlint_args)
+        reads_after_trimming = await trimming.reads_after_filtering()
+    pre = PreprocessedReads(reads_1, reads_2, raw_fastqc, trimming, reads_after_trimming, lint=lint_logs)
+    if reads_after_trimming is not None and reads_after_trimming < opts.min_trimmed_reads:
+        return pre
+
+    if bbsplit_index_dir is not None:
+        split = await bbsplit(reads_1, reads_2, await bbsplit_index_dir, prefix=sample.id, args=BBSPLIT_ARGS)
+        pre.bbsplit, pre.reads_1, pre.reads_2 = split, split.reads_1, split.reads_2
+        if not opts.skip_linting:
+            lint_logs["bbsplit"] = await lint(split.reads_1, split.reads_2, opts.extra_fqlint_args)
+    return pre
 
 
 async def align_star(
@@ -447,12 +486,15 @@ class RunOptions:
     min_trimmed_reads: int = 10000
     stranded_threshold: float = 0.8
     unstranded_threshold: float = 0.1
+    skip_linting: bool = False
+    extra_fqlint_args: str = "--disable-validator P001"
 
 
 async def run_sample(
     sample: Sample,
     genome: "asyncio.Task[Genome]",
     strandedness_index: "asyncio.Task[Dir] | None",
+    bbsplit_index_dir: "asyncio.Task[Dir] | None",
     opts: RunOptions,
 ) -> SampleResult | float:
     """Preprocess, (infer strandedness,) align and quantify one sample.
@@ -460,7 +502,7 @@ async def run_sample(
     Returns the surviving read count instead of a result when trimming left
     fewer than ``opts.min_trimmed_reads`` reads (the sample is dropped).
     """
-    reads = await preprocess_reads(sample, opts.skip_fastqc, opts.skip_trimming)
+    reads = await preprocess_reads(sample, opts, bbsplit_index_dir)
     if reads.reads_after_trimming is not None and reads.reads_after_trimming < opts.min_trimmed_reads:
         return reads.reads_after_trimming
     ref = await genome
@@ -560,6 +602,11 @@ async def rnaseq(
     transcript_fasta: File | None = None,
     additional_fasta: File | None = None,
     salmon_index_dir: Dir | None = None,
+    bbsplit_fasta_list: dict[str, File] | None = None,
+    bbsplit_index_dir: Dir | None = None,
+    skip_bbsplit: bool = True,
+    skip_linting: bool = False,
+    extra_fqlint_args: str = "--disable-validator P001",
     seq_platform: str = "",
     seq_center: str = "",
     skip_fastqc: bool = False,
@@ -573,7 +620,13 @@ async def rnaseq(
     ``salmon_index_dir`` is only used to infer strandedness for
     ``strandedness="auto"`` samples; without it one is built from the genome
     and transcript FASTA (decoy-aware), and only if some sample is ``auto``.
+
+    BBSplit (off by default, as upstream) removes reads that map better to
+    other genomes: give ``bbsplit_fasta_list`` (name → FASTA) to build an index
+    against the prepared genome, or a prebuilt ``bbsplit_index_dir``.
     """
+    if not skip_bbsplit and bbsplit_fasta_list is None and bbsplit_index_dir is None:
+        raise ValueError("BBSplit needs bbsplit_fasta_list or bbsplit_index_dir (or skip_bbsplit=True)")
     ids = [s.id for s in samples]
     if len(ids) != len(set(ids)):
         raise ValueError("sample ids must be unique; put a sample's runs in one Sample")
@@ -595,6 +648,8 @@ async def rnaseq(
         min_trimmed_reads=min_trimmed_reads,
         stranded_threshold=stranded_threshold,
         unstranded_threshold=unstranded_threshold,
+        skip_linting=skip_linting,
+        extra_fqlint_args=extra_fqlint_args,
     )
 
     async def strandedness_index() -> Dir:
@@ -604,11 +659,20 @@ async def rnaseq(
         return await salmon_index(transcript_fasta=ref.transcript_fasta, genome_fasta=[ref.fasta])
 
     index = asyncio.create_task(strandedness_index()) if any(s.strandedness == "auto" for s in samples) else None
+
+    async def build_bbsplit_index() -> Dir:
+        if bbsplit_index_dir is not None:
+            return bbsplit_index_dir
+        assert bbsplit_fasta_list is not None
+        ref = await genome
+        return await bbsplit_index(ref.fasta, bbsplit_fasta_list, args=BBSPLIT_ARGS)
+
+    split_index = None if skip_bbsplit else asyncio.create_task(build_bbsplit_index())
     try:
-        outcomes = await asyncio.gather(*(run_sample(s, genome, index, opts) for s in samples))
+        outcomes = await asyncio.gather(*(run_sample(s, genome, index, split_index, opts) for s in samples))
         ref = await genome
     finally:
-        for task in (genome, index):
+        for task in (genome, index, split_index):
             if task is not None and not task.done():
                 task.cancel()
     passed = [o for o in outcomes if isinstance(o, SampleResult)]

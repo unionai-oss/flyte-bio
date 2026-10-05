@@ -23,6 +23,15 @@ GTF = DATA + "reference/genes_with_empty_tid.gtf.gz"
 TRANSCRIPT_FASTA = DATA + "reference/transcriptome.fasta"
 ADDITIONAL_FASTA = DATA + "reference/gfp.fa.gz"
 SALMON_INDEX = DATA + "reference/salmon.tar.gz"
+BBSPLIT_FASTA_LIST = DATA + "reference/bbsplit_fasta_list.txt"
+
+
+async def load_bbsplit_refs(fasta_list: File) -> dict[str, File]:
+    """Read upstream's ``name,fasta_url`` BBSplit list and fetch each FASTA."""
+    async with fasta_list.open("rb") as fh:
+        rows = [r for r in csv.reader(io.StringIO(bytes(await fh.read()).decode())) if r]
+    files = await asyncio.gather(*(fixture(url) for _, url in rows))
+    return {name: f for (name, _), f in zip(rows, files)}
 
 
 async def load_samples(samplesheet: File) -> list[Sample]:
@@ -57,6 +66,8 @@ async def test_rnaseq_star_salmon() -> None:
         fixture(SAMPLESHEET), fixture(FASTA), fixture(GTF), fixture(TRANSCRIPT_FASTA), fixture(ADDITIONAL_FASTA)
     )
     salmon_index = await fixture_dir(SALMON_INDEX, "salmon")
+    bbsplit_refs = await load_bbsplit_refs(await fixture(BBSPLIT_FASTA_LIST))
+    assert sorted(bbsplit_refs) == ["human", "sarscov2"], sorted(bbsplit_refs)
     samples = await load_samples(samplesheet)
     assert [s.id for s in samples] == [
         "WT_REP1",
@@ -73,6 +84,8 @@ async def test_rnaseq_star_salmon() -> None:
         transcript_fasta=transcript_fasta,
         additional_fasta=additional_fasta,
         salmon_index_dir=salmon_index,
+        bbsplit_fasta_list=bbsplit_refs,
+        skip_bbsplit=False,  # the upstream test profile turns BBSplit on
     )
 
     g = result.genome
@@ -126,6 +139,14 @@ async def test_rnaseq_star_salmon() -> None:
         for report in pre.trimming.reports:
             await assert_nonempty(report, label=f"{r.sample} trimming report")
         assert pre.reads_after_trimming is not None and pre.reads_after_trimming >= 10000, pre.reads_after_trimming
+        assert sorted(pre.lint) == ["bbsplit", "raw", "trimmed"], sorted(pre.lint)
+        for stage, log in pre.lint.items():
+            await assert_nonempty(log, label=f"{r.sample} fq lint {stage}")
+        assert pre.bbsplit is not None
+        await assert_nonempty(pre.bbsplit.stats, label=f"{r.sample} bbsplit stats")
+        await assert_nonempty(pre.bbsplit.reads_1, label=f"{r.sample} bbsplit primary R1")
+        assert (pre.bbsplit.reads_2 is None) == (pre.reads_2 is None)
+        assert pre.reads_1 is pre.bbsplit.reads_1  # alignment uses the primary-genome reads
         quant = await r.salmon.get_file("quant.sf")
         assert quant is not None, f"{r.sample}: salmon results have no quant.sf"
         await assert_nonempty(quant, label=f"{r.sample} quant.sf")

@@ -1,9 +1,13 @@
 """fq — FASTQ utilities.
 
-Exposes :func:`fq_subsample`, which samples one sample's reads (one or two
-mates, kept in sync) by probability (``-p``) or record count (``-n``); one
-of those must be given in ``args``. Outputs are named as upstream:
-``<prefix>.fastq.gz`` (single-end) or ``<prefix>_R1/_R2.fastq.gz``.
+Exposes:
+
+- :func:`fq_subsample` — sample one sample's reads (one or two mates, kept
+  in sync) by probability (``-p``) or record count (``-n``); one of those
+  must be given in ``args``. Outputs are named as upstream:
+  ``<prefix>.fastq.gz`` (single-end) or ``<prefix>_R1/_R2.fastq.gz``.
+- :data:`fq_lint` — validate one sample's reads (and mate pairing); the
+  task fails on invalid input, and its log is returned on success.
 """
 
 import flyte
@@ -40,9 +44,26 @@ fq_subsample_cmd = shell.create(
 )
 
 
+# `reads_2` as above (0 or 1 item, until flyteorg/flyte#8118 is deployed).
+fq_lint = shell.create(
+    name="fq_lint",
+    image=FQ_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"reads_1": File, "reads_2": list[File], "args": str},
+    defaults={"reads_2": [], "args": ""},
+    outputs={"lint": File},
+    script=r"""
+        shopt -s nullglob; R2=({inputs.reads_2}); shopt -u nullglob
+        ARGS={inputs.args}
+        fq lint $ARGS {inputs.reads_1} "${R2[@]}" > {outputs.lint}
+    """,
+)
+
+
 env = flyte.TaskEnvironment.from_task(
     "fq",
     fq_subsample_cmd.as_task(),
+    fq_lint.as_task(),
 )
 
 

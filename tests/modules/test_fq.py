@@ -1,10 +1,10 @@
 """Tests for flyte_bio.modules.fq.
 
 Expected md5s are the upstream fq/subsample snapshot values, which nf-test
-computes over the decompressed reads.
+computes over the decompressed reads; the lint check mirrors upstream fq/lint.
 """
 
-from flyte_bio.modules.fq import fq_subsample
+from flyte_bio.modules.fq import fq_lint, fq_subsample
 from tests.framework import assert_gunzipped_md5, env, fixture
 
 FASTQ = "genomics/sarscov2/illumina/fastq/"
@@ -40,4 +40,20 @@ async def test_fq_subsample_single() -> None:
     await assert_gunzipped_md5(out_1, "19326ff922a16c0cb81191f2a0a5c5fc", label="single")
 
 
-tests = [test_fq_subsample_probability, test_fq_subsample_record_count, test_fq_subsample_single]
+@env.task
+async def test_fq_lint_success() -> None:
+    # upstream case: fq/lint "test_fq_lint_success"
+    r1, r2 = await fixture(FASTQ + "test_1.fastq.gz"), await fixture(FASTQ + "test_2.fastq.gz")
+    lint = await fq_lint(reads_1=r1, reads_2=[r2])
+    async with lint.open("rb") as fh:
+        text = bytes(await fh.read()).decode()
+    for marker in ("fq-lint start", "read 100 records", "fq-lint end"):
+        assert marker in text, f"fq lint log lacks {marker!r}"
+
+
+tests = [
+    test_fq_subsample_probability,
+    test_fq_subsample_record_count,
+    test_fq_subsample_single,
+    test_fq_lint_success,
+]

@@ -3,12 +3,13 @@
 Each submodule wraps one tool family, sharing a single biocontainer image
 across its tasks:
 
+- :mod:`flyte_bio.modules.bbmap` — BBSplit (index build + read binning).
 - :mod:`flyte_bio.modules.bedtools` — genome arithmetic (intersect, sort,
   merge).
 - :mod:`flyte_bio.modules.cat` — file concatenation (``cat_fastq``).
 - :mod:`flyte_bio.modules.fastqc` — read quality-control reports.
 - :mod:`flyte_bio.modules.catadditionalfasta` — append an extra FASTA + GTF.
-- :mod:`flyte_bio.modules.fq` — FASTQ subsampling.
+- :mod:`flyte_bio.modules.fq` — FASTQ subsampling and linting.
 - :mod:`flyte_bio.modules.gffread` — GFF/GTF conversion + transcript FASTA.
 - :mod:`flyte_bio.modules.gtf2bed` — derive a BED12 gene model from a GTF.
 - :mod:`flyte_bio.modules.gtffilter` — restrict a GTF to a genome's sequences.
@@ -33,6 +34,7 @@ Pipelines depend on it once to gain access to every wrapped tool::
 
 import flyte
 
+from .bbmap import env as bbmap_env
 from .bedtools import env as bedtools_env
 from .cat import env as cat_env
 from .catadditionalfasta import env as catadditionalfasta_env
@@ -54,6 +56,7 @@ from .untar import env as untar_env
 env = flyte.TaskEnvironment(
     name="flyte_bio_modules",
     depends_on=[
+        bbmap_env,
         bedtools_env,
         cat_env,
         catadditionalfasta_env,
@@ -75,6 +78,7 @@ env = flyte.TaskEnvironment(
 )
 
 __all__ = [
+    "bbmap_env",
     "bedtools_env",
     "cat_env",
     "catadditionalfasta_env",

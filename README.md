@@ -65,11 +65,12 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
 
 ### Modules (`flyte_bio.modules`)
 
+- `bbmap` — `bbsplit_index`, `bbsplit`
 - `bedtools` — `bedtools_intersect`, `bedtools_sort`, `bedtools_merge`
 - `cat` — `cat_fastq`
 - `catadditionalfasta` — `cat_additional_fasta`
 - `fastqc` — `fastqc`
-- `fq` — `fq_subsample`
+- `fq` — `fq_subsample`, `fq_lint`
 - `gffread` — `gffread_gff_to_gtf`, `gffread_transcripts_fasta`
 - `gtf2bed` — `gtf2bed`
 - `gtffilter` — `gtf_filter`
@@ -87,8 +88,8 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
 
 - `rnaseq` — STAR alignment + salmon quantification (the `star_salmon` path
   of rnaseq 3.26.0): `prepare_genome`, `align_star`, `quantify_salmon_bam`,
-  `rnaseq`, with read QC/trimming, strandedness inference and the
-  tximport/SummarizedExperiment merge. bbsplit, rRNA removal, UMI dedup and
+  `rnaseq`, with read linting, QC/trimming, BBSplit, strandedness inference
+  and the tximport/SummarizedExperiment merge. rRNA removal, UMI dedup and
   the QC reports are not ported yet.
 
 More tools and pipelines are added as needed. Contributions following the same
@@ -115,14 +116,17 @@ To revert:
    `salmon_index.genome_fasta`, `salmon_quant_reads.reads_2`,
    `star_align.reads_2`, `bedtools_intersect.g`, `bedtools_sort.g`,
    `summarized_experiment_cmd.rowdata` / `.coldata`, `fastqc.reads_2`,
-   `trimgalore_cmd.reads_2`, `fq_subsample_cmd.reads_2`
+   `trimgalore_cmd.reads_2`, `fq_subsample_cmd.reads_2`, `fq_lint.reads_2`,
+   `bbsplit_cmd.reads_2`
    (each is marked with a `flyteorg/flyte#8118` comment).
 2. Update the scripts that read them through a `nullglob` array
-   (salmon index/quant, STAR, summarizedexperiment, fastqc, trimgalore, fq); the
+   (salmon index/quant, STAR, summarizedexperiment, fastqc, trimgalore, fq,
+   bbsplit); the
    bedtools `-g` flag
    needs no script change.
 3. Update callers: `align_star` in `pipelines/rnaseq.py` (`reads_2=[...]`),
-   the `summarized_experiment`, `trimgalore` and `fq_subsample` wrappers, the `fastqc` call in
+   the `summarized_experiment`, `trimgalore`, `fq_subsample` and `bbsplit` wrappers,
+   the `lint` helper and the `fastqc` call in
    `pipelines/rnaseq.py`, `tests/modules/test_fastqc.py`,
    `tests/modules/test_star.py` and `tests/modules/test_salmon.py`.
 4. Rerun the suite. `test_index` asserts the salmon index really has decoys
