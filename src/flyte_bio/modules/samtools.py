@@ -49,14 +49,17 @@ samtools_faidx = shell.create(
 )
 
 
+# `args` carries extra sort options, e.g. `-n` to sort by read name.
 samtools_sort = shell.create(
     name="samtools_sort",
     image=SAMTOOLS_IMAGE,
     resources=SORT_RESOURCES,
-    inputs={"bam": File},
+    inputs={"bam": File, "args": str},
+    defaults={"args": ""},
     outputs={"bam_sorted": File},
     script=r"""
-        samtools sort -o {outputs.bam_sorted} {inputs.bam}
+        ARGS={inputs.args}
+        samtools sort $ARGS -o {outputs.bam_sorted} {inputs.bam}
     """,
 )
 

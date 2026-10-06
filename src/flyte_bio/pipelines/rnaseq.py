@@ -17,7 +17,7 @@ Composes :mod:`flyte_bio.modules` tasks into the ``star_salmon`` path:
   transcriptome BAM), then sort / index / stats the genome BAM.
 - :func:`mark_duplicates` — Picard MarkDuplicates on the genome BAM, then
   index / stats the marked BAM, which replaces it downstream (as upstream).
-- dupRadar on the (marked) genome BAM for duplication-rate QC.
+- dupRadar and Qualimap (on a name-sorted copy) on the (marked) genome BAM.
 - :func:`quantify_salmon_bam` — salmon alignment-mode quantification of the
   transcriptome BAM.
 - :func:`merge_quantifications` — tx2gene + tximport across all samples into
@@ -30,7 +30,7 @@ task and fan out to the module tasks, so the caller's
 :class:`flyte.TaskEnvironment` must ``depends_on`` :data:`flyte_bio.modules.env`.
 
 Not yet covered (the rest of the upstream default path): StringTie, bigWig
-coverage, the BAM QC (Qualimap, RSeQC, biotype featureCounts),
+coverage, the BAM QC (RSeQC, biotype featureCounts),
 deseq2_qc and MultiQC. rRNA removal and UMI deduplication (off upstream by
 default) aren't ported either.
 """
@@ -55,6 +55,7 @@ from flyte_bio.modules.gtf2bed import gtf2bed
 from flyte_bio.modules.gtffilter import gtf_filter
 from flyte_bio.modules.gunzip import gunzip
 from flyte_bio.modules.picard import picard_markduplicates
+from flyte_bio.modules.qualimap import qualimap_rnaseq
 from flyte_bio.modules.salmon import salmon_index, salmon_quant_bam, salmon_quant_reads
 from flyte_bio.modules.samtools import (
     samtools_faidx,
@@ -171,6 +172,7 @@ class SampleResult:
     salmon: Dir
     markduplicates: MarkedDuplicates | None = None  # None when skip_markduplicates
     dupradar: DupradarResult | None = None  # None when skip_dupradar
+    qualimap: Dir | None = None  # Qualimap rnaseq report dir; None when skip_qualimap
 
 
 @dataclass
@@ -531,6 +533,7 @@ class RunOptions:
     extra_fqlint_args: str = "--disable-validator P001"
     skip_markduplicates: bool = False
     skip_dupradar: bool = False
+    skip_qualimap: bool = False
 
 
 async def run_sample(
@@ -571,15 +574,29 @@ async def run_sample(
     async def markdup() -> MarkedDuplicates | None:
         return None if opts.skip_markduplicates else await mark_duplicates(sample, alignment, ref)
 
-    async def genome_bam_qc() -> tuple[MarkedDuplicates | None, DupradarResult | None]:
+    async def genome_bam_qc() -> tuple[MarkedDuplicates | None, DupradarResult | None, Dir | None]:
         marked = await markdup()
-        if opts.skip_dupradar:
-            return marked, None
         # As upstream, the QC runs on the duplicate-marked BAM when there is one.
         bam = marked.bam if marked is not None else alignment.bam
-        return marked, await dupradar(bam, ref.gtf, sample.id, sample.strandedness, sample.single_end)
 
-    salmon, (marked, dup) = await asyncio.gather(quantify_salmon_bam(sample, alignment, ref), genome_bam_qc())
+        async def run_dupradar() -> DupradarResult | None:
+            if opts.skip_dupradar:
+                return None
+            return await dupradar(bam, ref.gtf, sample.id, sample.strandedness, sample.single_end)
+
+        async def run_qualimap() -> Dir | None:
+            if opts.skip_qualimap:
+                return None
+            # As upstream: Qualimap on a name-sorted copy, told it's sorted.
+            namesorted = await samtools_sort(bam=bam, args="-n")
+            return await qualimap_rnaseq(
+                namesorted, ref.gtf, sample.id, sample.strandedness, sample.single_end, args="--sorted"
+            )
+
+        dup, qm = await asyncio.gather(run_dupradar(), run_qualimap())
+        return marked, dup, qm
+
+    salmon, (marked, dup, qm) = await asyncio.gather(quantify_salmon_bam(sample, alignment, ref), genome_bam_qc())
     return SampleResult(
         sample=sample.id,
         strandedness=sample.strandedness,
@@ -589,6 +606,7 @@ async def run_sample(
         salmon=salmon,
         markduplicates=marked,
         dupradar=dup,
+        qualimap=qm,
     )
 
 
@@ -666,6 +684,7 @@ async def rnaseq(
     extra_fqlint_args: str = "--disable-validator P001",
     skip_markduplicates: bool = False,
     skip_dupradar: bool = False,
+    skip_qualimap: bool = False,
     seq_platform: str = "",
     seq_center: str = "",
     skip_fastqc: bool = False,
@@ -711,6 +730,7 @@ async def rnaseq(
         extra_fqlint_args=extra_fqlint_args,
         skip_markduplicates=skip_markduplicates,
         skip_dupradar=skip_dupradar,
+        skip_qualimap=skip_qualimap,
     )
 
     async def strandedness_index() -> Dir:

@@ -16,6 +16,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.gtffilter` — restrict a GTF to a genome's sequences.
 - :mod:`flyte_bio.modules.gunzip` — single-file gzip decompression.
 - :mod:`flyte_bio.modules.picard` — Picard MarkDuplicates.
+- :mod:`flyte_bio.modules.qualimap` — RNA-seq alignment QC.
 - :mod:`flyte_bio.modules.salmon` — transcript quantification (index, quant).
 - :mod:`flyte_bio.modules.samtools` — alignment sort/index/stats/faidx.
 - :mod:`flyte_bio.modules.star` — spliced RNA-seq aligner (index, align).
@@ -48,6 +49,7 @@ from .gtf2bed import env as gtf2bed_env
 from .gtffilter import env as gtffilter_env
 from .gunzip import env as gunzip_env
 from .picard import env as picard_env
+from .qualimap import env as qualimap_env
 from .salmon import env as salmon_env
 from .samtools import env as samtools_env
 from .star import env as star_env
@@ -72,6 +74,7 @@ env = flyte.TaskEnvironment(
         gtffilter_env,
         gunzip_env,
         picard_env,
+        qualimap_env,
         salmon_env,
         samtools_env,
         star_env,
@@ -97,6 +100,7 @@ __all__ = [
     "gtffilter_env",
     "gunzip_env",
     "picard_env",
+    "qualimap_env",
     "salmon_env",
     "samtools_env",
     "star_env",

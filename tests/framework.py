@@ -107,8 +107,11 @@ env = flyte.TaskEnvironment(
 TEST_DATA_BASE = "https://raw.githubusercontent.com/nf-core/test-datasets/modules/data/"
 
 
-def download_http(url: str) -> str:
-    """Stream an ``http(s)`` URL to a local temp file and return its path.
+def download_http(url: str, dest_dir: str) -> str:
+    """Stream an ``http(s)`` URL into ``dest_dir`` under its original basename.
+
+    Keeping the basename (as nf-test stages fixtures) matters for tools that
+    record or sniff their input file names.
 
     Deliberately uses ``requests`` rather than :func:`flyte.storage.get`:
     that routes ``https`` through fsspec's ``HTTPFileSystem``, which binds
@@ -119,12 +122,10 @@ def download_http(url: str) -> str:
     synchronous ``requests`` download has no event loop to mismatch; call
     it from a worker thread via :func:`asyncio.to_thread`.
     """
-    suffix = Path(urlsplit(url).path).suffix
-    fd, path = tempfile.mkstemp(suffix=suffix)
-    with os.fdopen(fd, "wb") as out, requests.get(url, stream=True, timeout=60) as resp:
+    path = os.path.join(dest_dir, Path(urlsplit(url).path).name)
+    with open(path, "wb") as out, requests.get(url, stream=True, timeout=60) as resp:
         resp.raise_for_status()
-        for chunk in resp.iter_content(1 << 20):
-            out.write(chunk)
+        out.writelines(resp.iter_content(1 << 20))
     return path
 
 
@@ -148,7 +149,7 @@ async def fixture(rel_path: str) -> File:
     else:
         url = TEST_DATA_BASE + rel_path.lstrip("/")
     if url.startswith(("http://", "https://")):
-        local = await asyncio.to_thread(download_http, url)
+        local = await asyncio.to_thread(download_http, url, tempfile.mkdtemp())
     else:
         local = await storage.get(url)
     return await File.from_local(local)

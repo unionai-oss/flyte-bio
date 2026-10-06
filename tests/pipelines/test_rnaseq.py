@@ -157,6 +157,9 @@ async def test_rnaseq_star_salmon() -> None:
         async with r.dupradar.intercept_mqc.open("rb") as fh:
             last = bytes(await fh.read()).decode().strip().splitlines()[-1]
         assert last.split()[0] == r.sample, f"dupradar mqc sample name {last!r}"
+        assert r.qualimap is not None
+        for name in ("qualimapReport.html", "rnaseq_qc_results.txt"):
+            assert await r.qualimap.get_file(name) is not None, f"{r.sample}: qualimap wrote no {name}"
         quant = await r.salmon.get_file("quant.sf")
         assert quant is not None, f"{r.sample}: salmon results have no quant.sf"
         await assert_nonempty(quant, label=f"{r.sample} quant.sf")
