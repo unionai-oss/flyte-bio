@@ -17,6 +17,7 @@ Composes :mod:`flyte_bio.modules` tasks into the ``star_salmon`` path:
   transcriptome BAM), then sort / index / stats the genome BAM.
 - :func:`mark_duplicates` — Picard MarkDuplicates on the genome BAM, then
   index / stats the marked BAM, which replaces it downstream (as upstream).
+- dupRadar on the (marked) genome BAM for duplication-rate QC.
 - :func:`quantify_salmon_bam` — salmon alignment-mode quantification of the
   transcriptome BAM.
 - :func:`merge_quantifications` — tx2gene + tximport across all samples into
@@ -29,7 +30,7 @@ task and fan out to the module tasks, so the caller's
 :class:`flyte.TaskEnvironment` must ``depends_on`` :data:`flyte_bio.modules.env`.
 
 Not yet covered (the rest of the upstream default path): StringTie, bigWig
-coverage, the BAM QC (Qualimap, RSeQC, dupRadar, biotype featureCounts),
+coverage, the BAM QC (Qualimap, RSeQC, biotype featureCounts),
 deseq2_qc and MultiQC. rRNA removal and UMI deduplication (off upstream by
 default) aren't ported either.
 """
@@ -46,6 +47,7 @@ from flyte.io import Dir, File
 from flyte_bio.modules.bbmap import BBSplitResult, bbsplit, bbsplit_index
 from flyte_bio.modules.cat import cat_fastq
 from flyte_bio.modules.catadditionalfasta import cat_additional_fasta
+from flyte_bio.modules.dupradar import DupradarResult, dupradar
 from flyte_bio.modules.fastqc import fastqc
 from flyte_bio.modules.fq import fq_lint, fq_subsample
 from flyte_bio.modules.gffread import gffread_gff_to_gtf, gffread_transcripts_fasta
@@ -168,6 +170,7 @@ class SampleResult:
     alignment: StarAlignment
     salmon: Dir
     markduplicates: MarkedDuplicates | None = None  # None when skip_markduplicates
+    dupradar: DupradarResult | None = None  # None when skip_dupradar
 
 
 @dataclass
@@ -527,6 +530,7 @@ class RunOptions:
     skip_linting: bool = False
     extra_fqlint_args: str = "--disable-validator P001"
     skip_markduplicates: bool = False
+    skip_dupradar: bool = False
 
 
 async def run_sample(
@@ -567,7 +571,15 @@ async def run_sample(
     async def markdup() -> MarkedDuplicates | None:
         return None if opts.skip_markduplicates else await mark_duplicates(sample, alignment, ref)
 
-    salmon, marked = await asyncio.gather(quantify_salmon_bam(sample, alignment, ref), markdup())
+    async def genome_bam_qc() -> tuple[MarkedDuplicates | None, DupradarResult | None]:
+        marked = await markdup()
+        if opts.skip_dupradar:
+            return marked, None
+        # As upstream, the QC runs on the duplicate-marked BAM when there is one.
+        bam = marked.bam if marked is not None else alignment.bam
+        return marked, await dupradar(bam, ref.gtf, sample.id, sample.strandedness, sample.single_end)
+
+    salmon, (marked, dup) = await asyncio.gather(quantify_salmon_bam(sample, alignment, ref), genome_bam_qc())
     return SampleResult(
         sample=sample.id,
         strandedness=sample.strandedness,
@@ -576,6 +588,7 @@ async def run_sample(
         alignment=alignment,
         salmon=salmon,
         markduplicates=marked,
+        dupradar=dup,
     )
 
 
@@ -652,6 +665,7 @@ async def rnaseq(
     skip_linting: bool = False,
     extra_fqlint_args: str = "--disable-validator P001",
     skip_markduplicates: bool = False,
+    skip_dupradar: bool = False,
     seq_platform: str = "",
     seq_center: str = "",
     skip_fastqc: bool = False,
@@ -696,6 +710,7 @@ async def rnaseq(
         skip_linting=skip_linting,
         extra_fqlint_args=extra_fqlint_args,
         skip_markduplicates=skip_markduplicates,
+        skip_dupradar=skip_dupradar,
     )
 
     async def strandedness_index() -> Dir:

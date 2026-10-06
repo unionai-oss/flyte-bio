@@ -151,6 +151,12 @@ async def test_rnaseq_star_salmon() -> None:
         assert md is not None
         for label, f in [("bam", md.bam), ("bai", md.bai), ("metrics", md.metrics), ("flagstat", md.flagstat)]:
             await assert_nonempty(f, label=f"{r.sample} markdup {label}")
+        assert r.dupradar is not None
+        for label, f in [("dupMatrix", r.dupradar.dup_matrix), ("intercept mqc", r.dupradar.intercept_mqc)]:
+            await assert_nonempty(f, label=f"{r.sample} dupradar {label}")
+        async with r.dupradar.intercept_mqc.open("rb") as fh:
+            last = bytes(await fh.read()).decode().strip().splitlines()[-1]
+        assert last.split()[0] == r.sample, f"dupradar mqc sample name {last!r}"
         quant = await r.salmon.get_file("quant.sf")
         assert quant is not None, f"{r.sample}: salmon results have no quant.sf"
         await assert_nonempty(quant, label=f"{r.sample} quant.sf")

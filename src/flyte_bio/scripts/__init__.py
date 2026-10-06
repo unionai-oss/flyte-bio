@@ -66,6 +66,7 @@ ship_in_bundle(
     "tx2gene.py",
     "tximport.r",
     "summarizedexperiment.r",
+    "dupradar.r",
 )
 
 

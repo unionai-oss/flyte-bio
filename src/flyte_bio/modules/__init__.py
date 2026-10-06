@@ -7,6 +7,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.bedtools` — genome arithmetic (intersect, sort,
   merge).
 - :mod:`flyte_bio.modules.cat` — file concatenation (``cat_fastq``).
+- :mod:`flyte_bio.modules.dupradar` — duplication rate vs expression QC.
 - :mod:`flyte_bio.modules.fastqc` — read quality-control reports.
 - :mod:`flyte_bio.modules.catadditionalfasta` — append an extra FASTA + GTF.
 - :mod:`flyte_bio.modules.fq` — FASTQ subsampling and linting.
@@ -39,6 +40,7 @@ from .bbmap import env as bbmap_env
 from .bedtools import env as bedtools_env
 from .cat import env as cat_env
 from .catadditionalfasta import env as catadditionalfasta_env
+from .dupradar import env as dupradar_env
 from .fastqc import env as fastqc_env
 from .fq import env as fq_env
 from .gffread import env as gffread_env
@@ -62,6 +64,7 @@ env = flyte.TaskEnvironment(
         bedtools_env,
         cat_env,
         catadditionalfasta_env,
+        dupradar_env,
         fastqc_env,
         fq_env,
         gffread_env,
@@ -85,6 +88,7 @@ __all__ = [
     "bedtools_env",
     "cat_env",
     "catadditionalfasta_env",
+    "dupradar_env",
     "env",
     "fastqc_env",
     "fq_env",
