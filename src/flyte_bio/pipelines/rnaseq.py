@@ -15,6 +15,8 @@ Composes :mod:`flyte_bio.modules` tasks into the ``star_salmon`` path:
   as forward / reverse / unstranded, as upstream does.
 - :func:`align_star` — align the trimmed reads with STAR (emitting a
   transcriptome BAM), then sort / index / stats the genome BAM.
+- :func:`mark_duplicates` — Picard MarkDuplicates on the genome BAM, then
+  index / stats the marked BAM, which replaces it downstream (as upstream).
 - :func:`quantify_salmon_bam` — salmon alignment-mode quantification of the
   transcriptome BAM.
 - :func:`merge_quantifications` — tx2gene + tximport across all samples into
@@ -26,8 +28,10 @@ These are plain async functions, not tasks: they run inside the caller's
 task and fan out to the module tasks, so the caller's
 :class:`flyte.TaskEnvironment` must ``depends_on`` :data:`flyte_bio.modules.env`.
 
-Not yet covered (the rest of the upstream default path): rRNA removal, UMI
-deduplication, duplicate marking and the QC reports.
+Not yet covered (the rest of the upstream default path): StringTie, bigWig
+coverage, the BAM QC (Qualimap, RSeQC, dupRadar, biotype featureCounts),
+deseq2_qc and MultiQC. rRNA removal and UMI deduplication (off upstream by
+default) aren't ported either.
 """
 
 import asyncio
@@ -48,6 +52,7 @@ from flyte_bio.modules.gffread import gffread_gff_to_gtf, gffread_transcripts_fa
 from flyte_bio.modules.gtf2bed import gtf2bed
 from flyte_bio.modules.gtffilter import gtf_filter
 from flyte_bio.modules.gunzip import gunzip
+from flyte_bio.modules.picard import picard_markduplicates
 from flyte_bio.modules.salmon import salmon_index, salmon_quant_bam, salmon_quant_reads
 from flyte_bio.modules.samtools import (
     samtools_faidx,
@@ -145,6 +150,16 @@ class StrandednessAnalysis:
 
 
 @dataclass
+class MarkedDuplicates:
+    bam: File  # <sample>.markdup.sorted.bam (duplicates flagged, not removed)
+    bai: File
+    metrics: File  # Picard duplication metrics
+    stats: File
+    flagstat: File
+    idxstats: File
+
+
+@dataclass
 class SampleResult:
     sample: str
     strandedness: str  # as used for quantification (inferred for ``auto`` samples)
@@ -152,6 +167,7 @@ class SampleResult:
     preprocessing: PreprocessedReads
     alignment: StarAlignment
     salmon: Dir
+    markduplicates: MarkedDuplicates | None = None  # None when skip_markduplicates
 
 
 @dataclass
@@ -380,6 +396,28 @@ async def align_star(
     )
 
 
+# Upstream's Picard MarkDuplicates options for the genome BAM.
+MARKDUPLICATES_ARGS = "--ASSUME_SORTED true --REMOVE_DUPLICATES false --VALIDATION_STRINGENCY LENIENT --TMP_DIR tmp"
+
+
+async def mark_duplicates(sample: Sample, alignment: StarAlignment, genome: Genome) -> MarkedDuplicates:
+    """Picard MarkDuplicates on the sorted genome BAM, then index / stats it, as upstream."""
+    marked = await picard_markduplicates(
+        alignment.bam,
+        prefix=f"{sample.id}.markdup.sorted",
+        fasta=genome.fasta,
+        fai=genome.fai,
+        args=MARKDUPLICATES_ARGS,
+    )
+    bai = await samtools_index(bam=marked.bam)
+    stats, flagstat, idxstats = await asyncio.gather(
+        samtools_stats(bam=marked.bam),
+        samtools_flagstat(bam=marked.bam),
+        samtools_idxstats(bam=marked.bam, bai=bai),
+    )
+    return MarkedDuplicates(marked.bam, bai, marked.metrics, stats, flagstat, idxstats)
+
+
 def calculate_strandedness(
     forward: float,
     reverse: float,
@@ -488,6 +526,7 @@ class RunOptions:
     unstranded_threshold: float = 0.1
     skip_linting: bool = False
     extra_fqlint_args: str = "--disable-validator P001"
+    skip_markduplicates: bool = False
 
 
 async def run_sample(
@@ -524,7 +563,11 @@ async def run_sample(
         sample = replace(sample, strandedness=inferred)
 
     alignment = await align_star(sample, reads.reads_1, reads.reads_2, ref, opts.seq_platform, opts.seq_center)
-    salmon = await quantify_salmon_bam(sample, alignment, ref)
+
+    async def markdup() -> MarkedDuplicates | None:
+        return None if opts.skip_markduplicates else await mark_duplicates(sample, alignment, ref)
+
+    salmon, marked = await asyncio.gather(quantify_salmon_bam(sample, alignment, ref), markdup())
     return SampleResult(
         sample=sample.id,
         strandedness=sample.strandedness,
@@ -532,6 +575,7 @@ async def run_sample(
         preprocessing=reads,
         alignment=alignment,
         salmon=salmon,
+        markduplicates=marked,
     )
 
 
@@ -607,6 +651,7 @@ async def rnaseq(
     skip_bbsplit: bool = True,
     skip_linting: bool = False,
     extra_fqlint_args: str = "--disable-validator P001",
+    skip_markduplicates: bool = False,
     seq_platform: str = "",
     seq_center: str = "",
     skip_fastqc: bool = False,
@@ -650,6 +695,7 @@ async def rnaseq(
         unstranded_threshold=unstranded_threshold,
         skip_linting=skip_linting,
         extra_fqlint_args=extra_fqlint_args,
+        skip_markduplicates=skip_markduplicates,
     )
 
     async def strandedness_index() -> Dir:

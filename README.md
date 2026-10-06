@@ -75,6 +75,7 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
 - `gtf2bed` — `gtf2bed`
 - `gtffilter` — `gtf_filter`
 - `gunzip` — `gunzip`
+- `picard` — `picard_markduplicates`
 - `salmon` — `salmon_index`, `salmon_quant_reads`, `salmon_quant_bam`
 - `samtools` — `samtools_faidx`, `samtools_sort`, `samtools_index`, `samtools_stats`, `samtools_flagstat`, `samtools_idxstats`
 - `star` — `star_genome_generate`, `star_align`
@@ -88,9 +89,9 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
 
 - `rnaseq` — STAR alignment + salmon quantification (the `star_salmon` path
   of rnaseq 3.26.0): `prepare_genome`, `align_star`, `quantify_salmon_bam`,
-  `rnaseq`, with read linting, QC/trimming, BBSplit, strandedness inference
-  and the tximport/SummarizedExperiment merge. rRNA removal, UMI dedup and
-  the QC reports are not ported yet.
+  `rnaseq`, with read linting, QC/trimming, BBSplit, strandedness inference,
+  duplicate marking and the tximport/SummarizedExperiment merge. StringTie,
+  bigWig coverage, the BAM QC tools, deseq2_qc and MultiQC are not ported yet.
 
 More tools and pipelines are added as needed. Contributions following the same
 pattern (one file per tool family, sharing one biocontainer image, exposing a
@@ -117,15 +118,16 @@ To revert:
    `star_align.reads_2`, `bedtools_intersect.g`, `bedtools_sort.g`,
    `summarized_experiment_cmd.rowdata` / `.coldata`, `fastqc.reads_2`,
    `trimgalore_cmd.reads_2`, `fq_subsample_cmd.reads_2`, `fq_lint.reads_2`,
-   `bbsplit_cmd.reads_2`
+   `bbsplit_cmd.reads_2`, `picard_markduplicates_cmd.fasta` / `.fai`
    (each is marked with a `flyteorg/flyte#8118` comment).
 2. Update the scripts that read them through a `nullglob` array
    (salmon index/quant, STAR, summarizedexperiment, fastqc, trimgalore, fq,
-   bbsplit); the
+   bbsplit, picard); the
    bedtools `-g` flag
    needs no script change.
 3. Update callers: `align_star` in `pipelines/rnaseq.py` (`reads_2=[...]`),
-   the `summarized_experiment`, `trimgalore`, `fq_subsample` and `bbsplit` wrappers,
+   the `summarized_experiment`, `trimgalore`, `fq_subsample`, `bbsplit` and
+   `picard_markduplicates` wrappers,
    the `lint` helper and the `fastqc` call in
    `pipelines/rnaseq.py`, `tests/modules/test_fastqc.py`,
    `tests/modules/test_star.py` and `tests/modules/test_salmon.py`.

@@ -147,6 +147,10 @@ async def test_rnaseq_star_salmon() -> None:
         await assert_nonempty(pre.bbsplit.reads_1, label=f"{r.sample} bbsplit primary R1")
         assert (pre.bbsplit.reads_2 is None) == (pre.reads_2 is None)
         assert pre.reads_1 is pre.bbsplit.reads_1  # alignment uses the primary-genome reads
+        md = r.markduplicates
+        assert md is not None
+        for label, f in [("bam", md.bam), ("bai", md.bai), ("metrics", md.metrics), ("flagstat", md.flagstat)]:
+            await assert_nonempty(f, label=f"{r.sample} markdup {label}")
         quant = await r.salmon.get_file("quant.sf")
         assert quant is not None, f"{r.sample}: salmon results have no quant.sf"
         await assert_nonempty(quant, label=f"{r.sample} quant.sf")
