@@ -13,6 +13,7 @@ from dataclasses import fields
 
 from flyte.io import File
 
+from flyte_bio.modules.rseqc import DEFAULT_MODULES as RSEQC_MODULES
 from flyte_bio.pipelines.rnaseq import Sample, rnaseq
 from tests.framework import assert_dir_nonempty, assert_nonempty, env, fixture, fixture_dir
 
@@ -160,6 +161,10 @@ async def test_rnaseq_star_salmon() -> None:
         assert r.qualimap is not None
         for name in ("qualimapReport.html", "rnaseq_qc_results.txt"):
             assert await r.qualimap.get_file(name) is not None, f"{r.sample}: qualimap wrote no {name}"
+        assert sorted(r.rseqc) == sorted(RSEQC_MODULES), sorted(r.rseqc)
+        infer = await r.rseqc["infer_experiment"].get_file(f"{r.sample}.infer_experiment.txt")
+        assert infer is not None, f"{r.sample}: no infer_experiment.txt"
+        await assert_nonempty(infer, label=f"{r.sample} infer_experiment")
         quant = await r.salmon.get_file("quant.sf")
         assert quant is not None, f"{r.sample}: salmon results have no quant.sf"
         await assert_nonempty(quant, label=f"{r.sample} quant.sf")

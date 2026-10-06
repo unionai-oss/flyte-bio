@@ -78,6 +78,8 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
 - `gunzip` — `gunzip`
 - `picard` — `picard_markduplicates`
 - `qualimap` — `qualimap_rnaseq`
+- `rseqc` — `bam_stat`, `infer_experiment`, `inner_distance`, `junction_annotation`,
+  `junction_saturation`, `read_distribution`, `read_duplication`, `rseqc`
 - `salmon` — `salmon_index`, `salmon_quant_reads`, `salmon_quant_bam`
 - `samtools` — `samtools_faidx`, `samtools_sort`, `samtools_index`, `samtools_stats`, `samtools_flagstat`, `samtools_idxstats`
 - `star` — `star_genome_generate`, `star_align`
@@ -92,9 +94,9 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
 - `rnaseq` — STAR alignment + salmon quantification (the `star_salmon` path
   of rnaseq 3.26.0): `prepare_genome`, `align_star`, `quantify_salmon_bam`,
   `rnaseq`, with read linting, QC/trimming, BBSplit, strandedness inference,
-  duplicate marking, dupRadar, Qualimap and the tximport/SummarizedExperiment
-  merge. StringTie, bigWig coverage, RSeQC, biotype QC, deseq2_qc and MultiQC
-  are not ported yet.
+  duplicate marking, dupRadar, Qualimap, RSeQC and the
+  tximport/SummarizedExperiment merge. StringTie, bigWig coverage, biotype QC,
+  deseq2_qc and MultiQC are not ported yet.
 
 More tools and pipelines are added as needed. Contributions following the same
 pattern (one file per tool family, sharing one biocontainer image, exposing a
