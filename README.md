@@ -66,7 +66,7 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
 ### Modules (`flyte_bio.modules`)
 
 - `bbmap` — `bbsplit_index`, `bbsplit`
-- `bedtools` — `bedtools_intersect`, `bedtools_sort`, `bedtools_merge`
+- `bedtools` — `bedtools_intersect`, `bedtools_sort`, `bedtools_merge`, `bedtools_genomecov`
 - `cat` — `cat_fastq`
 - `catadditionalfasta` — `cat_additional_fasta`
 - `dupradar` — `dupradar`
@@ -90,6 +90,7 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
 - `trimgalore` — `trimgalore`
 - `tx2gene` — `tx2gene`
 - `tximport` — `tximport`, `collect_quants`
+- `ucsc` — `bedclip`, `bedgraphtobigwig`
 - `untar` — `untar`
 
 ### Pipelines (`flyte_bio.pipelines`)
@@ -97,8 +98,8 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
 - `rnaseq` — STAR alignment + salmon quantification (the `star_salmon` path
   of rnaseq 3.26.0): `prepare_genome`, `align_star`, `quantify_salmon_bam`,
   `rnaseq`, with read linting, QC/trimming, BBSplit, strandedness inference,
-  duplicate marking, StringTie, dupRadar, Qualimap, RSeQC, the featureCounts
-  biotype QC and the tximport/SummarizedExperiment merge. bigWig coverage,
+  duplicate marking, StringTie, bigWig coverage, dupRadar, Qualimap, RSeQC, the
+  featureCounts biotype QC and the tximport/SummarizedExperiment merge.
   deseq2_qc and MultiQC are not ported yet.
 
 More tools and pipelines are added as needed. Contributions following the same

@@ -8,6 +8,7 @@ Currently exposed:
 - :data:`bedtools_intersect` — report overlaps between two feature files.
 - :data:`bedtools_sort` — sort BED/GFF/VCF features by chromosome and start.
 - :data:`bedtools_merge` — combine overlapping or nearby features into one.
+- :func:`bedtools_genomecov` — genome-wide coverage of a BAM (e.g. bedGraph).
 
 The module-level :data:`env` is a single :class:`flyte.TaskEnvironment`
 containing every bedtools task. All commands share the same biocontainer
@@ -28,7 +29,7 @@ gain access to every bedtools subcommand at once::
 
 import flyte
 from flyte.extras import shell
-from flyte.io import File
+from flyte.io import Dir, File
 
 # Pinned biocontainer URI. Update when bumping bedtools version.
 BEDTOOLS_IMAGE = "quay.io/biocontainers/bedtools:2.31.1--hf5e1c6e_0"
@@ -171,9 +172,51 @@ bedtools_merge = shell.create(
     """,
 )
 
+# genomecov pipes through GNU `sort`, so (as upstream) it runs on the
+# bedtools + coreutils image. Output is `<prefix>.<extension>` in a Dir.
+GENOMECOV_IMAGE = "community.wave.seqera.io/library/bedtools_coreutils:a623c13f66d5262b"
+GENOMECOV_CPUS = 2
+GENOMECOV_MEMORY_GB = 6
+
+bedtools_genomecov_cmd = shell.create(
+    name="bedtools_genomecov",
+    image=GENOMECOV_IMAGE,
+    resources=flyte.Resources(cpu=GENOMECOV_CPUS, memory=f"{GENOMECOV_MEMORY_GB}Gi"),
+    inputs={"bam": File, "prefix": str, "extension": str, "sort": bool, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        BAM=({{inputs.bam}})
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}/{{inputs.prefix}}.{{inputs.extension}}
+        if [ {{inputs.sort}} = true ]; then
+            bedtools genomecov -ibam "${{BAM[0]}}" $ARGS \
+                | LC_ALL=C sort --parallel={GENOMECOV_CPUS} --buffer-size={GENOMECOV_MEMORY_GB // 2}G -k1,1 -k2,2n \
+                > "$OUT"
+        else
+            bedtools genomecov -ibam "${{BAM[0]}}" $ARGS > "$OUT"
+        fi
+    """,
+)
+
+
 env = flyte.TaskEnvironment.from_task(
     "bedtools",
     bedtools_intersect.as_task(),
     bedtools_sort.as_task(),
     bedtools_merge.as_task(),
 )
+
+# genomecov's image differs, and a TaskEnvironment holds one image.
+genomecov_env = flyte.TaskEnvironment.from_task("bedtools_genomecov", bedtools_genomecov_cmd.as_task())
+
+
+async def bedtools_genomecov(
+    bam: File, prefix: str, extension: str = "bedGraph", sort: bool = True, args: str = ""
+) -> File:
+    """Coverage of ``bam`` as ``<prefix>.<extension>``, sorted by chrom/start when ``sort`` (as upstream)."""
+    results = await bedtools_genomecov_cmd(bam=bam, prefix=prefix, extension=extension, sort=sort, args=args)
+    out = await results.get_file(f"{prefix}.{extension}")
+    if out is None:
+        raise FileNotFoundError(f"bedtools genomecov wrote no {prefix}.{extension}")
+    return out

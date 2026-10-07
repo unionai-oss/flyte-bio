@@ -5,7 +5,7 @@ across its tasks:
 
 - :mod:`flyte_bio.modules.bbmap` — BBSplit (index build + read binning).
 - :mod:`flyte_bio.modules.bedtools` — genome arithmetic (intersect, sort,
-  merge).
+  merge, genomecov).
 - :mod:`flyte_bio.modules.cat` — file concatenation (``cat_fastq``).
 - :mod:`flyte_bio.modules.dupradar` — duplication rate vs expression QC.
 - :mod:`flyte_bio.modules.fastqc` — read quality-control reports.
@@ -28,6 +28,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.trimgalore` — adapter/quality trimming.
 - :mod:`flyte_bio.modules.tx2gene` — transcript → gene table from a GTF.
 - :mod:`flyte_bio.modules.tximport` — count/TPM matrices from quantifications.
+- :mod:`flyte_bio.modules.ucsc` — bedClip / bedGraphToBigWig.
 - :mod:`flyte_bio.modules.untar` — tar archive extraction.
 
 The module-level :data:`env` here is an aggregate
@@ -43,6 +44,7 @@ import flyte
 
 from .bbmap import env as bbmap_env
 from .bedtools import env as bedtools_env
+from .bedtools import genomecov_env
 from .cat import env as cat_env
 from .catadditionalfasta import env as catadditionalfasta_env
 from .dupradar import env as dupradar_env
@@ -65,6 +67,7 @@ from .summarizedexperiment import env as summarizedexperiment_env
 from .trimgalore import env as trimgalore_env
 from .tx2gene import env as tx2gene_env
 from .tximport import env as tximport_env
+from .ucsc import env as ucsc_env
 from .untar import env as untar_env
 
 env = flyte.TaskEnvironment(
@@ -72,6 +75,7 @@ env = flyte.TaskEnvironment(
     depends_on=[
         bbmap_env,
         bedtools_env,
+        genomecov_env,
         cat_env,
         catadditionalfasta_env,
         dupradar_env,
@@ -94,6 +98,7 @@ env = flyte.TaskEnvironment(
         trimgalore_env,
         tx2gene_env,
         tximport_env,
+        ucsc_env,
         untar_env,
     ],
 )
@@ -107,6 +112,7 @@ __all__ = [
     "env",
     "fastqc_env",
     "fq_env",
+    "genomecov_env",
     "gffread_env",
     "gtf2bed_env",
     "gtffilter_env",
@@ -124,5 +130,6 @@ __all__ = [
     "trimgalore_env",
     "tx2gene_env",
     "tximport_env",
+    "ucsc_env",
     "untar_env",
 ]

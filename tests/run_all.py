@@ -49,6 +49,7 @@ from tests.modules import (
     test_trimgalore,
     test_tx2gene,
     test_tximport,
+    test_ucsc,
 )
 from tests.pipelines import test_rnaseq
 
@@ -76,6 +77,7 @@ ALL_TESTS = [
     *test_trimgalore.tests,
     *test_tx2gene.tests,
     *test_tximport.tests,
+    *test_ucsc.tests,
     *test_rnaseq.tests,
 ]
 

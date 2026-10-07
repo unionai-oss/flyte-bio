@@ -17,6 +17,8 @@ Composes :mod:`flyte_bio.modules` tasks into the ``star_salmon`` path:
   transcriptome BAM), then sort / index / stats the genome BAM.
 - :func:`mark_duplicates` — Picard MarkDuplicates on the genome BAM, then
   index / stats the marked BAM, which replaces it downstream (as upstream).
+- :func:`bigwig_coverage` — genome coverage bigWigs (per strand for stranded
+  libraries, plus combined), as upstream.
 - StringTie (reference-guided, ``-e``), dupRadar, Qualimap (on a name-sorted
   copy), RSeQC and the featureCounts biotype QC on the (marked) genome BAM.
 - :func:`quantify_salmon_bam` — salmon alignment-mode quantification of the
@@ -30,8 +32,8 @@ These are plain async functions, not tasks: they run inside the caller's
 task and fan out to the module tasks, so the caller's
 :class:`flyte.TaskEnvironment` must ``depends_on`` :data:`flyte_bio.modules.env`.
 
-Not yet covered (the rest of the upstream default path): bigWig coverage,
-deseq2_qc and MultiQC. rRNA removal and UMI deduplication (off upstream by
+Not yet covered (the rest of the upstream default path): deseq2_qc and
+MultiQC. rRNA removal and UMI deduplication (off upstream by
 default) aren't ported either.
 """
 
@@ -45,6 +47,7 @@ from pathlib import Path
 from flyte.io import Dir, File
 
 from flyte_bio.modules.bbmap import BBSplitResult, bbsplit, bbsplit_index
+from flyte_bio.modules.bedtools import bedtools_genomecov
 from flyte_bio.modules.cat import cat_fastq
 from flyte_bio.modules.catadditionalfasta import cat_additional_fasta
 from flyte_bio.modules.dupradar import DupradarResult, dupradar
@@ -75,6 +78,7 @@ from flyte_bio.modules.summarizedexperiment import summarized_experiment
 from flyte_bio.modules.trimgalore import TrimGaloreResult, trimgalore
 from flyte_bio.modules.tx2gene import tx2gene
 from flyte_bio.modules.tximport import TximportResult, collect_quants, tximport
+from flyte_bio.modules.ucsc import bedclip, bedgraphtobigwig
 
 STRANDEDNESS = ("auto", "forward", "reverse", "unstranded")
 
@@ -182,6 +186,7 @@ class SampleResult:
     biotype_counts: FeatureCountsResult | None = None  # featureCounts by biotype; None when skip_biotype_qc
     biotype_qc: BiotypeQC | None = None  # MultiQC biotype tables
     stringtie: StringTieResult | None = None  # None when skip_stringtie
+    bigwig: dict[str, File] = field(default_factory=dict)  # forward/reverse/combined -> bigWig; empty when skip_bigwig
 
 
 @dataclass
@@ -410,6 +415,38 @@ async def align_star(
     )
 
 
+async def bigwig_coverage(sample: Sample, bam: File, chrom_sizes: File) -> dict[str, File]:
+    """Genome coverage bigWigs, as upstream: combined, plus per strand when stranded.
+
+    Upstream names the per-strand tracks by transcript strand, so for a
+    reverse-stranded library ``<sample>.forward.bigWig`` comes from the
+    ``-strand -`` reads (and the intermediate bedGraph prefixes swap too).
+    """
+
+    async def track(cov_prefix: str, cov_args: str, clip_prefix: str, bw_prefix: str) -> File:
+        bedgraph = await bedtools_genomecov(bam, prefix=cov_prefix, extension="bedGraph", sort=True, args=cov_args)
+        clipped = await bedclip(bedgraph, chrom_sizes, prefix=clip_prefix)
+        return await bedgraphtobigwig(clipped, chrom_sizes, prefix=bw_prefix)
+
+    rev = sample.strandedness == "reverse"
+    tracks = {"combined": track(sample.id, "-split -bg", f"{sample.id}.clip", sample.id)}
+    if sample.strandedness in ("forward", "reverse"):
+        tracks["forward"] = track(
+            f"{sample.id}.reverse" if rev else f"{sample.id}.forward",
+            f"-split -du -strand {'-' if rev else '+'} -bg",
+            f"{sample.id}.clip.forward",
+            f"{sample.id}.forward",
+        )
+        tracks["reverse"] = track(
+            f"{sample.id}.forward" if rev else f"{sample.id}.reverse",
+            f"-split -du -strand {'+' if rev else '-'} -bg",
+            f"{sample.id}.clip.reverse",
+            f"{sample.id}.reverse",
+        )
+    results = await asyncio.gather(*tracks.values())
+    return dict(zip(tracks, results))
+
+
 # Upstream's Picard MarkDuplicates options for the genome BAM.
 MARKDUPLICATES_ARGS = "--ASSUME_SORTED true --REMOVE_DUPLICATES false --VALIDATION_STRINGENCY LENIENT --TMP_DIR tmp"
 
@@ -549,6 +586,7 @@ class RunOptions:
     featurecounts_group_type: str = "gene_biotype"
     featurecounts_feature_type: str = "exon"
     skip_stringtie: bool = False
+    skip_bigwig: bool = False
 
 
 async def run_sample(
@@ -596,6 +634,7 @@ async def run_sample(
         dict[str, Dir],
         tuple[FeatureCountsResult, BiotypeQC] | None,
         StringTieResult | None,
+        dict[str, File],
     ]:
         marked = await markdup()
         # As upstream, the QC runs on the duplicate-marked BAM when there is one.
@@ -641,12 +680,15 @@ async def run_sample(
             # As upstream: reference-guided (-G GTF), estimating known transcripts only (-e).
             return await stringtie(bam, sample.id, gtf=ref.gtf, strandedness=sample.strandedness, args="-v -e")
 
-        dup, qm, rs, bt, st = await asyncio.gather(
-            run_dupradar(), run_qualimap(), run_rseqc(), run_biotype_qc(), run_stringtie()
-        )
-        return marked, dup, qm, rs, bt, st
+        async def run_bigwig() -> dict[str, File]:
+            return {} if opts.skip_bigwig else await bigwig_coverage(sample, bam, ref.chrom_sizes)
 
-    salmon, (marked, dup, qm, rs, bt, st) = await asyncio.gather(
+        dup, qm, rs, bt, st, bw = await asyncio.gather(
+            run_dupradar(), run_qualimap(), run_rseqc(), run_biotype_qc(), run_stringtie(), run_bigwig()
+        )
+        return marked, dup, qm, rs, bt, st, bw
+
+    salmon, (marked, dup, qm, rs, bt, st, bw) = await asyncio.gather(
         quantify_salmon_bam(sample, alignment, ref), genome_bam_qc()
     )
     return SampleResult(
@@ -663,6 +705,7 @@ async def run_sample(
         biotype_counts=bt[0] if bt else None,
         biotype_qc=bt[1] if bt else None,
         stringtie=st,
+        bigwig=bw,
     )
 
 
@@ -747,6 +790,7 @@ async def rnaseq(
     featurecounts_group_type: str = "gene_biotype",
     featurecounts_feature_type: str = "exon",
     skip_stringtie: bool = False,
+    skip_bigwig: bool = False,
     seq_platform: str = "",
     seq_center: str = "",
     skip_fastqc: bool = False,
@@ -799,6 +843,7 @@ async def rnaseq(
         featurecounts_group_type=featurecounts_group_type,
         featurecounts_feature_type=featurecounts_feature_type,
         skip_stringtie=skip_stringtie,
+        skip_bigwig=skip_bigwig,
     )
 
     async def strandedness_index() -> Dir:

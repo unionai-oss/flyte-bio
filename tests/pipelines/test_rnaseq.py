@@ -171,6 +171,10 @@ async def test_rnaseq_star_salmon() -> None:
         assert r.stringtie is not None and r.stringtie.coverage_gtf is not None
         for label, f in [("transcripts.gtf", r.stringtie.transcripts_gtf), ("abundance", r.stringtie.abundance)]:
             await assert_nonempty(f, label=f"{r.sample} stringtie {label}")
+        # Every sample here is stranded (reverse), so it gets per-strand + combined tracks.
+        assert sorted(r.bigwig) == ["combined", "forward", "reverse"], sorted(r.bigwig)
+        for strand, f in r.bigwig.items():
+            await assert_nonempty(f, label=f"{r.sample} {strand} bigWig")
         quant = await r.salmon.get_file("quant.sf")
         assert quant is not None, f"{r.sample}: salmon results have no quant.sf"
         await assert_nonempty(quant, label=f"{r.sample} quant.sf")
