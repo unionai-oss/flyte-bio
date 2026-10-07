@@ -22,6 +22,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.salmon` — transcript quantification (index, quant).
 - :mod:`flyte_bio.modules.samtools` — alignment sort/index/stats/faidx.
 - :mod:`flyte_bio.modules.star` — spliced RNA-seq aligner (index, align).
+- :mod:`flyte_bio.modules.stringtie` — transcript assembly / quantification.
 - :mod:`flyte_bio.modules.subread` — featureCounts.
 - :mod:`flyte_bio.modules.summarizedexperiment` — bundle matrices into an RDS.
 - :mod:`flyte_bio.modules.trimgalore` — adapter/quality trimming.
@@ -58,6 +59,7 @@ from .rseqc import env as rseqc_env
 from .salmon import env as salmon_env
 from .samtools import env as samtools_env
 from .star import env as star_env
+from .stringtie import env as stringtie_env
 from .subread import env as subread_env
 from .summarizedexperiment import env as summarizedexperiment_env
 from .trimgalore import env as trimgalore_env
@@ -86,6 +88,7 @@ env = flyte.TaskEnvironment(
         salmon_env,
         samtools_env,
         star_env,
+        stringtie_env,
         subread_env,
         summarizedexperiment_env,
         trimgalore_env,
@@ -115,6 +118,7 @@ __all__ = [
     "salmon_env",
     "samtools_env",
     "star_env",
+    "stringtie_env",
     "subread_env",
     "summarizedexperiment_env",
     "trimgalore_env",

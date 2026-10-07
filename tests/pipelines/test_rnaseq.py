@@ -168,6 +168,9 @@ async def test_rnaseq_star_salmon() -> None:
         assert r.biotype_counts is not None and r.biotype_qc is not None
         await assert_nonempty(r.biotype_counts.counts, label=f"{r.sample} biotype featureCounts")
         await assert_nonempty(r.biotype_qc.counts_mqc, label=f"{r.sample} biotype_counts_mqc")
+        assert r.stringtie is not None and r.stringtie.coverage_gtf is not None
+        for label, f in [("transcripts.gtf", r.stringtie.transcripts_gtf), ("abundance", r.stringtie.abundance)]:
+            await assert_nonempty(f, label=f"{r.sample} stringtie {label}")
         quant = await r.salmon.get_file("quant.sf")
         assert quant is not None, f"{r.sample}: salmon results have no quant.sf"
         await assert_nonempty(quant, label=f"{r.sample} quant.sf")

@@ -17,8 +17,8 @@ Composes :mod:`flyte_bio.modules` tasks into the ``star_salmon`` path:
   transcriptome BAM), then sort / index / stats the genome BAM.
 - :func:`mark_duplicates` — Picard MarkDuplicates on the genome BAM, then
   index / stats the marked BAM, which replaces it downstream (as upstream).
-- dupRadar, Qualimap (on a name-sorted copy), RSeQC and the featureCounts
-  biotype QC on the (marked) genome BAM.
+- StringTie (reference-guided, ``-e``), dupRadar, Qualimap (on a name-sorted
+  copy), RSeQC and the featureCounts biotype QC on the (marked) genome BAM.
 - :func:`quantify_salmon_bam` — salmon alignment-mode quantification of the
   transcriptome BAM.
 - :func:`merge_quantifications` — tx2gene + tximport across all samples into
@@ -30,8 +30,7 @@ These are plain async functions, not tasks: they run inside the caller's
 task and fan out to the module tasks, so the caller's
 :class:`flyte.TaskEnvironment` must ``depends_on`` :data:`flyte_bio.modules.env`.
 
-Not yet covered (the rest of the upstream default path): StringTie, bigWig
-coverage,
+Not yet covered (the rest of the upstream default path): bigWig coverage,
 deseq2_qc and MultiQC. rRNA removal and UMI deduplication (off upstream by
 default) aren't ported either.
 """
@@ -70,6 +69,7 @@ from flyte_bio.modules.samtools import (
     samtools_stats,
 )
 from flyte_bio.modules.star import star_align, star_genome_generate
+from flyte_bio.modules.stringtie import StringTieResult, stringtie
 from flyte_bio.modules.subread import FeatureCountsResult, featurecounts
 from flyte_bio.modules.summarizedexperiment import summarized_experiment
 from flyte_bio.modules.trimgalore import TrimGaloreResult, trimgalore
@@ -181,6 +181,7 @@ class SampleResult:
     rseqc: dict[str, Dir] = field(default_factory=dict)  # RSeQC module -> outputs; empty when skip_rseqc
     biotype_counts: FeatureCountsResult | None = None  # featureCounts by biotype; None when skip_biotype_qc
     biotype_qc: BiotypeQC | None = None  # MultiQC biotype tables
+    stringtie: StringTieResult | None = None  # None when skip_stringtie
 
 
 @dataclass
@@ -547,6 +548,7 @@ class RunOptions:
     skip_biotype_qc: bool = False
     featurecounts_group_type: str = "gene_biotype"
     featurecounts_feature_type: str = "exon"
+    skip_stringtie: bool = False
 
 
 async def run_sample(
@@ -593,6 +595,7 @@ async def run_sample(
         Dir | None,
         dict[str, Dir],
         tuple[FeatureCountsResult, BiotypeQC] | None,
+        StringTieResult | None,
     ]:
         marked = await markdup()
         # As upstream, the QC runs on the duplicate-marked BAM when there is one.
@@ -632,10 +635,18 @@ async def run_sample(
             )
             return counts, await multiqc_custom_biotype(counts.counts, prefix=sample.id)
 
-        dup, qm, rs, bt = await asyncio.gather(run_dupradar(), run_qualimap(), run_rseqc(), run_biotype_qc())
-        return marked, dup, qm, rs, bt
+        async def run_stringtie() -> StringTieResult | None:
+            if opts.skip_stringtie:
+                return None
+            # As upstream: reference-guided (-G GTF), estimating known transcripts only (-e).
+            return await stringtie(bam, sample.id, gtf=ref.gtf, strandedness=sample.strandedness, args="-v -e")
 
-    salmon, (marked, dup, qm, rs, bt) = await asyncio.gather(
+        dup, qm, rs, bt, st = await asyncio.gather(
+            run_dupradar(), run_qualimap(), run_rseqc(), run_biotype_qc(), run_stringtie()
+        )
+        return marked, dup, qm, rs, bt, st
+
+    salmon, (marked, dup, qm, rs, bt, st) = await asyncio.gather(
         quantify_salmon_bam(sample, alignment, ref), genome_bam_qc()
     )
     return SampleResult(
@@ -651,6 +662,7 @@ async def run_sample(
         rseqc=rs,
         biotype_counts=bt[0] if bt else None,
         biotype_qc=bt[1] if bt else None,
+        stringtie=st,
     )
 
 
@@ -734,6 +746,7 @@ async def rnaseq(
     skip_biotype_qc: bool = False,
     featurecounts_group_type: str = "gene_biotype",
     featurecounts_feature_type: str = "exon",
+    skip_stringtie: bool = False,
     seq_platform: str = "",
     seq_center: str = "",
     skip_fastqc: bool = False,
@@ -785,6 +798,7 @@ async def rnaseq(
         skip_biotype_qc=skip_biotype_qc,
         featurecounts_group_type=featurecounts_group_type,
         featurecounts_feature_type=featurecounts_feature_type,
+        skip_stringtie=skip_stringtie,
     )
 
     async def strandedness_index() -> Dir:

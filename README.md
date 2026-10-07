@@ -84,6 +84,7 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
 - `salmon` — `salmon_index`, `salmon_quant_reads`, `salmon_quant_bam`
 - `samtools` — `samtools_faidx`, `samtools_sort`, `samtools_index`, `samtools_stats`, `samtools_flagstat`, `samtools_idxstats`
 - `star` — `star_genome_generate`, `star_align`
+- `stringtie` — `stringtie`
 - `subread` — `featurecounts`
 - `summarizedexperiment` — `summarized_experiment`
 - `trimgalore` — `trimgalore`
@@ -96,8 +97,8 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
 - `rnaseq` — STAR alignment + salmon quantification (the `star_salmon` path
   of rnaseq 3.26.0): `prepare_genome`, `align_star`, `quantify_salmon_bam`,
   `rnaseq`, with read linting, QC/trimming, BBSplit, strandedness inference,
-  duplicate marking, dupRadar, Qualimap, RSeQC, the featureCounts biotype QC
-  and the tximport/SummarizedExperiment merge. StringTie, bigWig coverage,
+  duplicate marking, StringTie, dupRadar, Qualimap, RSeQC, the featureCounts
+  biotype QC and the tximport/SummarizedExperiment merge. bigWig coverage,
   deseq2_qc and MultiQC are not ported yet.
 
 More tools and pipelines are added as needed. Contributions following the same
@@ -125,7 +126,8 @@ To revert:
    `star_align.reads_2`, `bedtools_intersect.g`, `bedtools_sort.g`,
    `summarized_experiment_cmd.rowdata` / `.coldata`, `fastqc.reads_2`,
    `trimgalore_cmd.reads_2`, `fq_subsample_cmd.reads_2`, `fq_lint.reads_2`,
-   `bbsplit_cmd.reads_2`, `picard_markduplicates_cmd.fasta` / `.fai`
+   `bbsplit_cmd.reads_2`, `picard_markduplicates_cmd.fasta` / `.fai`,
+   `stringtie_cmd.gtf`
    (each is marked with a `flyteorg/flyte#8118` comment).
 2. Update the scripts that read them through a `nullglob` array
    (salmon index/quant, STAR, summarizedexperiment, fastqc, trimgalore, fq,
