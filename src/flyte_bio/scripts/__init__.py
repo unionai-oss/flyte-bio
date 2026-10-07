@@ -67,6 +67,8 @@ ship_in_bundle(
     "tximport.r",
     "summarizedexperiment.r",
     "dupradar.r",
+    "multiqccustombiotype.py",
+    "biotypes_header.txt",
 )
 
 

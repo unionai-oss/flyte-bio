@@ -48,6 +48,6 @@ ignore = ["PGH003", "PLC0415"]
 # Vendored helper scripts (flyte_bio.scripts) preserve upstream logic
 # verbatim — don't restyle them. The package __init__ is ours and stays
 # strict (it trips none of these rules).
-"src/flyte_bio/scripts/*.py" = ["PLW2901", "E501", "EXE001", "RUF005"]
+"src/flyte_bio/scripts/*.py" = ["PLW2901", "E501", "EXE001", "RUF005", "LOG002", "FLY002"]
 # bbmap.py embeds upstream's BBSplit index-reuse bash verbatim (long sed/jshell lines).
 "src/flyte_bio/modules/bbmap.py" = ["E501"]

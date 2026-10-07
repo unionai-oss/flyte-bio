@@ -165,6 +165,9 @@ async def test_rnaseq_star_salmon() -> None:
         infer = await r.rseqc["infer_experiment"].get_file(f"{r.sample}.infer_experiment.txt")
         assert infer is not None, f"{r.sample}: no infer_experiment.txt"
         await assert_nonempty(infer, label=f"{r.sample} infer_experiment")
+        assert r.biotype_counts is not None and r.biotype_qc is not None
+        await assert_nonempty(r.biotype_counts.counts, label=f"{r.sample} biotype featureCounts")
+        await assert_nonempty(r.biotype_qc.counts_mqc, label=f"{r.sample} biotype_counts_mqc")
         quant = await r.salmon.get_file("quant.sf")
         assert quant is not None, f"{r.sample}: salmon results have no quant.sf"
         await assert_nonempty(quant, label=f"{r.sample} quant.sf")
