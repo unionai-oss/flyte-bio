@@ -186,6 +186,10 @@ async def test_rnaseq_star_salmon() -> None:
     await assert_nonempty(m.gene_rds, label="gene SummarizedExperiment")
     await assert_nonempty(m.transcript_rds, label="transcript SummarizedExperiment")
 
+    assert result.deseq2_qc is not None
+    await assert_nonempty(result.deseq2_qc.pca_multiqc, label="deseq2 pca mqc")
+    await assert_nonempty(result.deseq2_qc.dists_multiqc, label="deseq2 dists mqc")
+
     # Every sample (and nothing else) is a column of the merged gene matrix.
     async with m.tximport.counts_gene.open("rb") as fh:
         header = bytes(await fh.read()).decode().splitlines()[0].split("\t")

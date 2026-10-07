@@ -69,6 +69,7 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
 - `bedtools` — `bedtools_intersect`, `bedtools_sort`, `bedtools_merge`, `bedtools_genomecov`
 - `cat` — `cat_fastq`
 - `catadditionalfasta` — `cat_additional_fasta`
+- `deseq2_qc` — `deseq2_qc`
 - `dupradar` — `dupradar`
 - `fastqc` — `fastqc`
 - `fq` — `fq_subsample`, `fq_lint`
@@ -99,8 +100,8 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
   of rnaseq 3.26.0): `prepare_genome`, `align_star`, `quantify_salmon_bam`,
   `rnaseq`, with read linting, QC/trimming, BBSplit, strandedness inference,
   duplicate marking, StringTie, bigWig coverage, dupRadar, Qualimap, RSeQC, the
-  featureCounts biotype QC and the tximport/SummarizedExperiment merge.
-  deseq2_qc and MultiQC are not ported yet.
+  featureCounts biotype QC, the tximport/SummarizedExperiment merge and
+  deseq2_qc. MultiQC is not ported yet.
 
 More tools and pipelines are added as needed. Contributions following the same
 pattern (one file per tool family, sharing one biocontainer image, exposing a

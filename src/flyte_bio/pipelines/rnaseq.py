@@ -25,15 +25,15 @@ Composes :mod:`flyte_bio.modules` tasks into the ``star_salmon`` path:
   transcriptome BAM.
 - :func:`merge_quantifications` — tx2gene + tximport across all samples into
   gene/transcript count, TPM and length matrices, bundled as gene- and
-  transcript-level SummarizedExperiment RDS files.
+  transcript-level SummarizedExperiment RDS files, then DESeq2 PCA /
+  sample-distance QC on the merged gene counts.
 - :func:`rnaseq` — run all of the above, samples in parallel.
 
 These are plain async functions, not tasks: they run inside the caller's
 task and fan out to the module tasks, so the caller's
 :class:`flyte.TaskEnvironment` must ``depends_on`` :data:`flyte_bio.modules.env`.
 
-Not yet covered (the rest of the upstream default path): deseq2_qc and
-MultiQC. rRNA removal and UMI deduplication (off upstream by
+Not yet covered (the rest of the upstream default path): MultiQC. rRNA removal and UMI deduplication (off upstream by
 default) aren't ported either.
 """
 
@@ -50,6 +50,7 @@ from flyte_bio.modules.bbmap import BBSplitResult, bbsplit, bbsplit_index
 from flyte_bio.modules.bedtools import bedtools_genomecov
 from flyte_bio.modules.cat import cat_fastq
 from flyte_bio.modules.catadditionalfasta import cat_additional_fasta
+from flyte_bio.modules.deseq2_qc import Deseq2QCResult, deseq2_qc
 from flyte_bio.modules.dupradar import DupradarResult, dupradar
 from flyte_bio.modules.fastqc import fastqc
 from flyte_bio.modules.fq import fq_lint, fq_subsample
@@ -204,6 +205,7 @@ class RnaseqResult:
     salmon: MergedQuantification
     # Samples dropped for too few reads after trimming -> surviving read count.
     failed_trimming: dict[str, float] = field(default_factory=dict)
+    deseq2_qc: Deseq2QCResult | None = None  # None when skip_deseq2_qc
 
 
 async def maybe_gunzip(file: File | None) -> File | None:
@@ -791,6 +793,7 @@ async def rnaseq(
     featurecounts_feature_type: str = "exon",
     skip_stringtie: bool = False,
     skip_bigwig: bool = False,
+    skip_deseq2_qc: bool = False,
     seq_platform: str = "",
     seq_center: str = "",
     skip_fastqc: bool = False,
@@ -874,4 +877,6 @@ async def rnaseq(
     if not passed:
         raise RuntimeError(f"no samples passed the {min_trimmed_reads}-read trimming threshold: {failed}")
     merged = await merge_quantifications(samples, {r.sample: r.salmon for r in passed}, ref.gtf)
-    return RnaseqResult(genome=ref, samples=passed, salmon=merged, failed_trimming=failed)
+    # As upstream: DESeq2 QC of the merged length-scaled gene counts, labelled by aligner.
+    dqc = None if skip_deseq2_qc else await deseq2_qc(merged.tximport.counts_gene_length_scaled, label="star_salmon")
+    return RnaseqResult(genome=ref, samples=passed, salmon=merged, failed_trimming=failed, deseq2_qc=dqc)

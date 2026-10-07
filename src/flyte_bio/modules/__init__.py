@@ -7,6 +7,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.bedtools` — genome arithmetic (intersect, sort,
   merge, genomecov).
 - :mod:`flyte_bio.modules.cat` — file concatenation (``cat_fastq``).
+- :mod:`flyte_bio.modules.deseq2_qc` — DESeq2 PCA / sample-distance QC.
 - :mod:`flyte_bio.modules.dupradar` — duplication rate vs expression QC.
 - :mod:`flyte_bio.modules.fastqc` — read quality-control reports.
 - :mod:`flyte_bio.modules.catadditionalfasta` — append an extra FASTA + GTF.
@@ -47,6 +48,7 @@ from .bedtools import env as bedtools_env
 from .bedtools import genomecov_env
 from .cat import env as cat_env
 from .catadditionalfasta import env as catadditionalfasta_env
+from .deseq2_qc import env as deseq2_qc_env
 from .dupradar import env as dupradar_env
 from .fastqc import env as fastqc_env
 from .fq import env as fq_env
@@ -78,6 +80,7 @@ env = flyte.TaskEnvironment(
         genomecov_env,
         cat_env,
         catadditionalfasta_env,
+        deseq2_qc_env,
         dupradar_env,
         fastqc_env,
         fq_env,
@@ -108,6 +111,7 @@ __all__ = [
     "bedtools_env",
     "cat_env",
     "catadditionalfasta_env",
+    "deseq2_qc_env",
     "dupradar_env",
     "env",
     "fastqc_env",

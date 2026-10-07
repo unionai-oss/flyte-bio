@@ -69,6 +69,9 @@ ship_in_bundle(
     "dupradar.r",
     "multiqccustombiotype.py",
     "biotypes_header.txt",
+    "deseq2_qc.r",
+    "deseq2_pca_header.txt",
+    "deseq2_clustering_header.txt",
 )
 
 

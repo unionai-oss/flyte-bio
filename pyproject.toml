@@ -51,3 +51,5 @@ ignore = ["PGH003", "PLC0415"]
 "src/flyte_bio/scripts/*.py" = ["PLW2901", "E501", "EXE001", "RUF005", "LOG002", "FLY002"]
 # bbmap.py embeds upstream's BBSplit index-reuse bash verbatim (long sed/jshell lines).
 "src/flyte_bio/modules/bbmap.py" = ["E501"]
+# deseq2_qc.py embeds upstream's header-relabelling sed lines verbatim.
+"src/flyte_bio/modules/deseq2_qc.py" = ["E501"]
