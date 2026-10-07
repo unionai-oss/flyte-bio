@@ -72,6 +72,10 @@ ship_in_bundle(
     "deseq2_qc.r",
     "deseq2_pca_header.txt",
     "deseq2_clustering_header.txt",
+    "multiqc_config.yml",
+    "sample_status_header.txt",
+    "strand_check_summary.yaml",
+    "strand_check_composition.yaml",
 )
 
 

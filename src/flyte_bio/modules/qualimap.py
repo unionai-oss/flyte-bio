@@ -28,8 +28,16 @@ qualimap_rnaseq_cmd = shell.create(
     name="qualimap_rnaseq",
     image=QUALIMAP_IMAGE,
     resources=DEFAULT_RESOURCES,
-    inputs={"bam": File, "gtf": File, "prefix": str, "strandedness": str, "single_end": bool, "args": str},
-    defaults={"args": ""},
+    inputs={
+        "bam": File,
+        "gtf": File,
+        "prefix": str,
+        "strandedness": str,
+        "single_end": bool,
+        "bam_name": str,
+        "args": str,
+    },
+    defaults={"bam_name": "", "args": ""},
     outputs={"results": Dir},
     script=rf"""
         BAM=({{inputs.bam}}); GTF=({{inputs.gtf}})
@@ -43,7 +51,9 @@ qualimap_rnaseq_cmd = shell.create(
         PE=()
         [ {{inputs.single_end}} = true ] || PE=(-pe)
         W=$(mktemp -d); cd "$W"
-        ln -s "${{BAM[0]}}" "$(basename "${{BAM[0]}}")"
+        BAM_NAME={{inputs.bam_name}}
+        [ -n "$BAM_NAME" ] || BAM_NAME=$(basename "${{BAM[0]}}")
+        ln -s "${{BAM[0]}}" "$BAM_NAME"
         ln -s "${{GTF[0]}}" "$(basename "${{GTF[0]}}")"
         unset DISPLAY
         mkdir -p tmp
@@ -52,7 +62,7 @@ qualimap_rnaseq_cmd = shell.create(
             --java-mem-size={QUALIMAP_JAVA_MB}M \
             rnaseq \
             $ARGS \
-            -bam "$(basename "${{BAM[0]}}")" \
+            -bam "$BAM_NAME" \
             -gtf "$(basename "${{GTF[0]}}")" \
             -p $STRAND \
             "${{PE[@]}}" \
@@ -69,13 +79,27 @@ env = flyte.TaskEnvironment.from_task(
 
 
 async def qualimap_rnaseq(
-    bam: File, gtf: File, prefix: str, strandedness: str = "unstranded", single_end: bool = False, args: str = ""
+    bam: File,
+    gtf: File,
+    prefix: str,
+    strandedness: str = "unstranded",
+    single_end: bool = False,
+    args: str = "",
+    bam_name: str = "",
 ) -> Dir:
     """Run ``qualimap rnaseq`` on ``bam``; returns the report directory.
 
     ``strandedness`` is forward / reverse / anything else (non-strand-specific).
     Pass ``args="--sorted"`` for a name-sorted BAM, as upstream does.
+    ``bam_name`` stages the BAM under that name (Qualimap records it, and
+    MultiQC takes the sample name from it); default: its own basename.
     """
     return await qualimap_rnaseq_cmd(
-        bam=bam, gtf=gtf, prefix=prefix, strandedness=strandedness, single_end=single_end, args=args
+        bam=bam,
+        gtf=gtf,
+        prefix=prefix,
+        strandedness=strandedness,
+        single_end=single_end,
+        bam_name=bam_name,
+        args=args,
     )

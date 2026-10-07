@@ -33,17 +33,24 @@ These are plain async functions, not tasks: they run inside the caller's
 task and fan out to the module tasks, so the caller's
 :class:`flyte.TaskEnvironment` must ``depends_on`` :data:`flyte_bio.modules.env`.
 
-Not yet covered (the rest of the upstream default path): MultiQC. rRNA removal and UMI deduplication (off upstream by
+- :func:`multiqc_report` — one MultiQC report over every QC output, with
+  upstream's config and custom content (failed-sample tables, strandedness
+  checks, paired-end sample merging, FASTQ-to-sample name replacements).
+  Nextflow-specific sections (run parameters, software versions, methods
+  text) are omitted. rRNA removal and UMI deduplication (off upstream by
 default) aren't ported either.
 """
 
 import asyncio
 import csv
 import json
+import math
+import re
 import tempfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+import yaml
 from flyte.io import Dir, File
 
 from flyte_bio.modules.bbmap import BBSplitResult, bbsplit, bbsplit_index
@@ -58,6 +65,7 @@ from flyte_bio.modules.gffread import gffread_gff_to_gtf, gffread_transcripts_fa
 from flyte_bio.modules.gtf2bed import gtf2bed
 from flyte_bio.modules.gtffilter import gtf_filter
 from flyte_bio.modules.gunzip import gunzip
+from flyte_bio.modules.multiqc import MultiQCResult, multiqc
 from flyte_bio.modules.multiqccustombiotype import BiotypeQC, multiqc_custom_biotype
 from flyte_bio.modules.picard import picard_markduplicates
 from flyte_bio.modules.qualimap import qualimap_rnaseq
@@ -80,6 +88,7 @@ from flyte_bio.modules.trimgalore import TrimGaloreResult, trimgalore
 from flyte_bio.modules.tx2gene import tx2gene
 from flyte_bio.modules.tximport import TximportResult, collect_quants, tximport
 from flyte_bio.modules.ucsc import bedclip, bedgraphtobigwig
+from flyte_bio.scripts import path as asset
 
 STRANDEDNESS = ("auto", "forward", "reverse", "unstranded")
 
@@ -175,6 +184,8 @@ class MarkedDuplicates:
 @dataclass
 class SampleResult:
     sample: str
+    percent_mapped: float  # STAR "Uniquely mapped reads %"
+    mapping_passed: bool  # percent_mapped >= min_mapped_reads; if not, no genome-BAM steps ran
     strandedness: str  # as used for quantification (inferred for ``auto`` samples)
     strandedness_analysis: StrandednessAnalysis | None  # set for ``auto`` samples
     preprocessing: PreprocessedReads
@@ -206,6 +217,7 @@ class RnaseqResult:
     # Samples dropped for too few reads after trimming -> surviving read count.
     failed_trimming: dict[str, float] = field(default_factory=dict)
     deseq2_qc: Deseq2QCResult | None = None  # None when skip_deseq2_qc
+    multiqc: MultiQCResult | None = None  # None when skip_multiqc
 
 
 async def maybe_gunzip(file: File | None) -> File | None:
@@ -417,6 +429,17 @@ async def align_star(
     )
 
 
+async def star_percent_mapped(log_final: File) -> float:
+    """STAR's uniquely-mapped percentage from Log.final.out, parsed as upstream does (0 if absent)."""
+    async with log_final.open("rb") as fh:
+        text = bytes(await fh.read()).decode()
+    percent = 0.0
+    for line in text.splitlines():
+        if m := re.search(r"Uniquely mapped reads %\s*\|\s*([\d\.]+)%", line):
+            percent = float(m.group(1))
+    return percent
+
+
 async def bigwig_coverage(sample: Sample, bam: File, chrom_sizes: File) -> dict[str, File]:
     """Genome coverage bigWigs, as upstream: combined, plus per strand when stranded.
 
@@ -589,6 +612,7 @@ class RunOptions:
     featurecounts_feature_type: str = "exon"
     skip_stringtie: bool = False
     skip_bigwig: bool = False
+    min_mapped_reads: float = 5.0
 
 
 async def run_sample(
@@ -654,7 +678,13 @@ async def run_sample(
             # As upstream: Qualimap on a name-sorted copy, told it's sorted.
             namesorted = await samtools_sort(bam=bam, args="-n")
             return await qualimap_rnaseq(
-                namesorted, ref.gtf, sample.id, sample.strandedness, sample.single_end, args="--sorted"
+                namesorted,
+                ref.gtf,
+                sample.id,
+                sample.strandedness,
+                sample.single_end,
+                args="--sorted",
+                bam_name=f"{sample.id}.namesorted.bam",  # upstream's name; MultiQC reads it from the report
             )
 
         async def run_rseqc() -> dict[str, Dir]:
@@ -690,11 +720,21 @@ async def run_sample(
         )
         return marked, dup, qm, rs, bt, st, bw
 
+    # As upstream: samples mapping below min_mapped_reads are still quantified
+    # (salmon runs on the transcriptome BAM) but skip every genome-BAM step.
+    percent_mapped = await star_percent_mapped(alignment.log_final)
+    passed = percent_mapped >= opts.min_mapped_reads
+
+    async def gated_genome_bam_qc():
+        return await genome_bam_qc() if passed else (None, None, None, {}, None, None, {})
+
     salmon, (marked, dup, qm, rs, bt, st, bw) = await asyncio.gather(
-        quantify_salmon_bam(sample, alignment, ref), genome_bam_qc()
+        quantify_salmon_bam(sample, alignment, ref), gated_genome_bam_qc()
     )
     return SampleResult(
         sample=sample.id,
+        percent_mapped=percent_mapped,
+        mapping_passed=passed,
         strandedness=sample.strandedness,
         strandedness_analysis=analysis,
         preprocessing=reads,
@@ -794,6 +834,8 @@ async def rnaseq(
     skip_stringtie: bool = False,
     skip_bigwig: bool = False,
     skip_deseq2_qc: bool = False,
+    min_mapped_reads: float = 5.0,
+    skip_multiqc: bool = False,
     seq_platform: str = "",
     seq_center: str = "",
     skip_fastqc: bool = False,
@@ -847,6 +889,7 @@ async def rnaseq(
         featurecounts_feature_type=featurecounts_feature_type,
         skip_stringtie=skip_stringtie,
         skip_bigwig=skip_bigwig,
+        min_mapped_reads=min_mapped_reads,
     )
 
     async def strandedness_index() -> Dir:
@@ -879,4 +922,290 @@ async def rnaseq(
     merged = await merge_quantifications(samples, {r.sample: r.salmon for r in passed}, ref.gtf)
     # As upstream: DESeq2 QC of the merged length-scaled gene counts, labelled by aligner.
     dqc = None if skip_deseq2_qc else await deseq2_qc(merged.tximport.counts_gene_length_scaled, label="star_salmon")
-    return RnaseqResult(genome=ref, samples=passed, salmon=merged, failed_trimming=failed, deseq2_qc=dqc)
+    result = RnaseqResult(genome=ref, samples=passed, salmon=merged, failed_trimming=failed, deseq2_qc=dqc)
+    if not skip_multiqc:
+        result.multiqc = await multiqc_report(
+            samples,
+            result,
+            min_trimmed_reads=min_trimmed_reads,
+            rseqc_modules=() if skip_rseqc else tuple(rseqc_modules),
+            stranded_threshold=stranded_threshold,
+            unstranded_threshold=unstranded_threshold,
+        )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# MultiQC
+# ---------------------------------------------------------------------------
+
+
+def round_one_decimal(v: float | None) -> float | None:
+    """Groovy's Math.round(v * 10) / 10 (half-up), as upstream rounds report values."""
+    return None if v is None else math.floor(v * 10 + 0.5) / 10.0
+
+
+def infer_experiment_strandedness(text: str, stranded_threshold: float, unstranded_threshold: float):
+    """Upstream's getInferexperimentStrandedness: RSeQC fractions -> (strandedness, fwd %, rev %, unstr %)."""
+    fwd = rev = unstr = 0.0
+    patterns = {
+        "unstr": r"Fraction of reads failed to determine:\s([\d\.]+)",
+        "fwd_se": r'Fraction of reads explained by "\++,--":\s([\d\.]+)',
+        "rev_se": r'Fraction of reads explained by "\+-,-\+":\s([\d\.]+)',
+        "fwd_pe": r'Fraction of reads explained by "1\++,1--,2\+-,2-\+":\s([\d\.]+)',
+        "rev_pe": r'Fraction of reads explained by "1\+-,1-\+,2\+\+,2--":\s([\d\.]+)',
+    }
+    for line in text.splitlines():
+        for key, pattern in patterns.items():
+            if m := re.search(pattern, line):
+                value = float(m.group(1)) * 100
+                if key == "unstr":
+                    unstr = value
+                elif key.startswith("fwd"):
+                    fwd = value
+                else:
+                    rev = value
+    return calculate_strandedness(fwd, rev, unstr, stranded_threshold, unstranded_threshold)
+
+
+@dataclass
+class StrandCall:
+    inferred: str
+    forward: float
+    reverse: float
+    unstranded: float
+
+    def certainty(self) -> float | None:
+        stranded = self.forward + self.reverse
+        if stranded == 0:
+            return None
+        if self.inferred == "forward":
+            return self.forward / stranded * 100
+        if self.inferred == "reverse":
+            return self.reverse / stranded * 100
+        return None
+
+
+def load_multiqc_asset(name: str) -> dict:
+    """Upstream's loadMultiqcAsset: the YAML (merge keys resolved) without `_`-prefixed keys."""
+    parsed = yaml.safe_load(asset(name).read_text())
+    return {k: v for k, v in parsed.items() if not str(k).startswith("_")}
+
+
+def strand_check_summary(rows: list[tuple[str, str, str, StrandCall | None, StrandCall | None]]) -> str:
+    """Upstream's strandCheckSummaryYaml, as MultiQC custom-content JSON."""
+    config = load_multiqc_asset("strand_check_summary.yaml")
+    header_keys = list(config["headers"])
+    data = {}
+    for sample, provided, status, salmon, rseqc_call in sorted(rows, key=lambda r: r[0]):
+        raw = {
+            "provided": provided,
+            "salmon_inferred": salmon.inferred if salmon else "-",
+            "salmon_pct": round_one_decimal(salmon.certainty()) if salmon else None,
+            "salmon_s": round_one_decimal(salmon.forward) if salmon else None,
+            "salmon_a": round_one_decimal(salmon.reverse) if salmon else None,
+            "salmon_u": round_one_decimal(salmon.unstranded) if salmon else None,
+            "rseqc_inferred": rseqc_call.inferred if rseqc_call else "-",
+            "rseqc_pct": round_one_decimal(rseqc_call.certainty()) if rseqc_call else None,
+            "rseqc_s": round_one_decimal(rseqc_call.forward) if rseqc_call else None,
+            "rseqc_a": round_one_decimal(rseqc_call.reverse) if rseqc_call else None,
+            "rseqc_u": round_one_decimal(rseqc_call.unstranded) if rseqc_call else None,
+            "status": status,
+        }
+        unknown = set(raw) - set(header_keys)
+        if unknown:
+            raise ValueError(f"strand_check_summary.yaml headers do not declare columns: {unknown}")
+        data[sample] = {k: raw[k] for k in header_keys if raw[k] is not None}
+    return json.dumps({**config, "data": data}, indent=4)
+
+
+def strand_check_composition(rows: list[tuple[str, str, str, StrandCall | None, StrandCall | None]]) -> str:
+    """Upstream's strandCheckCompositionYaml, as MultiQC custom-content JSON."""
+    summary = load_multiqc_asset("strand_check_summary.yaml")
+    config = {
+        **load_multiqc_asset("strand_check_composition.yaml"),
+        **{k: summary[k] for k in ("parent_id", "parent_name", "parent_description")},
+    }
+
+    def composition(call: StrandCall) -> dict:
+        return {
+            "Sense": round_one_decimal(call.forward),
+            "Antisense": round_one_decimal(call.reverse),
+            "Unstranded": round_one_decimal(call.unstranded),
+        }
+
+    rseqc_data, salmon_data = {}, {}
+    for sample, _provided, _status, salmon, rseqc_call in sorted(rows, key=lambda r: r[0]):
+        if rseqc_call:
+            rseqc_data[sample] = composition(rseqc_call)
+        if salmon:
+            salmon_data[sample] = composition(salmon)
+    datasets, labels = [], []
+    if rseqc_data:
+        datasets.append(rseqc_data)
+        labels.append("RSeQC")
+    if salmon_data:
+        datasets.append(salmon_data)
+        labels.append("Salmon")
+    pconfig = dict(config["pconfig"])
+    if len(datasets) > 1:
+        pconfig["data_labels"] = [{"name": label, "ylab": pconfig["ylab"]} for label in labels]
+    config["pconfig"] = pconfig
+    config["data"] = datasets[0] if len(datasets) == 1 else datasets
+    return json.dumps(config, indent=4)
+
+
+def sample_merge_yaml(samples: list[Sample]) -> str:
+    """Upstream's multiqcSampleMergeYaml: merge `<sample>_1` / `<sample>_2` rows of paired-end samples."""
+    ids = sorted({s.id for s in samples if not s.single_end})
+    if not ids:
+        return "table_sample_merge: {}\n"
+
+    def pattern(sample_id: str, read: int) -> str:
+        esc = re.sub(r"[\\^$.|?*+()\[\]{}/]", lambda m: "\\" + m.group(0), sample_id).replace("'", "''")
+        return f"    - type: regex\n      pattern: '(?<=^{esc})_{read}$'"
+
+    r1 = "\n".join(pattern(i, 1) for i in ids)
+    r2 = "\n".join(pattern(i, 2) for i in ids)
+    return f'table_sample_merge:\n  "Read 1":\n{r1}\n  "Read 2":\n{r2}\n'
+
+
+def name_replacements(samples: list[Sample]) -> str:
+    """Upstream's multiqcNameReplacements: FASTQ simple names -> sample ids, where they differ."""
+
+    def simple_name(f: File) -> str:
+        return f.path.rstrip("/").rsplit("/", 1)[-1].split(".", 1)[0]
+
+    lines = []
+    for s in samples:
+        suffixes = ("", "") if s.single_end else ("_1", "_2")
+        first = simple_name(s.fastq_1[0])
+        if first != s.id:
+            lines.append(f"{first}\t{s.id}{suffixes[0]}")
+            if not s.single_end:
+                lines.append(f"{simple_name(s.fastq_2[0])}\t{s.id}{suffixes[1]}")
+    return "".join(f"{line}\n" for line in lines)
+
+
+async def multiqc_report(
+    samples: list[Sample],
+    result: "RnaseqResult",
+    min_trimmed_reads: int,
+    rseqc_modules: tuple[str, ...],
+    stranded_threshold: float,
+    unstranded_threshold: float,
+) -> MultiQCResult:
+    """Lay every QC output out under upstream's file names, add upstream's custom content, run MultiQC."""
+    root = Path(tempfile.mkdtemp(prefix="multiqc_"))
+    downloads = []
+
+    def put(f: File | None, rel: str) -> None:
+        if f is not None:
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            downloads.append(f.download(str(root / rel)))
+
+    async def put_dir(d: Dir | None, rel: str, suffixes: tuple[str, ...] = ()) -> None:
+        if d is None:
+            return
+        base = d.path.rstrip("/")
+        async for f in d.walk():
+            sub = f.path[len(base) :].lstrip("/")
+            if not suffixes or sub.endswith(suffixes):
+                put(f, f"{rel}/{sub}")
+
+    def write(rel: str, text: str) -> None:
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text)
+
+    strand_rows = []
+    for r in result.samples:
+        sid, pre, a = r.sample, r.preprocessing, r.alignment
+        await put_dir(pre.raw_fastqc, f"fastqc/raw/{sid}", ("_fastqc.zip",))
+        if pre.trimming is not None:
+            for report in pre.trimming.reports:
+                put(report, f"trimgalore/{sid}/{report.path.rsplit('/', 1)[-1]}")
+            await put_dir(pre.trimming.results, f"fastqc/trim/{sid}", ("_fastqc.zip",))
+        if pre.bbsplit is not None:
+            put(pre.bbsplit.stats, f"bbsplit/{sid}.stats.txt")
+        put(a.log_final, f"star/{sid}.Log.final.out")
+        for kind, f in (("stats", a.stats), ("flagstat", a.flagstat), ("idxstats", a.idxstats)):
+            put(f, f"samtools/{sid}.sorted.bam.{kind}")
+        md = r.markduplicates
+        if md is not None:
+            put(md.metrics, f"picard/{sid}.markdup.sorted.metrics.txt")
+            for kind, f in (("stats", md.stats), ("flagstat", md.flagstat), ("idxstats", md.idxstats)):
+                put(f, f"samtools/{sid}.markdup.sorted.bam.{kind}")
+        await put_dir(r.salmon, f"salmon/{sid}")
+        await put_dir(r.qualimap, f"qualimap/{sid}")
+        if r.dupradar is not None:
+            put(r.dupradar.intercept_mqc, f"dupradar/{sid}_dup_intercept_mqc.txt")
+            put(r.dupradar.curve_mqc, f"dupradar/{sid}_duprateExpDensCurve_mqc.txt")
+        for module, d in r.rseqc.items():
+            await put_dir(d, f"rseqc/{module}", (".txt", ".log", ".r", ".xls"))
+        if r.biotype_qc is not None:
+            put(r.biotype_qc.counts_mqc, f"biotype/{sid}.biotype_counts_mqc.tsv")
+            put(r.biotype_qc.rrna_mqc, f"biotype/{sid}.biotype_counts_rrna_mqc.tsv")
+
+        # Strandedness checks: classify against RSeQC infer_experiment when it ran, else
+        # surface Salmon's call for 'auto' samples (upstream's classifyStrand logic).
+        a_ = r.strandedness_analysis
+        salmon = StrandCall(a_.inferred, a_.forward_pct, a_.reverse_pct, a_.unstranded_pct) if a_ else None
+        infer = r.rseqc.get("infer_experiment")
+        if "infer_experiment" in rseqc_modules and infer is not None:
+            txt = await infer.get_file(f"{sid}.infer_experiment.txt")
+            assert txt is not None
+            async with txt.open("rb") as fh:
+                call = StrandCall(
+                    *infer_experiment_strandedness(
+                        bytes(await fh.read()).decode(), stranded_threshold, unstranded_threshold
+                    )
+                )
+            if salmon is not None:
+                provided = "auto"
+                status = "pass" if salmon.inferred == call.inferred and call.inferred != "undetermined" else "fail"
+            else:
+                provided = r.strandedness
+                status = "pass" if r.strandedness == call.inferred else "fail"
+            strand_rows.append((sid, provided, status, salmon, call))
+        elif salmon is not None:
+            strand_rows.append((sid, "auto", "-", salmon, None))
+
+    if result.deseq2_qc is not None:
+        put(result.deseq2_qc.pca_multiqc, "deseq2/star_salmon.pca.vals_mqc.tsv")
+        put(result.deseq2_qc.dists_multiqc, "deseq2/star_salmon.sample.dists_mqc.tsv")
+
+    # Upstream lists samples at or below min_trimmed_reads (the filter itself drops < only).
+    trimmed = dict(result.failed_trimming)
+    for r in result.samples:
+        n = r.preprocessing.reads_after_trimming
+        if n is not None and n <= min_trimmed_reads:
+            trimmed[r.sample] = n
+    if trimmed:
+        rows = "".join(f"{sid}\t{n}\n" for sid, n in trimmed.items())
+        write("custom/fail_trimmed_samples_mqc.tsv", "Sample\tReads after trimming\n" + rows)
+    failed_mapping = [r for r in result.samples if not r.mapping_passed]
+    if failed_mapping:
+        rows = "".join(f"{r.sample}\t{r.percent_mapped}\n" for r in failed_mapping)
+        write(
+            "custom/fail_mapped_samples_mqc.tsv",
+            asset("sample_status_header.txt").read_text() + "Sample\tSTAR uniquely mapped reads (%)\n" + rows,
+        )
+    if strand_rows:
+        write("custom/strand_check_summary_mqc.json", strand_check_summary(strand_rows))
+        write("custom/strand_check_composition_mqc.json", strand_check_composition(strand_rows))
+
+    await asyncio.gather(*downloads)
+    data = await Dir.from_local(root)
+
+    config_dir = Path(tempfile.mkdtemp(prefix="multiqc_cfg_"))
+    (config_dir / "multiqc_sample_merge.yml").write_text(sample_merge_yaml(samples))
+    configs = [
+        await File.from_local(str(asset("multiqc_config.yml"))),
+        await File.from_local(config_dir / "multiqc_sample_merge.yml"),
+    ]
+    replacements = name_replacements(samples)
+    replace_file = None
+    if replacements:
+        (config_dir / "name_replacement.txt").write_text(replacements)
+        replace_file = await File.from_local(config_dir / "name_replacement.txt")
+    return await multiqc(data, configs=configs, replace_names=replace_file, prefix="multiqc_report")

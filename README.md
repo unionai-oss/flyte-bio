@@ -77,6 +77,7 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
 - `gtf2bed` — `gtf2bed`
 - `gtffilter` — `gtf_filter`
 - `gunzip` — `gunzip`
+- `multiqc` — `multiqc`
 - `multiqccustombiotype` — `multiqc_custom_biotype`
 - `picard` — `picard_markduplicates`
 - `qualimap` — `qualimap_rnaseq`
@@ -100,8 +101,11 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
   of rnaseq 3.26.0): `prepare_genome`, `align_star`, `quantify_salmon_bam`,
   `rnaseq`, with read linting, QC/trimming, BBSplit, strandedness inference,
   duplicate marking, StringTie, bigWig coverage, dupRadar, Qualimap, RSeQC, the
-  featureCounts biotype QC, the tximport/SummarizedExperiment merge and
-  deseq2_qc. MultiQC is not ported yet.
+  featureCounts biotype QC, the tximport/SummarizedExperiment merge, deseq2_qc
+  and the MultiQC report — upstream's full default path. Nextflow-specific
+  report sections (run parameters, software versions, methods text) and the
+  off-by-default options (rRNA removal, UMI deduplication, Preseq, Kraken,
+  other aligners) are not ported.
 
 More tools and pipelines are added as needed. Contributions following the same
 pattern (one file per tool family, sharing one biocontainer image, exposing a
@@ -129,7 +133,7 @@ To revert:
    `summarized_experiment_cmd.rowdata` / `.coldata`, `fastqc.reads_2`,
    `trimgalore_cmd.reads_2`, `fq_subsample_cmd.reads_2`, `fq_lint.reads_2`,
    `bbsplit_cmd.reads_2`, `picard_markduplicates_cmd.fasta` / `.fai`,
-   `stringtie_cmd.gtf`
+   `stringtie_cmd.gtf`, `multiqc_cmd.replace_names`
    (each is marked with a `flyteorg/flyte#8118` comment).
 2. Update the scripts that read them through a `nullglob` array
    (salmon index/quant, STAR, summarizedexperiment, fastqc, trimgalore, fq,

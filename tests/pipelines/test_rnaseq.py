@@ -115,6 +115,9 @@ async def test_rnaseq_star_salmon() -> None:
         assert r.strandedness == "reverse", (r.sample, r.strandedness)
 
     for r in result.samples:
+        assert r.mapping_passed and r.percent_mapped >= 5, (r.sample, r.percent_mapped)
+
+    for r in result.samples:
         a = r.alignment
         for label, f in [
             ("bam", a.bam),
@@ -189,6 +192,22 @@ async def test_rnaseq_star_salmon() -> None:
     assert result.deseq2_qc is not None
     await assert_nonempty(result.deseq2_qc.pca_multiqc, label="deseq2 pca mqc")
     await assert_nonempty(result.deseq2_qc.dists_multiqc, label="deseq2 dists mqc")
+
+    # MultiQC: one report covering every sample, with upstream's strandedness checks.
+    assert result.multiqc is not None
+    await assert_nonempty(result.multiqc.report, label="multiqc_report.html")
+    data_files = {f.path.rsplit("/", 1)[-1]: f async for f in result.multiqc.results.walk() if "_data/" in f.path}
+    assert "multiqc_general_stats.txt" in data_files, sorted(data_files)
+    async with data_files["multiqc_general_stats.txt"].open("rb") as fh:
+        general = bytes(await fh.read()).decode()
+    for s in samples:
+        assert s.id in general, f"{s.id} missing from MultiQC general stats"
+    assert any("strand_check" in name for name in data_files), sorted(data_files)
+    # Every tool's outputs were found and parsed (MultiQC writes one table per module).
+    for module in ("fastqc", "cutadapt", "bbmap", "star", "samtools", "salmon", "qualimap", "rseqc", "dupradar"):
+        assert any(name.lower().startswith(f"multiqc_{module}") or module in name.lower() for name in data_files), (
+            f"MultiQC parsed no {module} outputs: {sorted(data_files)}"
+        )
 
     # Every sample (and nothing else) is a column of the merged gene matrix.
     async with m.tximport.counts_gene.open("rb") as fh:
