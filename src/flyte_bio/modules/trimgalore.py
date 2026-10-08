@@ -28,15 +28,13 @@ DEFAULT_RESOURCES = flyte.Resources(cpu=TRIMGALORE_CPUS, memory="8Gi")
 # Upstream's --cores rule: CPUs minus Trim Galore's own overhead (4 paired,
 # 3 single-end), clamped to 1..8. `--fastqc_args` is set here rather than via
 # `args` because its value is a quoted multi-word string, which `args`
-# (expanded unquoted, one word per flag value) can't carry. `reads_2` is
-# `list[File]` (0 or 1 item) rather than `File | None` until
-# flyteorg/flyte#8118 is deployed.
+# (expanded unquoted, one word per flag value) can't carry.
 trimgalore_cmd = shell.create(
     name="trimgalore",
     image=TRIMGALORE_IMAGE,
     resources=DEFAULT_RESOURCES,
-    inputs={"reads_1": File, "reads_2": list[File], "prefix": str, "fastqc": bool, "args": str},
-    defaults={"reads_2": [], "fastqc": False, "args": ""},
+    inputs={"reads_1": File, "reads_2": File | None, "prefix": str, "fastqc": bool, "args": str},
+    defaults={"fastqc": False, "args": ""},
     outputs={"results": Dir},
     script=rf"""
         shopt -s nullglob; R2=({{inputs.reads_2}}); shopt -u nullglob
@@ -95,7 +93,7 @@ async def trimgalore(
     """Trim one sample's reads; ``reads_2`` is None for single-end."""
     results = await trimgalore_cmd(
         reads_1=reads_1,
-        reads_2=[reads_2] if reads_2 is not None else [],
+        reads_2=reads_2,
         prefix=prefix,
         fastqc=fastqc,
         args=args,

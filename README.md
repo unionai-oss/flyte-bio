@@ -112,44 +112,6 @@ pattern (one file per tool family, sharing one biocontainer image, exposing a
 module-level `env`) are welcome once the plugin is ready to stabilize. The
 top-level `flyte_bio.env` is intended to grow alongside the modules.
 
-## Workarounds pending upstream fixes
-
-### Optional File inputs are `list[File]` (flyteorg/flyte#8118)
-
-Optional file inputs that should be `File | None` are declared as `list[File]`
-(0 or 1 item, default `[]`). On the cluster, copilot stages a *set*
-`Optional[File]` as a bare path instead of the per-input directory that shell
-scripts glob, so the input was silently ignored. Revert once
-[flyteorg/flyte#8118](https://github.com/flyteorg/flyte/pull/8118) is
-**merged and deployed** (for Union clusters: the `flyte2` submodule pin in the
-`cloud` repo includes it and the cluster has been redeployed). Merging alone
-doesn't change what the cluster runs.
-
-To revert:
-
-1. Inputs back to `File | None` and drop their `[]` defaults:
-   `salmon_index.genome_fasta`, `salmon_quant_reads.reads_2`,
-   `star_align.reads_2`, `bedtools_intersect.g`, `bedtools_sort.g`,
-   `summarized_experiment_cmd.rowdata` / `.coldata`, `fastqc.reads_2`,
-   `trimgalore_cmd.reads_2`, `fq_subsample_cmd.reads_2`, `fq_lint.reads_2`,
-   `bbsplit_cmd.reads_2`, `picard_markduplicates_cmd.fasta` / `.fai`,
-   `stringtie_cmd.gtf`, `multiqc_cmd.replace_names`
-   (each is marked with a `flyteorg/flyte#8118` comment).
-2. Update the scripts that read them through a `nullglob` array
-   (salmon index/quant, STAR, summarizedexperiment, fastqc, trimgalore, fq,
-   bbsplit, picard); the
-   bedtools `-g` flag
-   needs no script change.
-3. Update callers: `align_star` in `pipelines/rnaseq.py` (`reads_2=[...]`),
-   the `summarized_experiment`, `trimgalore`, `fq_subsample`, `bbsplit` and
-   `picard_markduplicates` wrappers,
-   the `lint` helper and the `fastqc` call in
-   `pipelines/rnaseq.py`, `tests/modules/test_fastqc.py`,
-   `tests/modules/test_star.py` and `tests/modules/test_salmon.py`.
-4. Rerun the suite. `test_index` asserts the salmon index really has decoys
-   and the rnaseq pipeline test exercises paired-end STAR, so a staging
-   regression fails loudly.
-
 ## Porting an nf-core module
 
 Most wrappers in this package are direct ports of [nf-core/modules](https://github.com/nf-core/modules):

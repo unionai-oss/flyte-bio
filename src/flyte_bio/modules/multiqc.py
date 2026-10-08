@@ -24,14 +24,13 @@ DEFAULT_RESOURCES = flyte.Resources(cpu=2, memory="8Gi")
 
 # Config files are passed as explicit `--config` options in list order;
 # `configs` are named `<index>_<name>` by the wrapper so a glob sorts them in
-# that order. `replace_names` is `list[File]` (0 or 1 item) rather than
-# `File | None` until flyteorg/flyte#8118 is deployed.
+# that order.
 multiqc_cmd = shell.create(
     name="multiqc",
     image=MULTIQC_IMAGE,
     resources=DEFAULT_RESOURCES,
-    inputs={"data": Dir, "configs": list[File], "replace_names": list[File], "prefix": str, "args": str},
-    defaults={"configs": [], "replace_names": [], "args": ""},
+    inputs={"data": Dir, "configs": list[File], "replace_names": File | None, "prefix": str, "args": str},
+    defaults={"configs": [], "args": ""},
     outputs={"results": Dir},
     script=r"""
         shopt -s nullglob; CONFIGS=({inputs.configs}); REPLACE=({inputs.replace_names}); shopt -u nullglob
@@ -89,7 +88,7 @@ async def multiqc(
     results = await multiqc_cmd(
         data=data,
         configs=await ordered(configs or []),
-        replace_names=[replace_names] if replace_names is not None else [],
+        replace_names=replace_names,
         prefix=prefix,
         args=args,
     )

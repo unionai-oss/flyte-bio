@@ -67,15 +67,12 @@ bbsplit_index_cmd = shell.create(
 )
 
 
-# `reads_2` is `list[File]` (0 or 1 item) rather than `File | None` until
-# flyteorg/flyte#8118 is deployed: copilot stages a set optional File as a
-# bare path, not the per-input dir the shell glob expects.
 bbsplit_cmd = shell.create(
     name="bbsplit",
     image=BBMAP_IMAGE,
     resources=DEFAULT_RESOURCES,
-    inputs={"reads_1": File, "reads_2": list[File], "index": Dir, "prefix": str, "args": str},
-    defaults={"reads_2": [], "args": ""},
+    inputs={"reads_1": File, "reads_2": File | None, "index": Dir, "prefix": str, "args": str},
+    defaults={"args": ""},
     outputs={"results": Dir},
     script=rf"""
         R1=({{inputs.reads_1}})
@@ -162,7 +159,7 @@ async def bbsplit(
     """Split one sample's reads against ``index``; ``reads_2`` is None for single-end."""
     results = await bbsplit_cmd(
         reads_1=reads_1,
-        reads_2=[reads_2] if reads_2 is not None else [],
+        reads_2=reads_2,
         index=index,
         prefix=prefix,
         args=args,

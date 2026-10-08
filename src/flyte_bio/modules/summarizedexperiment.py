@@ -22,9 +22,6 @@ SUMMARIZEDEXPERIMENT_IMAGE = "quay.io/biocontainers/bioconductor-summarizedexper
 
 DEFAULT_RESOURCES = flyte.Resources(cpu=1, memory="6Gi")
 
-# rowdata / coldata are `list[File]` (0 or 1 item) rather than `File | None`
-# until flyteorg/flyte#8118 is deployed: copilot stages a set optional File
-# as a bare path, not the per-input dir the shell glob expects.
 summarized_experiment_cmd = shell.create(
     name="summarized_experiment",
     image=SUMMARIZEDEXPERIMENT_IMAGE,
@@ -33,11 +30,10 @@ summarized_experiment_cmd = shell.create(
         "script": File,
         "matrices": list[File],
         "assays": str,
-        "rowdata": list[File],
-        "coldata": list[File],
+        "rowdata": File | None,
+        "coldata": File | None,
         "prefix": str,
     },
-    defaults={"rowdata": [], "coldata": []},
     outputs={"results": Dir},
     script=r"""
         M=({inputs.matrices})
@@ -81,8 +77,8 @@ async def summarized_experiment(
         script=script,
         matrices=list(assays.values()),
         assays=",".join(f"{name}={fname}" for name, fname in filenames.items()),
-        rowdata=[rowdata] if rowdata is not None else [],
-        coldata=[coldata] if coldata is not None else [],
+        rowdata=rowdata,
+        coldata=coldata,
         prefix=prefix,
     )
     rds = await results.get_file(f"{prefix}.SummarizedExperiment.rds")

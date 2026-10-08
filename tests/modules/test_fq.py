@@ -44,7 +44,7 @@ async def test_fq_subsample_single() -> None:
 async def test_fq_lint_success() -> None:
     # upstream case: fq/lint "test_fq_lint_success"
     r1, r2 = await fixture(FASTQ + "test_1.fastq.gz"), await fixture(FASTQ + "test_2.fastq.gz")
-    lint = await fq_lint(reads_1=r1, reads_2=[r2])
+    lint = await fq_lint(reads_1=r1, reads_2=r2)
     async with lint.open("rb") as fh:
         text = bytes(await fh.read()).decode()
     for marker in ("fq-lint start", "read 100 records", "fq-lint end"):

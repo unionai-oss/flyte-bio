@@ -17,7 +17,7 @@ async def test_index() -> None:
     # upstream case: salmon/index "sarscov2" (decoy-aware: genome + transcriptome)
     genome = await fixture("genomics/homo_sapiens/genome/genome.fasta")
     transcripts = await fixture("genomics/sarscov2/genome/transcriptome.fasta")
-    index = await salmon_index(transcript_fasta=transcripts, genome_fasta=[genome])
+    index = await salmon_index(transcript_fasta=transcripts, genome_fasta=genome)
     await assert_dir_nonempty(index, label="salmon index")
     # The genome must actually be used as decoys — a silently skipped genome
     # still yields a valid (non-decoy) index.
@@ -33,7 +33,7 @@ async def test_quant_reads() -> None:
     # upstream case: salmon/quant "sarscov2 - single_end"
     genome = await fixture("genomics/homo_sapiens/genome/genome.fasta")
     transcripts = await fixture("genomics/sarscov2/genome/transcriptome.fasta")
-    index = await salmon_index(transcript_fasta=transcripts, genome_fasta=[genome])
+    index = await salmon_index(transcript_fasta=transcripts, genome_fasta=genome)
     reads = await fixture("genomics/sarscov2/illumina/fastq/test_1.fastq.gz")
     gtf = await fixture("genomics/sarscov2/genome/genome.gtf")
     results = await salmon_quant_reads(reads_1=reads, index=index, gtf=gtf)

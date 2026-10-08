@@ -20,15 +20,11 @@ FQ_IMAGE = "quay.io/biocontainers/fq:0.12.0--h9ee0642_0"
 
 DEFAULT_RESOURCES = flyte.Resources(cpu=1, memory="4Gi")
 
-# `reads_2` is `list[File]` (0 or 1 item) rather than `File | None` until
-# flyteorg/flyte#8118 is deployed: copilot stages a set optional File as a
-# bare path, not the per-input dir the shell glob expects.
 fq_subsample_cmd = shell.create(
     name="fq_subsample",
     image=FQ_IMAGE,
     resources=DEFAULT_RESOURCES,
-    inputs={"reads_1": File, "reads_2": list[File], "prefix": str, "args": str},
-    defaults={"reads_2": []},
+    inputs={"reads_1": File, "reads_2": File | None, "prefix": str, "args": str},
     outputs={"results": Dir},
     script=r"""
         shopt -s nullglob; R2=({inputs.reads_2}); shopt -u nullglob
@@ -44,13 +40,12 @@ fq_subsample_cmd = shell.create(
 )
 
 
-# `reads_2` as above (0 or 1 item, until flyteorg/flyte#8118 is deployed).
 fq_lint = shell.create(
     name="fq_lint",
     image=FQ_IMAGE,
     resources=DEFAULT_RESOURCES,
-    inputs={"reads_1": File, "reads_2": list[File], "args": str},
-    defaults={"reads_2": [], "args": ""},
+    inputs={"reads_1": File, "reads_2": File | None, "args": str},
+    defaults={"args": ""},
     outputs={"lint": File},
     script=r"""
         shopt -s nullglob; R2=({inputs.reads_2}); shopt -u nullglob
@@ -74,7 +69,7 @@ async def fq_subsample(
     if not any(flag in args.split() for flag in ("-p", "--probability", "-n", "--record-count")):
         raise ValueError("fq_subsample needs --probability (-p) or --record-count (-n) in args")
     results = await fq_subsample_cmd(
-        reads_1=reads_1, reads_2=[reads_2] if reads_2 is not None else [], prefix=prefix, args=args
+        reads_1=reads_1, reads_2=reads_2, prefix=prefix, args=args
     )
 
     async def pick(name: str) -> File:

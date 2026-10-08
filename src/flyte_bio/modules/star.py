@@ -83,15 +83,12 @@ star_genome_generate = shell.create(
 # re-split a single argument, and a multi-word option like --readFilesCommand
 # would otherwise swallow every flag after it. Everything STAR writes lands in
 # the output Dir.
-# `list[File]` (0 or 1 item) rather than `File | None` until flyteorg/flyte#8118
-# is deployed: copilot stages a set optional File as a bare path, not the
-# per-input dir the shell glob expects, so it was silently ignored.
 star_align = shell.create(
     name="star_align",
     image=STAR_IMAGE,
     resources=ALIGN_RESOURCES,
-    inputs={"reads_1": File, "reads_2": list[File], "index": Dir, "gtf": File, "args": str},
-    defaults={"reads_2": [], "args": ""},
+    inputs={"reads_1": File, "reads_2": File | None, "index": Dir, "gtf": File, "args": str},
+    defaults={"args": ""},
     outputs={"output": Dir},
     script=r"""
         shopt -s nullglob; R2=({inputs.reads_2}); shopt -u nullglob

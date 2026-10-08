@@ -33,7 +33,7 @@ async def test_fastqc_single_end() -> None:
 async def test_fastqc_paired_end() -> None:
     # upstream case: fastqc "sarscov2 paired-end [fastq]"
     r1, r2 = await fixture(FASTQ + "test_1.fastq.gz"), await fixture(FASTQ + "test_2.fastq.gz")
-    results = await fastqc(reads_1=r1, reads_2=[r2], prefix="test")
+    results = await fastqc(reads_1=r1, reads_2=r2, prefix="test")
     await assert_report(results, "test_1")
     await assert_report(results, "test_2")
 

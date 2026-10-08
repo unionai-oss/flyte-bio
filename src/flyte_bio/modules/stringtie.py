@@ -25,15 +25,12 @@ STRINGTIE_IMAGE = "quay.io/biocontainers/stringtie:2.2.3--h43eeafb_0"
 
 DEFAULT_RESOURCES = flyte.Resources(cpu=4, memory="8Gi")
 
-# `gtf` is `list[File]` (0 or 1 item) rather than `File | None` until
-# flyteorg/flyte#8118 is deployed: copilot stages a set optional File as a
-# bare path, not the per-input dir the shell glob expects.
 stringtie_cmd = shell.create(
     name="stringtie",
     image=STRINGTIE_IMAGE,
     resources=DEFAULT_RESOURCES,
-    inputs={"bam": File, "gtf": list[File], "prefix": str, "strandedness": str, "threads": int, "args": str},
-    defaults={"gtf": [], "args": ""},
+    inputs={"bam": File, "gtf": File | None, "prefix": str, "strandedness": str, "threads": int, "args": str},
+    defaults={"args": ""},
     outputs={"results": Dir},
     script=r"""
         BAMS=({inputs.bam})
@@ -99,7 +96,7 @@ async def stringtie(
     """Run StringTie on ``bam``; ``strandedness`` is forward / reverse / anything else (unstranded)."""
     results = await stringtie_cmd(
         bam=bam,
-        gtf=[gtf] if gtf is not None else [],
+        gtf=gtf,
         prefix=prefix,
         strandedness=strandedness,
         threads=threads,

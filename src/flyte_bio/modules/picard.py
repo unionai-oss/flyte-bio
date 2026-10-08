@@ -24,15 +24,12 @@ PICARD_MEMORY_MB = 8192
 PICARD_XMX_MB = int(PICARD_MEMORY_MB * 0.8)
 DEFAULT_RESOURCES = flyte.Resources(cpu=2, memory=f"{PICARD_MEMORY_MB}Mi")
 
-# fasta / fai are `list[File]` (0 or 1 item) rather than `File | None` until
-# flyteorg/flyte#8118 is deployed: copilot stages a set optional File as a
-# bare path, not the per-input dir the shell glob expects.
 picard_markduplicates_cmd = shell.create(
     name="picard_markduplicates",
     image=PICARD_IMAGE,
     resources=DEFAULT_RESOURCES,
-    inputs={"bam": File, "fasta": list[File], "fai": list[File], "prefix": str, "args": str},
-    defaults={"fasta": [], "fai": [], "args": ""},
+    inputs={"bam": File, "fasta": File | None, "fai": File | None, "prefix": str, "args": str},
+    defaults={"args": ""},
     outputs={"results": Dir},
     script=rf"""
         BAM=({{inputs.bam}})
@@ -80,8 +77,8 @@ async def picard_markduplicates(
     """Mark duplicates in ``bam``; returns ``<prefix>.bam`` and ``<prefix>.metrics.txt``."""
     results = await picard_markduplicates_cmd(
         bam=bam,
-        fasta=[fasta] if fasta is not None else [],
-        fai=[fai] if fai is not None else [],
+        fasta=fasta,
+        fai=fai,
         prefix=prefix,
         args=args,
     )

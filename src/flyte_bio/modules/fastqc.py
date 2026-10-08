@@ -21,15 +21,12 @@ FASTQC_THREADS = 2
 FASTQC_MEMORY_MB = 2048
 DEFAULT_RESOURCES = flyte.Resources(cpu=FASTQC_THREADS, memory="6Gi")
 
-# `reads_2` is `list[File]` (0 or 1 item) rather than `File | None` until
-# flyteorg/flyte#8118 is deployed: copilot stages a set optional File as a
-# bare path, not the per-input dir the shell glob expects.
 fastqc = shell.create(
     name="fastqc",
     image=FASTQC_IMAGE,
     resources=DEFAULT_RESOURCES,
-    inputs={"reads_1": File, "reads_2": list[File], "prefix": str, "args": str},
-    defaults={"reads_2": [], "args": ""},
+    inputs={"reads_1": File, "reads_2": File | None, "prefix": str, "args": str},
+    defaults={"args": ""},
     outputs={"results": Dir},
     script=rf"""
         shopt -s nullglob; R2=({{inputs.reads_2}}); shopt -u nullglob

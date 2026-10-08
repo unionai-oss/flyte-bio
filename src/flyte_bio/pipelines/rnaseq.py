@@ -320,7 +320,7 @@ async def star_file(output: Dir, name: str) -> File:
 
 async def lint(reads_1: File, reads_2: File | None, args: str = "") -> File:
     """fq lint the reads; the task fails (failing the run) on invalid input."""
-    return await fq_lint(reads_1=reads_1, reads_2=[reads_2] if reads_2 is not None else [], args=args)
+    return await fq_lint(reads_1=reads_1, reads_2=reads_2, args=args)
 
 
 async def preprocess_reads(
@@ -354,7 +354,7 @@ async def preprocess_reads(
             return None
         return await fastqc(
             reads_1=reads_1,
-            reads_2=[reads_2] if reads_2 is not None else [],
+            reads_2=reads_2,
             prefix=f"{sample.id}_raw",
             args="--quiet",
         )
@@ -397,7 +397,7 @@ async def align_star(
 
     output = await star_align(
         reads_1=reads_1,
-        reads_2=[reads_2] if reads_2 is not None else [],
+        reads_2=reads_2,
         index=genome.star_index,
         gtf=genome.gtf,
         args=star_align_args(sample, seq_platform, seq_center),
@@ -554,7 +554,7 @@ async def infer_strandedness(
     )
     results = await salmon_quant_reads(
         reads_1=sub_1,
-        reads_2=[sub_2] if sub_2 is not None else [],
+        reads_2=sub_2,
         index=index,
         gtf=genome.gtf,
         lib_type="A",
@@ -896,7 +896,7 @@ async def rnaseq(
         if salmon_index_dir is not None:
             return salmon_index_dir
         ref = await genome
-        return await salmon_index(transcript_fasta=ref.transcript_fasta, genome_fasta=[ref.fasta])
+        return await salmon_index(transcript_fasta=ref.transcript_fasta, genome_fasta=ref.fasta)
 
     index = asyncio.create_task(strandedness_index()) if any(s.strandedness == "auto" for s in samples) else None
 
