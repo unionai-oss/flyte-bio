@@ -1,9 +1,10 @@
-"""End-to-end test for flyte_bio.pipelines.rnaseq on the upstream test profile.
+"""End-to-end tests for flyte_bio.pipelines.rnaseq on the upstream test profile.
 
 Uses the samplesheet and references from rnaseq 3.26.0's ``test`` profile
 (7 runs → 5 samples, mixed single/paired-end, two multi-run samples, a
-GFP additional FASTA). Outputs aren't byte-reproducible, so this is a
-run-to-green check of every per-sample, merged and reference output.
+GFP additional FASTA). Outputs aren't byte-reproducible, so these are
+run-to-green checks of every per-sample, merged and reference output: the
+default path, and upstream's UMI test (``--umi_dedup_tool 'umitools'``).
 """
 
 import asyncio
@@ -215,4 +216,71 @@ async def test_rnaseq_star_salmon() -> None:
     assert sorted(header[2:]) == sorted(s.id for s in samples), header
 
 
-tests = [test_rnaseq_star_salmon]
+@env.task
+async def test_rnaseq_umi() -> None:
+    # upstream case: tests/umi.nf.test "--umi_dedup_tool 'umitools'"
+    samplesheet, fasta, gtf, transcript_fasta, additional_fasta = await asyncio.gather(
+        fixture(SAMPLESHEET), fixture(FASTA), fixture(GTF), fixture(TRANSCRIPT_FASTA), fixture(ADDITIONAL_FASTA)
+    )
+    salmon_index = await fixture_dir(SALMON_INDEX, "salmon")
+    samples = await load_samples(samplesheet)
+
+    result = await rnaseq(
+        samples,
+        fasta=fasta,
+        gtf=gtf,
+        transcript_fasta=transcript_fasta,
+        additional_fasta=additional_fasta,
+        salmon_index_dir=salmon_index,
+        with_umi=True,
+        umitools_extract_method="regex",
+        umitools_bc_pattern="^(?P<umi_1>CGA.{8}){s<=2}.*",
+        umitools_dedup_stats=True,
+        skip_bbsplit=True,
+        skip_stringtie=True,
+        skip_bigwig=True,
+    )
+
+    # As upstream: every sample keeps enough reads after extraction and trimming.
+    assert result.failed_trimming == {}, result.failed_trimming
+    assert [r.sample for r in result.samples] == [s.id for s in samples]
+    paired = {s.id for s in samples if not s.single_end}
+    for r in result.samples:
+        ext = r.preprocessing.umi_extract
+        assert ext is not None, f"{r.sample}: no UMI extraction"
+        await assert_nonempty(ext.log, label=f"{r.sample} umi_extract.log")
+        assert r.markduplicates is None, f"{r.sample}: MarkDuplicates ran despite UMI deduplication"
+        umi = r.umi_dedup
+        assert umi is not None, f"{r.sample}: no UMI deduplication"
+        assert umi.bam.path.endswith(f"{r.sample}.umi_dedup.sorted.bam"), umi.bam.path
+        for label, f in [
+            ("bai", umi.bai),
+            ("stats", umi.stats),
+            ("flagstat", umi.flagstat),
+            ("idxstats", umi.idxstats),
+            ("genome dedup log", umi.genome.log),
+            ("transcriptome dedup log", umi.transcriptome.log),
+            ("transcriptome bam", umi.transcriptome_bam),
+        ]:
+            await assert_nonempty(f, label=f"{r.sample} umi {label}")
+        # umitools_dedup_stats: the UMI TSVs, genome and transcriptome alike.
+        for side in (umi.genome, umi.transcriptome):
+            for f in (side.edit_distance, side.per_umi, side.per_umi_per_position):
+                assert f is not None, f"{r.sample}: missing UMI stats"
+                await assert_nonempty(f, label=f"{r.sample} {f.path.rsplit('/', 1)[-1]}")
+        # Upstream runs prepare-for-rsem on the paired-end samples only.
+        assert (umi.prepare_for_rsem_log is not None) == (r.sample in paired), r.sample
+        quant = await r.salmon.get_file("quant.sf")
+        assert quant is not None, f"{r.sample}: salmon results have no quant.sf"
+        await assert_nonempty(quant, label=f"{r.sample} quant.sf")
+
+    assert result.multiqc is not None
+    data_files = [f.path.rsplit("/", 1)[-1] async for f in result.multiqc.results.walk() if "_data/" in f.path]
+    assert any("umitools" in name.lower() for name in data_files), f"MultiQC parsed no UMI-tools logs: {data_files}"
+
+    async with result.salmon.tximport.counts_gene.open("rb") as fh:
+        header = bytes(await fh.read()).decode().splitlines()[0].split("\t")
+    assert sorted(header[2:]) == sorted(s.id for s in samples), header
+
+
+tests = [test_rnaseq_star_salmon, test_rnaseq_umi]

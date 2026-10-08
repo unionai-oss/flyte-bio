@@ -84,7 +84,7 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
 - `rseqc` — `bam_stat`, `infer_experiment`, `inner_distance`, `junction_annotation`,
   `junction_saturation`, `read_distribution`, `read_duplication`, `rseqc`
 - `salmon` — `salmon_index`, `salmon_quant_reads`, `salmon_quant_bam`
-- `samtools` — `samtools_faidx`, `samtools_sort`, `samtools_index`, `samtools_stats`, `samtools_flagstat`, `samtools_idxstats`
+- `samtools` — `samtools_faidx`, `samtools_sort`, `samtools_view`, `samtools_index`, `samtools_stats`, `samtools_flagstat`, `samtools_idxstats`
 - `star` — `star_genome_generate`, `star_align`
 - `stringtie` — `stringtie`
 - `subread` — `featurecounts`
@@ -93,6 +93,7 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
 - `tx2gene` — `tx2gene`
 - `tximport` — `tximport`, `collect_quants`
 - `ucsc` — `bedclip`, `bedgraphtobigwig`
+- `umitools` — `umitools_extract`, `umitools_dedup`, `umitools_prepareforrsem`
 - `untar` — `untar`
 
 ### Pipelines (`flyte_bio.pipelines`)
@@ -102,10 +103,12 @@ async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
   `rnaseq`, with read linting, QC/trimming, BBSplit, strandedness inference,
   duplicate marking, StringTie, bigWig coverage, dupRadar, Qualimap, RSeQC, the
   featureCounts biotype QC, the tximport/SummarizedExperiment merge, deseq2_qc
-  and the MultiQC report — upstream's full default path. Nextflow-specific
-  report sections (run parameters, software versions, methods text) and the
-  off-by-default options (rRNA removal, UMI deduplication, Preseq, Kraken,
-  other aligners) are not ported.
+  and the MultiQC report — upstream's full default path. UMI handling
+  (`with_umi`: UMI-tools extraction before trimming and deduplication of the
+  genome and transcriptome BAMs in place of MarkDuplicates, `dedup_umi`) is
+  ported too. Nextflow-specific report sections (run parameters, software
+  versions, methods text) and the other off-by-default options (rRNA removal,
+  UMICollapse, Preseq, Kraken, other aligners) are not ported.
 
 More tools and pipelines are added as needed. Contributions following the same
 pattern (one file per tool family, sharing one biocontainer image, exposing a

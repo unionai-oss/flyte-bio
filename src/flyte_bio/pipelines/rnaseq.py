@@ -15,6 +15,10 @@ Composes :mod:`flyte_bio.modules` tasks into the ``star_salmon`` path:
   as forward / reverse / unstranded, as upstream does.
 - :func:`align_star` — align the trimmed reads with STAR (emitting a
   transcriptome BAM), then sort / index / stats the genome BAM.
+- With ``with_umi`` (off by default, as upstream): UMI-tools extracts the
+  UMIs into the read names before trimming, and :func:`dedup_umi`
+  deduplicates the genome BAM (which replaces it downstream, instead of
+  MarkDuplicates) and the transcriptome BAM salmon quantifies.
 - :func:`mark_duplicates` — Picard MarkDuplicates on the genome BAM, then
   index / stats the marked BAM, which replaces it downstream (as upstream).
 - :func:`bigwig_coverage` — genome coverage bigWigs (per strand for stranded
@@ -37,8 +41,8 @@ task and fan out to the module tasks, so the caller's
   upstream's config and custom content (failed-sample tables, strandedness
   checks, paired-end sample merging, FASTQ-to-sample name replacements).
   Nextflow-specific sections (run parameters, software versions, methods
-  text) are omitted. rRNA removal and UMI deduplication (off upstream by
-default) aren't ported either.
+  text) are omitted. rRNA removal (off upstream by default) isn't ported
+  either, nor is UMICollapse (UMI-tools is upstream's default deduplicator).
 """
 
 import asyncio
@@ -79,6 +83,7 @@ from flyte_bio.modules.samtools import (
     samtools_index,
     samtools_sort,
     samtools_stats,
+    samtools_view,
 )
 from flyte_bio.modules.star import star_align, star_genome_generate
 from flyte_bio.modules.stringtie import StringTieResult, stringtie
@@ -88,6 +93,13 @@ from flyte_bio.modules.trimgalore import TrimGaloreResult, trimgalore
 from flyte_bio.modules.tx2gene import tx2gene
 from flyte_bio.modules.tximport import TximportResult, collect_quants, tximport
 from flyte_bio.modules.ucsc import bedclip, bedgraphtobigwig
+from flyte_bio.modules.umitools import (
+    UmiDedupResult,
+    UmiExtractResult,
+    umitools_dedup,
+    umitools_extract,
+    umitools_prepareforrsem,
+)
 from flyte_bio.scripts import path as asset
 
 STRANDEDNESS = ("auto", "forward", "reverse", "unstranded")
@@ -158,6 +170,7 @@ class PreprocessedReads:
     reads_after_trimming: float | None
     bbsplit: BBSplitResult | None = None
     lint: dict[str, File] = field(default_factory=dict)  # stage (raw/trimmed/bbsplit) -> fq lint log
+    umi_extract: UmiExtractResult | None = None  # set when UMIs were extracted
 
 
 @dataclass
@@ -182,6 +195,23 @@ class MarkedDuplicates:
 
 
 @dataclass
+class UmiDeduplication:
+    """Upstream's UMI-tools deduplication of the genome and transcriptome BAMs."""
+
+    bam: File  # <sample>.umi_dedup.sorted.bam, which replaces the genome BAM downstream
+    bai: File
+    stats: File
+    flagstat: File
+    idxstats: File
+    genome: UmiDedupResult  # dedup log (and, with umitools_dedup_stats, the UMI TSVs)
+    transcriptome: UmiDedupResult
+    # What salmon quantifies: the deduplicated transcriptome BAM, name-sorted
+    # again and, for paired-end samples, run through prepare-for-rsem.
+    transcriptome_bam: File
+    prepare_for_rsem_log: File | None  # paired-end only
+
+
+@dataclass
 class SampleResult:
     sample: str
     percent_mapped: float  # STAR "Uniquely mapped reads %"
@@ -199,6 +229,7 @@ class SampleResult:
     biotype_qc: BiotypeQC | None = None  # MultiQC biotype tables
     stringtie: StringTieResult | None = None  # None when skip_stringtie
     bigwig: dict[str, File] = field(default_factory=dict)  # forward/reverse/combined -> bigWig; empty when skip_bigwig
+    umi_dedup: UmiDeduplication | None = None  # set when with_umi
 
 
 @dataclass
@@ -328,7 +359,7 @@ async def preprocess_reads(
     opts: "RunOptions",
     bbsplit_index_dir: "asyncio.Task[Dir] | None" = None,
 ) -> PreprocessedReads:
-    """Merge, lint, QC, trim, filter and (optionally) BBSplit one sample's reads, as upstream.
+    """Merge, lint, QC, (UMI-extract,) trim, filter and (optionally) BBSplit one sample's reads, as upstream.
 
     When trimming leaves fewer than ``opts.min_trimmed_reads`` reads the
     sample stops there (BBSplit is skipped); the caller drops it.
@@ -359,19 +390,30 @@ async def preprocess_reads(
             args="--quiet",
         )
 
-    async def trim() -> TrimGaloreResult | None:
+    async def extract_and_trim() -> tuple[File, File | None, UmiExtractResult | None, TrimGaloreResult | None]:
+        r1, r2, umi = reads_1, reads_2, None
+        # As upstream: the UMIs move into the read names before trimming, and
+        # umi_discard_read drops a mate that held only the UMI (the sample
+        # carries on single-end).
+        if opts.with_umi and not opts.skip_umi_extract:
+            umi = await umitools_extract(r1, r2, prefix=sample.id, args=opts.umitools_extract_args())
+            r1, r2 = umi.reads_1, umi.reads_2
+            if r2 is not None and opts.umi_discard_read in (1, 2):
+                r1, r2 = (r2 if opts.umi_discard_read == 1 else r1), None
         if skip_trimming:
-            return None
-        return await trimgalore(reads_1, reads_2, prefix=f"{sample.id}_trimmed", fastqc=not skip_fastqc)
+            return r1, r2, umi, None
+        return r1, r2, umi, await trimgalore(r1, r2, prefix=f"{sample.id}_trimmed", fastqc=not skip_fastqc)
 
-    raw_fastqc, trimming = await asyncio.gather(raw_qc(), trim())
+    raw_fastqc, (reads_1, reads_2, umi, trimming) = await asyncio.gather(raw_qc(), extract_and_trim())
     reads_after_trimming = None
     if trimming is not None:
         reads_1, reads_2 = trimming.reads_1, trimming.reads_2
         if not opts.skip_linting:
             lint_logs["trimmed"] = await lint(reads_1, reads_2, opts.extra_fqlint_args)
         reads_after_trimming = await trimming.reads_after_filtering()
-    pre = PreprocessedReads(reads_1, reads_2, raw_fastqc, trimming, reads_after_trimming, lint=lint_logs)
+    pre = PreprocessedReads(
+        reads_1, reads_2, raw_fastqc, trimming, reads_after_trimming, lint=lint_logs, umi_extract=umi
+    )
     if reads_after_trimming is not None and reads_after_trimming < opts.min_trimmed_reads:
         return pre
 
@@ -494,6 +536,67 @@ async def mark_duplicates(sample: Sample, alignment: StarAlignment, genome: Geno
     return MarkedDuplicates(marked.bam, bai, marked.metrics, stats, flagstat, idxstats)
 
 
+async def dedup_umi(sample: Sample, alignment: StarAlignment, opts: "RunOptions") -> UmiDeduplication:
+    """UMI-tools deduplication of the genome and transcriptome BAMs, as upstream.
+
+    The genome BAM is deduplicated, indexed and stats'd. The transcriptome
+    BAM is coordinate-sorted and indexed for UMI-tools, deduplicated, then
+    name-sorted again; paired-end, ``prepare-for-rsem`` restores the mate
+    pairing salmon expects. With ``umitools_dedup_primary_only`` both BAMs
+    are first cut down to primary alignments.
+    """
+    args = opts.umitools_dedup_args(sample.single_end)
+
+    async def dedup(bam: File, bai: File, prefix: str) -> UmiDedupResult:
+        if opts.umitools_dedup_primary_only:
+            bam = await samtools_view(bam=bam, args="-F 0x900 -b")
+            bai = await samtools_index(bam=bam)
+        return await umitools_dedup(
+            bam,
+            bai,
+            prefix=prefix,
+            paired=not sample.single_end,
+            output_stats=opts.umitools_dedup_stats,
+            args=args,
+        )
+
+    async def genome() -> tuple[UmiDedupResult, File, File, File, File]:
+        deduped = await dedup(alignment.bam, alignment.bai, f"{sample.id}.umi_dedup.sorted")
+        bai = await samtools_index(bam=deduped.bam)
+        stats, flagstat, idxstats = await asyncio.gather(
+            samtools_stats(bam=deduped.bam),
+            samtools_flagstat(bam=deduped.bam),
+            samtools_idxstats(bam=deduped.bam, bai=bai),
+        )
+        return deduped, bai, stats, flagstat, idxstats
+
+    async def transcriptome() -> tuple[UmiDedupResult, File, File | None]:
+        sorted_bam = await samtools_sort(bam=alignment.transcriptome_bam)
+        deduped = await dedup(
+            sorted_bam, await samtools_index(bam=sorted_bam), f"{sample.id}.umi_dedup.transcriptome.sorted"
+        )
+        namesorted = await samtools_sort(bam=deduped.bam, args="-n")
+        if sample.single_end:
+            return deduped, namesorted, None
+        prepared = await umitools_prepareforrsem(namesorted, prefix=f"{sample.id}.umi_dedup.transcriptome.filtered")
+        return deduped, prepared.bam, prepared.log
+
+    (g, bai, stats, flagstat, idxstats), (t, transcriptome_bam, prepare_log) = await asyncio.gather(
+        genome(), transcriptome()
+    )
+    return UmiDeduplication(
+        bam=g.bam,
+        bai=bai,
+        stats=stats,
+        flagstat=flagstat,
+        idxstats=idxstats,
+        genome=g,
+        transcriptome=t,
+        transcriptome_bam=transcriptome_bam,
+        prepare_for_rsem_log=prepare_log,
+    )
+
+
 def calculate_strandedness(
     forward: float,
     reverse: float,
@@ -581,10 +684,10 @@ def salmon_lib_type(sample: Sample) -> str:
     return (single if sample.single_end else paired)[sample.strandedness]
 
 
-async def quantify_salmon_bam(sample: Sample, alignment: StarAlignment, genome: Genome) -> Dir:
-    """Salmon alignment-mode quantification of the STAR transcriptome BAM."""
+async def quantify_salmon_bam(sample: Sample, transcriptome_bam: File, genome: Genome) -> Dir:
+    """Salmon alignment-mode quantification of a transcriptome BAM (STAR's, or its UMI-deduplicated form)."""
     return await salmon_quant_bam(
-        bam=alignment.transcriptome_bam,
+        bam=transcriptome_bam,
         transcript_fasta=genome.transcript_fasta,
         gtf=genome.gtf,
         lib_type=salmon_lib_type(sample),
@@ -613,6 +716,43 @@ class RunOptions:
     skip_stringtie: bool = False
     skip_bigwig: bool = False
     min_mapped_reads: float = 5.0
+    with_umi: bool = False
+    skip_umi_extract: bool = False
+    umitools_extract_method: str = "string"
+    umitools_bc_pattern: str = ""
+    umitools_bc_pattern2: str = ""
+    umitools_umi_separator: str = ""
+    umi_discard_read: int = 0
+    umitools_grouping_method: str = "directional"
+    umitools_dedup_stats: bool = False
+    umitools_dedup_primary_only: bool = False
+
+    def umitools_extract_args(self) -> str:
+        """Upstream's UMI-tools extract options.
+
+        Unquoted, unlike upstream's: the shell task word-splits ``args`` (with
+        globbing off), so quotes would reach UMI-tools literally. Patterns
+        therefore must not contain whitespace.
+        """
+        args = []
+        if self.umitools_extract_method:
+            args.append(f"--extract-method={self.umitools_extract_method}")
+        if self.umitools_bc_pattern:
+            args.append(f"--bc-pattern={self.umitools_bc_pattern}")
+        if self.umitools_bc_pattern2:
+            args.append(f"--bc-pattern2={self.umitools_bc_pattern2}")
+        if self.umitools_umi_separator:
+            args.append(f"--umi-separator={self.umitools_umi_separator}")
+        return " ".join(args)
+
+    def umitools_dedup_args(self, single_end: bool) -> str:
+        """Upstream's UMI-tools dedup options (genome and transcriptome alike)."""
+        args = [] if single_end else ["--unpaired-reads=discard", "--chimeric-pairs=discard"]
+        if self.umitools_grouping_method:
+            args.append(f"--method={self.umitools_grouping_method}")
+        if self.umitools_umi_separator:
+            args.append(f"--umi-separator={self.umitools_umi_separator}")
+        return " ".join(args)
 
 
 async def run_sample(
@@ -630,6 +770,9 @@ async def run_sample(
     reads = await preprocess_reads(sample, opts, bbsplit_index_dir)
     if reads.reads_after_trimming is not None and reads.reads_after_trimming < opts.min_trimmed_reads:
         return reads.reads_after_trimming
+    if reads.reads_2 is None and not sample.single_end:
+        # umi_discard_read dropped a mate: as upstream, single-end from here on.
+        sample = replace(sample, fastq_2=[])
     ref = await genome
 
     analysis = None
@@ -649,9 +792,14 @@ async def run_sample(
         sample = replace(sample, strandedness=inferred)
 
     alignment = await align_star(sample, reads.reads_1, reads.reads_2, ref, opts.seq_platform, opts.seq_center)
+    # As upstream, UMI deduplication runs for every sample, before the mapping gate.
+    umi = await dedup_umi(sample, alignment, opts) if opts.with_umi else None
 
     async def markdup() -> MarkedDuplicates | None:
-        return None if opts.skip_markduplicates else await mark_duplicates(sample, alignment, ref)
+        # As upstream, UMI deduplication replaces MarkDuplicates.
+        if opts.skip_markduplicates or umi is not None:
+            return None
+        return await mark_duplicates(sample, alignment, ref)
 
     async def genome_bam_qc() -> tuple[
         MarkedDuplicates | None,
@@ -663,9 +811,12 @@ async def run_sample(
         dict[str, File],
     ]:
         marked = await markdup()
-        # As upstream, the QC runs on the duplicate-marked BAM when there is one.
-        bam = marked.bam if marked is not None else alignment.bam
-        bai = marked.bai if marked is not None else alignment.bai
+        # As upstream, the QC runs on the UMI-deduplicated or duplicate-marked BAM when there is one.
+        bam, bai = alignment.bam, alignment.bai
+        if umi is not None:
+            bam, bai = umi.bam, umi.bai
+        elif marked is not None:
+            bam, bai = marked.bam, marked.bai
 
         async def run_dupradar() -> DupradarResult | None:
             if opts.skip_dupradar:
@@ -729,7 +880,8 @@ async def run_sample(
         return await genome_bam_qc() if passed else (None, None, None, {}, None, None, {})
 
     salmon, (marked, dup, qm, rs, bt, st, bw) = await asyncio.gather(
-        quantify_salmon_bam(sample, alignment, ref), gated_genome_bam_qc()
+        quantify_salmon_bam(sample, umi.transcriptome_bam if umi else alignment.transcriptome_bam, ref),
+        gated_genome_bam_qc(),
     )
     return SampleResult(
         sample=sample.id,
@@ -748,6 +900,7 @@ async def run_sample(
         biotype_qc=bt[1] if bt else None,
         stringtie=st,
         bigwig=bw,
+        umi_dedup=umi,
     )
 
 
@@ -843,6 +996,16 @@ async def rnaseq(
     min_trimmed_reads: int = 10000,
     stranded_threshold: float = 0.8,
     unstranded_threshold: float = 0.1,
+    with_umi: bool = False,
+    skip_umi_extract: bool = False,
+    umitools_extract_method: str = "string",
+    umitools_bc_pattern: str = "",
+    umitools_bc_pattern2: str = "",
+    umitools_umi_separator: str = "",
+    umi_discard_read: int = 0,
+    umitools_grouping_method: str = "directional",
+    umitools_dedup_stats: bool = False,
+    umitools_dedup_primary_only: bool = False,
 ) -> RnaseqResult:
     """Prepare the genome while preprocessing every sample, then align and quantify them in parallel.
 
@@ -853,9 +1016,26 @@ async def rnaseq(
     BBSplit (off by default, as upstream) removes reads that map better to
     other genomes: give ``bbsplit_fasta_list`` (name → FASTA) to build an index
     against the prepared genome, or a prebuilt ``bbsplit_index_dir``.
+
+    UMI handling (``with_umi``, off by default, as upstream): UMI-tools
+    extracts the UMIs with ``umitools_bc_pattern`` (unless
+    ``skip_umi_extract``, for reads that already carry them in their names)
+    and deduplicates the genome and transcriptome BAMs in place of
+    MarkDuplicates. The UMI-tools options mirror upstream's parameters.
     """
     if not skip_bbsplit and bbsplit_fasta_list is None and bbsplit_index_dir is None:
         raise ValueError("BBSplit needs bbsplit_fasta_list or bbsplit_index_dir (or skip_bbsplit=True)")
+    if with_umi and not skip_umi_extract and not umitools_bc_pattern:
+        raise ValueError("with_umi needs umitools_bc_pattern to extract the UMIs (or skip_umi_extract=True)")
+    if umi_discard_read not in (0, 1, 2):
+        raise ValueError("umi_discard_read must be 0, 1 or 2")
+    for name, value in (
+        ("umitools_bc_pattern", umitools_bc_pattern),
+        ("umitools_bc_pattern2", umitools_bc_pattern2),
+        ("umitools_umi_separator", umitools_umi_separator),
+    ):
+        if any(c.isspace() for c in value):
+            raise ValueError(f"{name} must not contain whitespace")
     ids = [s.id for s in samples]
     if len(ids) != len(set(ids)):
         raise ValueError("sample ids must be unique; put a sample's runs in one Sample")
@@ -890,6 +1070,16 @@ async def rnaseq(
         skip_stringtie=skip_stringtie,
         skip_bigwig=skip_bigwig,
         min_mapped_reads=min_mapped_reads,
+        with_umi=with_umi,
+        skip_umi_extract=skip_umi_extract,
+        umitools_extract_method=umitools_extract_method,
+        umitools_bc_pattern=umitools_bc_pattern,
+        umitools_bc_pattern2=umitools_bc_pattern2,
+        umitools_umi_separator=umitools_umi_separator,
+        umi_discard_read=umi_discard_read,
+        umitools_grouping_method=umitools_grouping_method,
+        umitools_dedup_stats=umitools_dedup_stats,
+        umitools_dedup_primary_only=umitools_dedup_primary_only,
     )
 
     async def strandedness_index() -> Dir:
@@ -1127,6 +1317,8 @@ async def multiqc_report(
             await put_dir(pre.trimming.results, f"fastqc/trim/{sid}", ("_fastqc.zip",))
         if pre.bbsplit is not None:
             put(pre.bbsplit.stats, f"bbsplit/{sid}.stats.txt")
+        if pre.umi_extract is not None:
+            put(pre.umi_extract.log, f"umitools/{sid}.umi_extract.log")
         put(a.log_final, f"star/{sid}.Log.final.out")
         for kind, f in (("stats", a.stats), ("flagstat", a.flagstat), ("idxstats", a.idxstats)):
             put(f, f"samtools/{sid}.sorted.bam.{kind}")
@@ -1135,6 +1327,12 @@ async def multiqc_report(
             put(md.metrics, f"picard/{sid}.markdup.sorted.metrics.txt")
             for kind, f in (("stats", md.stats), ("flagstat", md.flagstat), ("idxstats", md.idxstats)):
                 put(f, f"samtools/{sid}.markdup.sorted.bam.{kind}")
+        umi = r.umi_dedup
+        if umi is not None:
+            # As upstream: the genome-side dedup log and stats (transcriptome stats are left out).
+            put(umi.genome.log, f"umitools/genomic_dedup_log/{sid}.umi_dedup.sorted.log")
+            for kind, f in (("stats", umi.stats), ("flagstat", umi.flagstat), ("idxstats", umi.idxstats)):
+                put(f, f"samtools/{sid}.umi_dedup.sorted.bam.{kind}")
         await put_dir(r.salmon, f"salmon/{sid}")
         await put_dir(r.qualimap, f"qualimap/{sid}")
         if r.dupradar is not None:
