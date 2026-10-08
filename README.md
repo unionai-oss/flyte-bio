@@ -112,6 +112,27 @@ pattern (one file per tool family, sharing one biocontainer image, exposing a
 module-level `env`) are welcome once the plugin is ready to stabilize. The
 top-level `flyte_bio.env` is intended to grow alongside the modules.
 
+## Workarounds pending upstream fixes
+
+### MultiQC `export_plots` is off (flyteorg/flyte#8149, flyteorg/stow#32)
+
+The vendored `scripts/multiqc_config.yml` sets `export_plots: false` (upstream:
+`true`), so the MultiQC output Dir holds the HTML report and data tables but
+not the static PNG/SVG/PDF plot exports. With the exports, the output is a few
+hundred files, and the copilot uploader sidecar runs out of memory uploading
+them: since stow v0.5.0 (flyteorg/flyte#8115) every file is read into memory
+while it uploads, and copilot uploads all of a Dir's files at once.
+
+Revert to `true` once either fix is **merged and deployed** (for Union
+clusters: the `flyte2` submodule pin in the `cloud` repo includes it and the
+cluster has been redeployed):
+
+- [flyteorg/flyte#8149](https://github.com/flyteorg/flyte/pull/8149) — copilot
+  uploads at most 8 files at once;
+- [flyteorg/stow#32](https://github.com/flyteorg/stow/pull/32) — stow streams
+  file bodies instead of buffering them (also needs a stow release and a
+  `go.mod` bump in flyte).
+
 ## Porting an nf-core module
 
 Most wrappers in this package are direct ports of [nf-core/modules](https://github.com/nf-core/modules):
