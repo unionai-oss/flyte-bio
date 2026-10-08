@@ -4,6 +4,7 @@ Exposes the subset of the samtools suite the RNA-seq pipeline leans on:
 
 - :data:`samtools_faidx` — index a FASTA (and emit chromosome sizes).
 - :data:`samtools_sort` — coordinate-sort an alignment.
+- :data:`samtools_view` — filter or convert an alignment.
 - :data:`samtools_index` — build a BAM index (``.bai``).
 - :data:`samtools_stats` — full alignment statistics.
 - :data:`samtools_flagstat` — FLAG-field tallies.
@@ -60,6 +61,22 @@ samtools_sort = shell.create(
     script=r"""
         ARGS={inputs.args}
         samtools sort $ARGS -o {outputs.bam_sorted} {inputs.bam}
+    """,
+)
+
+
+# `args` carries the view options, e.g. `-F 0x900 -b` for a BAM of primary
+# alignments. Without an output-format flag the output is SAM without header.
+samtools_view = shell.create(
+    name="samtools_view",
+    image=SAMTOOLS_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"bam": File, "args": str},
+    defaults={"args": ""},
+    outputs={"out": File},
+    script=r"""
+        ARGS={inputs.args}
+        samtools view $ARGS -o {outputs.out} {inputs.bam}
     """,
 )
 
@@ -123,6 +140,7 @@ env = flyte.TaskEnvironment.from_task(
     "samtools",
     samtools_faidx.as_task(),
     samtools_sort.as_task(),
+    samtools_view.as_task(),
     samtools_index.as_task(),
     samtools_stats.as_task(),
     samtools_flagstat.as_task(),

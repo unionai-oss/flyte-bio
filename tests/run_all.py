@@ -52,6 +52,7 @@ from tests.modules import (
     test_tx2gene,
     test_tximport,
     test_ucsc,
+    test_umitools,
 )
 from tests.pipelines import test_rnaseq
 
@@ -82,6 +83,7 @@ ALL_TESTS = [
     *test_tx2gene.tests,
     *test_tximport.tests,
     *test_ucsc.tests,
+    *test_umitools.tests,
     *test_rnaseq.tests,
 ]
 

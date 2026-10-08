@@ -17,6 +17,7 @@ from flyte_bio.modules.samtools import (
     samtools_index,
     samtools_sort,
     samtools_stats,
+    samtools_view,
 )
 from tests.framework import assert_md5, assert_nonempty, env, fixture
 
@@ -37,6 +38,16 @@ async def test_sort() -> None:
     bam = await fixture("genomics/sarscov2/illumina/bam/test.paired_end.bam")
     out = await samtools_sort(bam=bam)
     await assert_nonempty(out, label="samtools sort")
+
+
+@env.task
+async def test_view_primary_bam() -> None:
+    # The rnaseq UMI path's primary-only filter (upstream SAMTOOLS_VIEW_PRIMARY).
+    bam = await fixture(SORTED_BAM)
+    out = await samtools_view(bam=bam, args="-F 0x900 -b")
+    async with out.open("rb") as fh:
+        magic = bytes(await fh.read(2))
+    assert magic == b"\x1f\x8b", f"samtools view -b wrote no BGZF BAM (starts {magic!r})"
 
 
 @env.task
@@ -71,4 +82,4 @@ async def test_idxstats() -> None:
     await assert_md5(out, "df60a8c8d6621100d05178c93fb053a2", label="samtools idxstats")
 
 
-tests = [test_faidx, test_sort, test_index, test_stats, test_flagstat, test_idxstats]
+tests = [test_faidx, test_sort, test_view_primary_bam, test_index, test_stats, test_flagstat, test_idxstats]

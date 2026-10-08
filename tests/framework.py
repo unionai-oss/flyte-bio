@@ -76,6 +76,7 @@ import requests
 from flyte.io import Dir, File
 
 from flyte_bio.modules import env as modules_env
+from flyte_bio.modules.samtools import samtools_view
 
 # The package under test must be *installed* into the test image, not just
 # code-bundled. flyte's default bundle copies source files preserving their
@@ -245,6 +246,29 @@ async def assert_gunzipped_md5(file: File, expected: str, *, label: str = "") ->
         prefix = f"{label}: " if label else ""
         raise AssertionError(
             f"{prefix}gunzipped md5 mismatch (expected {expected}, got {actual})"
+        )
+
+
+async def assert_reads_md5(bam: File, expected: str, *, label: str = "") -> None:
+    """Assert the md5 of ``bam``'s read sequences matches ``expected``.
+
+    Mirrors nft-bam's ``getReadsMD5`` (nft-utils' ``md5Reads`` in upstream
+    snapshots): one md5 over every record's SEQ, concatenated in file
+    order, printed as hex without leading zeros. Header, flags, positions
+    and tags don't count. (nft-bam's ``getSamLinesMD5`` hashes htsjdk's SAM
+    text, which ``samtools view`` doesn't reproduce byte for byte.)
+    """
+    sam = await samtools_view(bam=bam)
+    h = hashlib.md5()
+    async with sam.open("rb") as fh:
+        text = bytes(await fh.read()).decode()
+    for line in text.splitlines():
+        h.update(line.split("\t")[9].encode())
+    actual = h.hexdigest().lstrip("0")
+    if actual != expected:
+        prefix = f"{label}: " if label else ""
+        raise AssertionError(
+            f"{prefix}reads md5 mismatch (expected {expected}, got {actual})"
         )
 
 

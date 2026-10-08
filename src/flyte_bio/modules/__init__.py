@@ -31,6 +31,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.tx2gene` — transcript → gene table from a GTF.
 - :mod:`flyte_bio.modules.tximport` — count/TPM matrices from quantifications.
 - :mod:`flyte_bio.modules.ucsc` — bedClip / bedGraphToBigWig.
+- :mod:`flyte_bio.modules.umitools` — UMI extraction and deduplication.
 - :mod:`flyte_bio.modules.untar` — tar archive extraction.
 
 The module-level :data:`env` here is an aggregate
@@ -72,6 +73,7 @@ from .trimgalore import env as trimgalore_env
 from .tx2gene import env as tx2gene_env
 from .tximport import env as tximport_env
 from .ucsc import env as ucsc_env
+from .umitools import env as umitools_env
 from .untar import env as untar_env
 
 env = flyte.TaskEnvironment(
@@ -105,6 +107,7 @@ env = flyte.TaskEnvironment(
         tx2gene_env,
         tximport_env,
         ucsc_env,
+        umitools_env,
         untar_env,
     ],
 )
@@ -139,5 +142,6 @@ __all__ = [
     "tx2gene_env",
     "tximport_env",
     "ucsc_env",
+    "umitools_env",
     "untar_env",
 ]
