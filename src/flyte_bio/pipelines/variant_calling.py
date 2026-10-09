@@ -23,6 +23,9 @@ pipeline (3.10.0):
   the calls.
 - :func:`multiqc_report` — one MultiQC report over every sample's QC, with
   upstream's config.
+- :func:`variant_calling` — all of the above for the samples in a
+  samplesheet, in parallel, optionally publishing the results in upstream's
+  ``--outdir`` layout (:func:`variant_calling_layout`).
 
 Upstream splits FASTQs into 50M-read chunks with fastp by default to map
 them in parallel; that isn't ported (each lane maps as one job), which
@@ -35,6 +38,7 @@ task and fan out to the module tasks, so the caller's
 
 import asyncio
 import tempfile
+import urllib.request
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -64,8 +68,8 @@ from flyte_bio.modules.mosdepth import mosdepth
 from flyte_bio.modules.multiqc import MultiQCResult, multiqc
 from flyte_bio.modules.samtools import samtools_faidx, samtools_index, samtools_merge, samtools_stats
 from flyte_bio.modules.vcftools import vcftools
-from flyte_bio.publish import name
-from flyte_bio.samplesheet import Row
+from flyte_bio.publish import expand, name, publish
+from flyte_bio.samplesheet import Row, read_samplesheet
 from flyte_bio.scripts import path as asset
 
 
@@ -240,15 +244,33 @@ def samples_from_samplesheet(rows: list[Row]) -> list[Sample]:
 
 
 async def first_line(fastq: File) -> str:
-    """The first line of a gzipped FASTQ, reading only as much as it takes."""
+    """The first line of a gzipped FASTQ, reading only as much as it takes.
+
+    ``https://`` FASTQs are read with the standard library: Flyte's file
+    reader can't fetch them reliably inside a task.
+    """
     decompressor = zlib.decompressobj(zlib.MAX_WBITS | 16)
     text = b""
-    async with fastq.open("rb") as fh:
-        while b"\n" not in text:
-            chunk = bytes(await fh.read(64 * 1024))
-            if not chunk:
-                break
-            text += decompressor.decompress(chunk)
+    if fastq.path.startswith(("http://", "https://")):
+
+        def read_http() -> bytes:
+            data = b""
+            with urllib.request.urlopen(fastq.path, timeout=60) as response:
+                while b"\n" not in data:
+                    chunk = response.read(64 * 1024)
+                    if not chunk:
+                        break
+                    data += decompressor.decompress(chunk)
+            return data
+
+        text = await asyncio.to_thread(read_http)
+    else:
+        async with fastq.open("rb") as fh:
+            while b"\n" not in text:
+                chunk = bytes(await fh.read(64 * 1024))
+                if not chunk:
+                    break
+                text += decompressor.decompress(chunk)
     return text.split(b"\n", 1)[0].decode(errors="replace")
 
 
@@ -352,9 +374,11 @@ class AlignmentQC:
 
 @dataclass
 class DuplicatesMarked:
-    cram: File  # <sample>.md.cram
+    """The sample's alignment going into recalibration: duplicate-marked, or (skip_markduplicates) just merged."""
+
+    cram: File  # <sample>.md.cram, or <sample>.sorted.cram when duplicate marking is skipped
     crai: File
-    metrics: File  # <sample>.md.cram.metrics
+    metrics: File | None  # <sample>.md.cram.metrics; None when duplicate marking is skipped
     qc: AlignmentQC
 
 
@@ -647,8 +671,8 @@ async def multiqc_report(samples: list[SampleQC]) -> MultiQCResult:
             await put_dir(report, f"fastqc/{sid}/{i}", ("_fastqc.zip",))
         md = s.markduplicates
         if md is not None:
-            put(md.metrics, f"markduplicates/{name(md.metrics)}")
-            put(md.qc.samtools_stats, f"samtools/{sid}.md.cram.stats")
+            put(md.metrics, f"markduplicates/{name(md.metrics) if md.metrics else ''}")
+            put(md.qc.samtools_stats, f"samtools/{name(md.cram)}.stats")
             await put_dir(md.qc.mosdepth, f"mosdepth/{sid}", (".txt",))
         recal = s.recalibrated
         if recal is not None:
@@ -664,3 +688,187 @@ async def multiqc_report(samples: list[SampleQC]) -> MultiQCResult:
     data = await Dir.from_local(str(root))
     config = await File.from_local(str(asset("multiqc_config_variant_calling.yml")))
     return await multiqc(data, configs=[config], prefix="multiqc_report")
+
+
+async def merge_lanes(mapped: MappedSample, reference: Reference, wes: bool = False) -> DuplicatesMarked:
+    """Without duplicate marking, as upstream: the lane BAMs merged into ``<sample>.sorted.cram``, then QC'd."""
+    sample_id = mapped.sample.id
+    cram = await samtools_merge(
+        mapped.lane_bams,
+        prefix=f"{sample_id}.sorted",
+        fasta=reference.fasta,
+        fai=reference.fai,
+        args="--output-fmt cram,version=3.0",
+    )
+    crai = await samtools_index(bam=cram)
+    qc = await alignment_qc(sample_id, "sorted", cram, crai, reference, wes)
+    return DuplicatesMarked(cram=cram, crai=crai, metrics=None, qc=qc)
+
+
+@dataclass
+class SampleResult:
+    sample: Sample
+    mapped: MappedSample
+    markduplicates: DuplicatesMarked  # merged lanes only, when skip_markduplicates
+    recalibrated: Recalibrated | None  # None when skip_baserecalibrator
+    calls: GermlineCalls
+    vcf_qc: VcfQC | None  # None when skip_vcf_qc
+
+
+@dataclass
+class VariantCallingResult:
+    reference: Reference
+    samples: list[SampleResult]
+    multiqc: MultiQCResult | None = None  # None when skip_multiqc
+    outdir: Dir | None = None  # the published results tree, when outdir/publish_results was asked for
+
+
+async def variant_calling(
+    samplesheet: File,
+    fasta: File,
+    fai: File | None = None,
+    sequence_dict: File | None = None,
+    bwa_index: Dir | None = None,
+    dbsnp: File | None = None,
+    dbsnp_tbi: File | None = None,
+    known_indels: list[File] | None = None,
+    known_indels_tbi: list[File] | None = None,
+    intervals: File | None = None,
+    no_intervals: bool = False,
+    nucleotides_per_second: int = 200000,
+    wes: bool = False,
+    seq_platform: str = "ILLUMINA",
+    seq_center: str = "",
+    skip_fastqc: bool = False,
+    skip_markduplicates: bool = False,
+    skip_baserecalibrator: bool = False,
+    skip_haplotypecaller_filter: bool = False,
+    haplotypecaller_filter_args: str = "--info-key CNN_1D",
+    gatk_pcr_indel_model: str = "CONSERVATIVE",
+    skip_vcf_qc: bool = False,
+    skip_multiqc: bool = False,
+    outdir: str | None = None,
+    publish_results: bool = False,
+) -> VariantCallingResult:
+    """Germline short-variant calling with GATK HaplotypeCaller, from FASTQ, as upstream's germline route.
+
+    ``samplesheet`` is upstream's ``--input``: a CSV with columns ``patient``,
+    ``sex``, ``status`` (0 = normal; tumor samples aren't supported yet),
+    ``sample``, ``lane``, ``fastq_1`` and ``fastq_2`` (empty for single-end),
+    one row per lane. It is read before anything runs. The reference is
+    prepared once (see :func:`prepare_reference`; anything not supplied is
+    built), and every sample is mapped, duplicate-marked, recalibrated
+    against the known sites, called and QC'd in parallel, then reported
+    together in MultiQC.
+
+    ``intervals`` (BED or interval list) restricts calling to target regions
+    and sets the scatter-gather chunks (sized by ``nucleotides_per_second``);
+    ``wes`` marks exome / targeted data (mosdepth reports on the intervals
+    rather than 500 bp windows). Base-quality recalibration and the CNN
+    filter need known sites (``dbsnp`` and/or ``known_indels``) unless
+    skipped.
+
+    Outputs: everything is returned in the :class:`VariantCallingResult`.
+    Like upstream's ``--outdir``, ``outdir`` (e.g. ``s3://my-bucket/vc``)
+    also lays the results out there in upstream's folder structure
+    (:func:`variant_calling_layout`); ``publish_results=True`` does the same
+    in Flyte's own storage. Either way ``result.outdir`` is that tree as a
+    Dir, for downstream tasks.
+    """
+    samples = samples_from_samplesheet(await read_samplesheet(samplesheet))
+    if not samples:
+        raise ValueError("the samplesheet has no samples")
+    if not skip_baserecalibrator and dbsnp is None and not known_indels:
+        raise ValueError("base-quality recalibration needs dbsnp and/or known_indels (or skip_baserecalibrator)")
+    if not skip_haplotypecaller_filter and dbsnp is None and not known_indels:
+        raise ValueError("the HaplotypeCaller filter needs dbsnp and/or known_indels (or skip_haplotypecaller_filter)")
+
+    reference = await prepare_reference(
+        fasta,
+        fai=fai,
+        sequence_dict=sequence_dict,
+        bwa_index=bwa_index,
+        dbsnp=dbsnp,
+        dbsnp_tbi=dbsnp_tbi,
+        known_indels=known_indels,
+        known_indels_tbi=known_indels_tbi,
+        intervals=intervals,
+        no_intervals=no_intervals,
+        nucleotides_per_second=nucleotides_per_second,
+    )
+
+    async def run_sample(sample: Sample) -> SampleResult:
+        mapped = await map_reads(sample, reference, seq_platform, seq_center, skip_fastqc=skip_fastqc)
+        if skip_markduplicates:
+            marked = await merge_lanes(mapped, reference, wes)
+        else:
+            marked = await mark_duplicates(mapped, reference, wes)
+        recal = None if skip_baserecalibrator else await recalibrate(marked, sample.id, reference, wes)
+        cram, crai = (recal.cram, recal.crai) if recal else (marked.cram, marked.crai)
+        calls = await call_variants(
+            cram,
+            crai,
+            sample.id,
+            reference,
+            skip_filter=skip_haplotypecaller_filter,
+            pcr_indel_model=gatk_pcr_indel_model,
+            filter_args=haplotypecaller_filter_args,
+        )
+        qc = None if skip_vcf_qc else await vcf_qc(calls.final)
+        return SampleResult(sample, mapped, marked, recal, calls, qc)
+
+    results = await asyncio.gather(*(run_sample(s) for s in samples))
+    result = VariantCallingResult(reference=reference, samples=list(results))
+    if not skip_multiqc:
+        result.multiqc = await multiqc_report(
+            [SampleQC(r.sample.id, r.mapped.fastqc, r.markduplicates, r.recalibrated, r.vcf_qc) for r in results]
+        )
+    if outdir is not None or publish_results:
+        result.outdir = await publish(await variant_calling_layout(result), outdir)
+    return result
+
+
+async def variant_calling_layout(result: VariantCallingResult) -> dict[str, File | Dir | None]:
+    """Upstream's results layout for a run: relative path -> output, for :func:`~flyte_bio.publish.publish`.
+
+    Follows upstream's default ``publishDir`` paths: ``preprocessing/``
+    (``markduplicates/``, ``recal_table/``, ``recalibrated/`` per sample),
+    ``reports/`` (``fastqc/``, ``markduplicates/``, ``samtools/``,
+    ``mosdepth/``, ``bcftools/`` and ``vcftools/`` per caller and sample),
+    ``variant_calling/haplotypecaller/<sample>/`` and ``multiqc/``. Like
+    upstream by default, it leaves out the lane BAMs and the prepared
+    reference.
+    """
+    out: dict[str, File | Dir | None] = {}
+    for r in result.samples:
+        sid = r.sample.id
+        for lane, report in zip(r.sample.lanes, r.mapped.fastqc):
+            out.update(await expand(f"reports/fastqc/{sid}-{lane.id}", report))
+        md = r.markduplicates
+        stage = "markduplicates" if md.metrics is not None else "mapped"
+        out[f"preprocessing/{stage}/{sid}/{name(md.cram)}"] = md.cram
+        out[f"preprocessing/{stage}/{sid}/{name(md.cram)}.crai"] = md.crai
+        if md.metrics is not None:
+            out[f"reports/markduplicates/{sid}/{name(md.metrics)}"] = md.metrics
+        out[f"reports/samtools/{sid}/{name(md.cram)}.stats"] = md.qc.samtools_stats
+        out.update(await expand(f"reports/mosdepth/{sid}", md.qc.mosdepth))
+        if r.recalibrated is not None:
+            rc = r.recalibrated
+            out[f"preprocessing/recal_table/{sid}/{name(rc.table)}"] = rc.table
+            out[f"preprocessing/recalibrated/{sid}/{name(rc.cram)}"] = rc.cram
+            out[f"preprocessing/recalibrated/{sid}/{name(rc.cram)}.crai"] = rc.crai
+            out[f"reports/samtools/{sid}/{name(rc.cram)}.stats"] = rc.qc.samtools_stats
+            out.update(await expand(f"reports/mosdepth/{sid}", rc.qc.mosdepth))
+        calls_dir = f"variant_calling/haplotypecaller/{sid}"
+        for vcf in (r.calls.calls, r.calls.filtered):
+            if vcf is not None:
+                out[f"{calls_dir}/{name(vcf.vcf)}"] = vcf.vcf
+                out[f"{calls_dir}/{name(vcf.tbi)}"] = vcf.tbi
+        if r.vcf_qc is not None:
+            q = r.vcf_qc
+            out[f"reports/bcftools/haplotypecaller/{sid}/{name(q.bcftools_stats)}"] = q.bcftools_stats
+            for f in (q.tstv_count, q.tstv_qual, q.filter_summary):
+                out[f"reports/vcftools/haplotypecaller/{sid}/{name(f)}"] = f
+    if result.multiqc is not None:
+        out.update(await expand("multiqc", result.multiqc.results))
+    return out

@@ -9,7 +9,8 @@ import asyncio
 import gzip
 import hashlib
 
-from flyte.io import File
+import flyte
+from flyte.io import Dir, File
 
 from flyte_bio.modules.samtools import samtools_view
 from flyte_bio.pipelines.variant_calling import (
@@ -21,6 +22,7 @@ from flyte_bio.pipelines.variant_calling import (
     prepare_reference,
     recalibrate,
     samples_from_samplesheet,
+    variant_calling,
     vcf_qc,
 )
 from flyte_bio.samplesheet import read_samplesheet
@@ -315,6 +317,97 @@ async def test_fastq_to_report() -> None:
         assert any(module in n for n in data), f"MultiQC parsed no {module} outputs: {sorted(data)}"
 
 
+async def published(tree: Dir) -> set[str]:
+    base = tree.path.rstrip("/")
+    return {f.path[len(base) :].lstrip("/") async for f in tree.walk()}
+
+
+async def profile_inputs() -> dict:
+    """variant_calling() keyword arguments for upstream's test profile (one interval chunk at 20 nt/s)."""
+    sheet, fasta, fai, dict_file, dbsnp, indels, intervals = await asyncio.gather(
+        stage_samplesheet(FASTQ_SAMPLESHEET, ("fastq_1", "fastq_2")),
+        fixture(FASTA),
+        fixture(FAI),
+        fixture(DICT),
+        fixture(DBSNP),
+        fixture(KNOWN_INDELS),
+        fixture(INTERVALS),
+    )
+    return {
+        "samplesheet": sheet,
+        "fasta": fasta,
+        "fai": fai,
+        "sequence_dict": dict_file,
+        "dbsnp": dbsnp,
+        "known_indels": [indels],
+        "intervals": intervals,
+        "nucleotides_per_second": 20,
+        "haplotypecaller_filter_args": "--info-key CNN_1D --indel-tranche 0",
+    }
+
+
+@env.task
+async def test_variant_calling() -> None:
+    # The whole germline route from upstream's FASTQ samplesheet, published in upstream's --outdir layout.
+    result = await variant_calling(**await profile_inputs(), publish_results=True)
+    (r,) = result.samples
+    assert r.sample.id == "test" and r.recalibrated is not None and r.vcf_qc is not None
+    assert result.multiqc is not None and result.outdir is not None
+    paths = await published(result.outdir)
+    for path in [
+        "reports/fastqc/test-test_L1/test-test_L1_1_fastqc.html",
+        "reports/fastqc/test-test_L2/test-test_L2_2_fastqc.html",
+        "preprocessing/markduplicates/test/test.md.cram",
+        "preprocessing/markduplicates/test/test.md.cram.crai",
+        "reports/markduplicates/test/test.md.cram.metrics",
+        "reports/samtools/test/test.md.cram.stats",
+        "reports/mosdepth/test/test.md.mosdepth.summary.txt",
+        "preprocessing/recal_table/test/test.recal.table",
+        "preprocessing/recalibrated/test/test.recal.cram",
+        "preprocessing/recalibrated/test/test.recal.cram.crai",
+        "reports/samtools/test/test.recal.cram.stats",
+        "reports/mosdepth/test/test.recal.mosdepth.summary.txt",
+        "variant_calling/haplotypecaller/test/test.haplotypecaller.vcf.gz",
+        "variant_calling/haplotypecaller/test/test.haplotypecaller.vcf.gz.tbi",
+        "reports/bcftools/haplotypecaller/test/test.haplotypecaller.bcftools_stats.txt",
+        "reports/vcftools/haplotypecaller/test/test.haplotypecaller.TsTv.count",
+        "multiqc/multiqc_report.html",
+    ]:
+        assert path in paths, f"not published: {path}"
+
+
+@env.task
+async def test_variant_calling_skips() -> None:
+    # Without duplicate marking and recalibration the lanes are merged into <sample>.sorted.cram and called
+    # as they are. Published to an explicit outdir. The filter is off too: these calls include indels that
+    # no known-indel site overlaps, which GATK's tranche filter refuses (upstream would fail the same way);
+    # test_call_variants covers the filter.
+    outdir = flyte.ctx().raw_data_path.get_random_remote_path("variant_calling_outdir")
+    result = await variant_calling(
+        **await profile_inputs(),
+        skip_markduplicates=True,
+        skip_baserecalibrator=True,
+        skip_haplotypecaller_filter=True,
+        outdir=outdir,
+    )
+    (r,) = result.samples
+    assert r.markduplicates.metrics is None and r.recalibrated is None
+    assert r.markduplicates.cram.path.endswith("/test.sorted.cram"), r.markduplicates.cram.path
+    assert r.calls.filtered is None and r.calls.final is r.calls.calls
+    assert result.outdir is not None and result.outdir.path.rstrip("/") == outdir.rstrip("/")
+    paths = await published(result.outdir)
+    for path in [
+        "preprocessing/mapped/test/test.sorted.cram",
+        "reports/samtools/test/test.sorted.cram.stats",
+        "reports/mosdepth/test/test.sorted.mosdepth.summary.txt",
+        "variant_calling/haplotypecaller/test/test.haplotypecaller.vcf.gz",
+        "reports/bcftools/haplotypecaller/test/test.haplotypecaller.bcftools_stats.txt",
+        "multiqc/multiqc_report.html",
+    ]:
+        assert path in paths, f"not published: {path}"
+    assert not any(p.startswith(("preprocessing/recalibrated", "reports/markduplicates")) for p in paths), paths
+
+
 tests = [
     test_prepare_reference_from_fasta,
     test_prepare_reference_test_profile,
@@ -323,4 +416,6 @@ tests = [
     test_recalibrate,
     test_call_variants,
     test_fastq_to_report,
+    test_variant_calling,
+    test_variant_calling_skips,
 ]
