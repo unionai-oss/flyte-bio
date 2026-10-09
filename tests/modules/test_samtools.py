@@ -65,6 +65,20 @@ async def test_stats() -> None:
 
 
 @env.task
+async def test_stats_cram() -> None:
+    # upstream case: samtools/stats "cram" (its md5 covers a header with file paths, so check the content)
+    hs = "genomics/homo_sapiens/"
+    cram = await fixture(hs + "illumina/cram/test.paired_end.recalibrated.sorted.cram")
+    fasta = await fixture(hs + "genome/chr21/sequence/genome.fasta")
+    fai = await fixture(hs + "genome/chr21/sequence/genome.fasta.fai")
+    out = await samtools_stats(bam=cram, fasta=fasta, fai=fai)
+    async with out.open("rb") as fh:
+        text = bytes(await fh.read()).decode()
+    assert text.startswith("# This file was produced by samtools stats"), text[:200]
+    assert any(line.startswith("SN\traw total sequences:") for line in text.splitlines()), "no summary numbers"
+
+
+@env.task
 async def test_flagstat() -> None:
     # upstream case: samtools/flagstat "BAM" (note: the "BAM - stub" case's
     # md5 is a touched placeholder, not real output — don't use it)
@@ -82,4 +96,13 @@ async def test_idxstats() -> None:
     await assert_md5(out, "df60a8c8d6621100d05178c93fb053a2", label="samtools idxstats")
 
 
-tests = [test_faidx, test_sort, test_view_primary_bam, test_index, test_stats, test_flagstat, test_idxstats]
+tests = [
+    test_faidx,
+    test_sort,
+    test_view_primary_bam,
+    test_index,
+    test_stats,
+    test_stats_cram,
+    test_flagstat,
+    test_idxstats,
+]

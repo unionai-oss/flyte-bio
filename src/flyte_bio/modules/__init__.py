@@ -6,16 +6,21 @@ across its tasks:
 - :mod:`flyte_bio.modules.bbmap` — BBSplit (index build + read binning).
 - :mod:`flyte_bio.modules.bedtools` — genome arithmetic (intersect, sort,
   merge, genomecov).
+- :mod:`flyte_bio.modules.bwa` — BWA short-read alignment (index).
 - :mod:`flyte_bio.modules.cat` — file concatenation (``cat_fastq``).
 - :mod:`flyte_bio.modules.deseq2_qc` — DESeq2 PCA / sample-distance QC.
 - :mod:`flyte_bio.modules.dupradar` — duplication rate vs expression QC.
 - :mod:`flyte_bio.modules.fastqc` — read quality-control reports.
 - :mod:`flyte_bio.modules.catadditionalfasta` — append an extra FASTA + GTF.
 - :mod:`flyte_bio.modules.fq` — FASTQ subsampling and linting.
+- :mod:`flyte_bio.modules.gatk4` — GATK tools (sequence dictionary, interval lists).
 - :mod:`flyte_bio.modules.gffread` — GFF/GTF conversion + transcript FASTA.
 - :mod:`flyte_bio.modules.gtf2bed` — derive a BED12 gene model from a GTF.
 - :mod:`flyte_bio.modules.gtffilter` — restrict a GTF to a genome's sequences.
 - :mod:`flyte_bio.modules.gunzip` — single-file gzip decompression.
+- :mod:`flyte_bio.modules.htslib` — bgzip + tabix.
+- :mod:`flyte_bio.modules.intervals` — scatter-gather genomic intervals.
+- :mod:`flyte_bio.modules.mosdepth` — read-depth summaries.
 - :mod:`flyte_bio.modules.multiqc` — aggregate QC report.
 - :mod:`flyte_bio.modules.multiqccustombiotype` — biotype counts for MultiQC.
 - :mod:`flyte_bio.modules.picard` — Picard MarkDuplicates.
@@ -48,16 +53,21 @@ import flyte
 from .bbmap import env as bbmap_env
 from .bedtools import env as bedtools_env
 from .bedtools import genomecov_env
+from .bwa import env as bwa_env
 from .cat import env as cat_env
 from .catadditionalfasta import env as catadditionalfasta_env
 from .deseq2_qc import env as deseq2_qc_env
 from .dupradar import env as dupradar_env
 from .fastqc import env as fastqc_env
 from .fq import env as fq_env
+from .gatk4 import env as gatk4_env
 from .gffread import env as gffread_env
 from .gtf2bed import env as gtf2bed_env
 from .gtffilter import env as gtffilter_env
 from .gunzip import env as gunzip_env
+from .htslib import env as htslib_env
+from .intervals import env as intervals_env
+from .mosdepth import env as mosdepth_env
 from .multiqc import env as multiqc_env
 from .multiqccustombiotype import env as multiqccustombiotype_env
 from .picard import env as picard_env
@@ -81,6 +91,8 @@ env = flyte.TaskEnvironment(
     depends_on=[
         bbmap_env,
         bedtools_env,
+        bwa_env,
+        gatk4_env,
         genomecov_env,
         cat_env,
         catadditionalfasta_env,
@@ -92,6 +104,9 @@ env = flyte.TaskEnvironment(
         gtf2bed_env,
         gtffilter_env,
         gunzip_env,
+        htslib_env,
+        intervals_env,
+        mosdepth_env,
         multiqc_env,
         multiqccustombiotype_env,
         picard_env,
@@ -115,6 +130,7 @@ env = flyte.TaskEnvironment(
 __all__ = [
     "bbmap_env",
     "bedtools_env",
+    "bwa_env",
     "cat_env",
     "catadditionalfasta_env",
     "deseq2_qc_env",
@@ -122,11 +138,15 @@ __all__ = [
     "env",
     "fastqc_env",
     "fq_env",
+    "gatk4_env",
     "genomecov_env",
     "gffread_env",
     "gtf2bed_env",
     "gtffilter_env",
     "gunzip_env",
+    "htslib_env",
+    "intervals_env",
+    "mosdepth_env",
     "multiqc_env",
     "multiqccustombiotype_env",
     "picard_env",

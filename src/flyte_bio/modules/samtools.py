@@ -96,14 +96,25 @@ samtools_index = shell.create(
 )
 
 
+# A CRAM needs its reference: pass `fasta` and its `fai`, linked side by side
+# (samtools would otherwise try to index the read-only staged FASTA).
 samtools_stats = shell.create(
     name="samtools_stats",
     image=SAMTOOLS_IMAGE,
     resources=DEFAULT_RESOURCES,
-    inputs={"bam": File},
+    inputs={"bam": File, "fasta": File | None, "fai": File | None},
     outputs={"stats": File},
     script=r"""
-        samtools stats {inputs.bam} > {outputs.stats}
+        BAM=({inputs.bam})
+        shopt -s nullglob; FA=({inputs.fasta}); FAI=({inputs.fai}); shopt -u nullglob
+        REF=()
+        if [ ${#FA[@]} -gt 0 ]; then
+            W=$(mktemp -d)
+            ln -s "${FA[0]}" "$W/genome.fa"
+            [ ${#FAI[@]} -gt 0 ] && ln -s "${FAI[0]}" "$W/genome.fa.fai"
+            REF=(--reference "$W/genome.fa")
+        fi
+        samtools stats "${REF[@]}" "${BAM[0]}" > {outputs.stats}
     """,
 )
 
