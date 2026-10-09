@@ -87,10 +87,10 @@ The core of it:
 
 ```python
 import flyte
-from flyte.io import File
+from flyte.io import Dir, File
 
 from flyte_bio import env as bio_env
-from flyte_bio.pipelines.rnaseq import read_samplesheet, rnaseq
+from flyte_bio.pipelines.rnaseq import rnaseq
 
 FLYTE_BIO = "flyte-bio @ https://github.com/unionai-oss/flyte-bio/archive/refs/heads/main.zip"
 
@@ -108,15 +108,21 @@ async def rnaseq_example(
     fasta: File,
     gtf: File,
     transcript_fasta: File | None = None,
-) -> tuple[File, File]:
-    samples = await read_samplesheet(samplesheet)
-    result = await rnaseq(samples, fasta=fasta, gtf=gtf, transcript_fasta=transcript_fasta)
-    return result.salmon.tximport.counts_gene, result.multiqc.report
+    outdir: str | None = None,
+) -> Dir:
+    result = await rnaseq(
+        samplesheet, fasta=fasta, gtf=gtf, transcript_fasta=transcript_fasta,
+        outdir=outdir, publish_results=True,
+    )
+    return result.outdir  # the results tree, in upstream's --outdir layout
 ```
 
-The samplesheet uses upstream's format, with one row per sequencing run. Rows
-that share a `sample` are merged, `fastq_2` is empty for single-end reads, and
-`strandedness` is `auto`, `forward`, `reverse` or `unstranded`:
+Like upstream's `--input`, the pipeline takes a samplesheet CSV in upstream's
+format, with one row per sequencing run. It needs the columns `sample`,
+`fastq_1`, `fastq_2` and `strandedness`, and the run fails up front if one is
+missing. Rows that share a `sample` are merged, `fastq_2` is empty for
+single-end reads, and `strandedness` is `auto`, `forward`, `reverse` or
+`unstranded`:
 
 ```csv
 sample,fastq_1,fastq_2,strandedness
@@ -140,6 +146,7 @@ flyte run examples/rnaseq.py rnaseq_example \
     --fasta $DATA/reference/genome.fasta \
     --gtf $DATA/reference/genes_with_empty_tid.gtf.gz \
     --transcript_fasta $DATA/reference/transcriptome.fasta
+    # add --outdir s3://my-bucket/rnaseq to publish the results there
 ```
 
 `rnaseq()` takes upstream's options as keyword arguments. Some examples:
@@ -148,6 +155,32 @@ flyte run examples/rnaseq.py rnaseq_example \
 - `with_umi=True` with `umitools_bc_pattern="NNNNNN"`;
 - `min_mapped_reads=10`.
 
+#### Outputs
+
+Every output is kept in Flyte's storage, and `rnaseq()` returns an
+`RnaseqResult` that holds all of them (below). Like upstream's `--outdir`, the
+pipeline can also lay the results out in upstream's folder structure:
+- `fastqc/`, `trimgalore/` and `fq_lint/` for read QC;
+- `star_salmon/` for the BAMs, plus `log/`, `samtools_stats/`, `qualimap/`,
+  `rseqc/`, `stringtie/`, `bigwig/`, per-sample salmon folders and the
+  `salmon.merged.*` matrices;
+- `multiqc/star_salmon/` for the report.
+
+There are two ways to get that tree:
+- `outdir="s3://my-bucket/rnaseq"` publishes to your bucket (the cluster's
+  role needs write access to it);
+- `publish_results=True` publishes to Flyte's own storage.
+
+Either way, `result.outdir` is the tree as a `Dir`, so a downstream task can
+take it as an input. Copies inside one object store are server-side. Like
+upstream by default, intermediates (trimmed reads, the prepared genome and
+indices) aren't published.
+
+The same mechanism is a generic utility for any pipeline:
+`flyte_bio.publish.publish(layout, outdir=None)` takes a mapping of relative
+path to `File`/`Dir` and returns the published `Dir`.
+`flyte_bio.pipelines.rnaseq.rnaseq_layout(result)` is rnaseq's mapping.
+
 It returns an `RnaseqResult` holding everything the run produced:
 - `result.genome`: the prepared references and STAR index;
 - `result.samples`: per sample, the reads and QC, the alignment, salmon,
@@ -155,6 +188,10 @@ It returns an `RnaseqResult` holding everything the run produced:
 - `result.salmon`: the merged count/TPM matrices and SummarizedExperiment RDS
   files;
 - `result.deseq2_qc` and `result.multiqc`.
+
+Every pipeline reads its samplesheet with `flyte_bio.samplesheet.read_samplesheet`,
+which returns the CSV's rows as dicts. Each pipeline then indexes the columns
+it defines; a missing column raises an error naming it.
 
 The building blocks (`prepare_genome`, `preprocess_reads`, `align_star`,
 `dedup_umi`, `quantify_salmon_bam`, `merge_quantifications`, …) can also be

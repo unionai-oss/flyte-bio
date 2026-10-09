@@ -10,12 +10,16 @@ default path, and upstream's UMI test (``--umi_dedup_tool 'umitools'``).
 import asyncio
 import csv
 import io
+import tempfile
 from dataclasses import fields
+from pathlib import Path
 
+import flyte
 from flyte.io import File
 
 from flyte_bio.modules.rseqc import DEFAULT_MODULES as RSEQC_MODULES
-from flyte_bio.pipelines.rnaseq import Sample, rnaseq
+from flyte_bio.pipelines.rnaseq import Sample, rnaseq, samples_from_samplesheet
+from flyte_bio.samplesheet import read_samplesheet
 from tests.framework import assert_dir_nonempty, assert_nonempty, env, fixture, fixture_dir
 
 DATA = "https://raw.githubusercontent.com/nf-core/test-datasets/626c8fab639062eade4b10747e919341cbf9b41a/"
@@ -36,41 +40,40 @@ async def load_bbsplit_refs(fasta_list: File) -> dict[str, File]:
     return {name: f for (name, _), f in zip(rows, files)}
 
 
-async def load_samples(samplesheet: File) -> list[Sample]:
-    """Group samplesheet rows (one per run) into Samples, keeping run order."""
-    async with samplesheet.open("rb") as fh:
-        text = bytes(await fh.read()).decode()
-    rows = list(csv.DictReader(io.StringIO(text)))
+async def stage_samplesheet(url: str) -> tuple[File, list[Sample]]:
+    """Upstream's samplesheet with every FASTQ swapped for its cached fixture copy.
 
-    async def fetch(url: str) -> File | None:
-        return await fixture(url) if url else None
+    Returns the staged sheet (what rnaseq takes) and the Samples it reads from it.
+    """
+    rows = await read_samplesheet(await fixture(url))
+
+    async def fetch(fastq: str) -> str:
+        return (await fixture(fastq)).path if fastq else ""
 
     r1s = await asyncio.gather(*(fetch(r["fastq_1"]) for r in rows))
     r2s = await asyncio.gather(*(fetch(r["fastq_2"]) for r in rows))
-
-    runs: dict[str, list[tuple[File, File | None, str]]] = {}
-    for row, r1, r2 in zip(rows, r1s, r2s):
-        runs.setdefault(row["sample"], []).append((r1, r2, row["strandedness"]))
-    return [
-        Sample(
-            id=sample_id,
-            fastq_1=[r1 for r1, _, _ in sample_runs],
-            fastq_2=[r2 for _, r2, _ in sample_runs if r2 is not None],
-            strandedness=sample_runs[0][2],
-        )
-        for sample_id, sample_runs in runs.items()
-    ]
+    out = Path(tempfile.mkdtemp(prefix="samplesheet_")) / "samplesheet.csv"
+    with out.open("w", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["sample", "fastq_1", "fastq_2", "strandedness"])
+        for row, r1, r2 in zip(rows, r1s, r2s):
+            writer.writerow([row["sample"], r1, r2, row["strandedness"]])
+    staged = await File.from_local(str(out))
+    return staged, samples_from_samplesheet(await read_samplesheet(staged))
 
 
 @env.task
 async def test_rnaseq_star_salmon() -> None:
-    samplesheet, fasta, gtf, transcript_fasta, additional_fasta = await asyncio.gather(
-        fixture(SAMPLESHEET), fixture(FASTA), fixture(GTF), fixture(TRANSCRIPT_FASTA), fixture(ADDITIONAL_FASTA)
+    (samplesheet, samples), fasta, gtf, transcript_fasta, additional_fasta = await asyncio.gather(
+        stage_samplesheet(SAMPLESHEET),
+        fixture(FASTA),
+        fixture(GTF),
+        fixture(TRANSCRIPT_FASTA),
+        fixture(ADDITIONAL_FASTA),
     )
     salmon_index = await fixture_dir(SALMON_INDEX, "salmon")
     bbsplit_refs = await load_bbsplit_refs(await fixture(BBSPLIT_FASTA_LIST))
     assert sorted(bbsplit_refs) == ["human", "sarscov2"], sorted(bbsplit_refs)
-    samples = await load_samples(samplesheet)
     assert [s.id for s in samples] == [
         "WT_REP1",
         "WT_REP2",
@@ -80,7 +83,7 @@ async def test_rnaseq_star_salmon() -> None:
     ], [s.id for s in samples]
 
     result = await rnaseq(
-        samples,
+        samplesheet,
         fasta=fasta,
         gtf=gtf,
         transcript_fasta=transcript_fasta,
@@ -88,6 +91,7 @@ async def test_rnaseq_star_salmon() -> None:
         salmon_index_dir=salmon_index,
         bbsplit_fasta_list=bbsplit_refs,
         skip_bbsplit=False,  # the upstream test profile turns BBSplit on
+        publish_results=True,
     )
 
     g = result.genome
@@ -210,6 +214,29 @@ async def test_rnaseq_star_salmon() -> None:
             f"MultiQC parsed no {module} outputs: {sorted(data_files)}"
         )
 
+    # Published in upstream's --outdir layout.
+    assert result.outdir is not None
+    published = {f.path[len(result.outdir.path.rstrip("/")) :].lstrip("/") async for f in result.outdir.walk()}
+    for path in [
+        "fastqc/raw/WT_REP1_raw_1_fastqc.html",
+        "fastqc/trim/WT_REP1_trimmed_1_val_1_fastqc.html",
+        "trimgalore/WT_REP1_trimmed_1.fastq.gz_trimming_report.txt",
+        "fq_lint/raw/WT_REP1.fq_lint.txt",
+        "bbsplit/WT_REP1.stats.txt",
+        "star_salmon/log/WT_REP1.Log.final.out",
+        "star_salmon/WT_REP1.markdup.sorted.bam",
+        "star_salmon/WT_REP1.markdup.sorted.bam.bai",
+        "star_salmon/samtools_stats/WT_REP1.markdup.sorted.bam.flagstat",
+        "star_salmon/WT_REP1/quant.sf",
+        "star_salmon/salmon.merged.gene_counts.tsv",
+        "star_salmon/qualimap/WT_REP1/qualimapReport.html",
+        "star_salmon/rseqc/infer_experiment/WT_REP1.infer_experiment.txt",
+        "star_salmon/stringtie/WT_REP1.transcripts.gtf",
+        "star_salmon/bigwig/WT_REP1.forward.bigWig",
+        "multiqc/star_salmon/multiqc_report.html",
+    ]:
+        assert path in published, f"not published: {path}"
+
     # Every sample (and nothing else) is a column of the merged gene matrix.
     async with m.tximport.counts_gene.open("rb") as fh:
         header = bytes(await fh.read()).decode().splitlines()[0].split("\t")
@@ -219,14 +246,17 @@ async def test_rnaseq_star_salmon() -> None:
 @env.task
 async def test_rnaseq_umi() -> None:
     # upstream case: tests/umi.nf.test "--umi_dedup_tool 'umitools'"
-    samplesheet, fasta, gtf, transcript_fasta, additional_fasta = await asyncio.gather(
-        fixture(SAMPLESHEET), fixture(FASTA), fixture(GTF), fixture(TRANSCRIPT_FASTA), fixture(ADDITIONAL_FASTA)
+    (samplesheet, samples), fasta, gtf, transcript_fasta, additional_fasta = await asyncio.gather(
+        stage_samplesheet(SAMPLESHEET),
+        fixture(FASTA),
+        fixture(GTF),
+        fixture(TRANSCRIPT_FASTA),
+        fixture(ADDITIONAL_FASTA),
     )
     salmon_index = await fixture_dir(SALMON_INDEX, "salmon")
-    samples = await load_samples(samplesheet)
 
     result = await rnaseq(
-        samples,
+        samplesheet,
         fasta=fasta,
         gtf=gtf,
         transcript_fasta=transcript_fasta,
@@ -239,6 +269,7 @@ async def test_rnaseq_umi() -> None:
         skip_bbsplit=True,
         skip_stringtie=True,
         skip_bigwig=True,
+        outdir=flyte.ctx().raw_data_path.get_random_remote_path("rnaseq_umi_outdir"),
     )
 
     # As upstream: every sample keeps enough reads after extraction and trimming.
@@ -273,6 +304,18 @@ async def test_rnaseq_umi() -> None:
         quant = await r.salmon.get_file("quant.sf")
         assert quant is not None, f"{r.sample}: salmon results have no quant.sf"
         await assert_nonempty(quant, label=f"{r.sample} quant.sf")
+
+    assert result.outdir is not None
+    published = {f.path[len(result.outdir.path.rstrip("/")) :].lstrip("/") async for f in result.outdir.walk()}
+    for path in [
+        "umitools/WT_REP1.umi_extract.log",
+        "star_salmon/WT_REP1.umi_dedup.sorted.bam",
+        "star_salmon/umitools/genomic_dedup_log/WT_REP1.umi_dedup.sorted.log",
+        "star_salmon/umitools/prepare_for_quantification_log/WT_REP1.umi_dedup.transcriptome.filtered.prepare_for_rsem.log",
+        "star_salmon/WT_REP1/quant.sf",
+    ]:
+        assert path in published, f"not published: {path}"
+    assert not any("markdup" in p for p in published), "MarkDuplicates outputs published despite UMI deduplication"
 
     assert result.multiqc is not None
     data_files = [f.path.rsplit("/", 1)[-1] async for f in result.multiqc.results.walk() if "_data/" in f.path]
