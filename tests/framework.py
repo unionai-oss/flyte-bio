@@ -61,6 +61,7 @@ deployment. Nothing is cached by hand.
 
 
 import asyncio
+import csv
 import gzip
 import hashlib
 import os
@@ -154,6 +155,35 @@ async def fixture(rel_path: str) -> File:
     else:
         local = await storage.get(url)
     return await File.from_local(local)
+
+
+async def stage_samplesheet(url: str, file_columns: tuple[str, ...]) -> File:
+    """A copy of an upstream samplesheet whose file cells point at cached fixture copies.
+
+    Pipelines read their samplesheet inside the task, and upstream's test
+    sheets point at ``https://`` URLs, which can't be read there reliably. So
+    every non-empty ``file_columns`` cell is fetched with :func:`fixture` and
+    replaced by its staged path; other columns are kept as they are.
+    """
+    sheet = await fixture(url)
+    async with sheet.open("rb") as fh:
+        rows = list(csv.DictReader(bytes(await fh.read()).decode().splitlines()))
+    header = list(rows[0]) if rows else []
+
+    async def stage(row: dict[str, str]) -> dict[str, str]:
+        staged = dict(row)
+        for column in file_columns:
+            if row.get(column):
+                staged[column] = (await fixture(row[column])).path
+        return staged
+
+    staged_rows = await asyncio.gather(*(stage(r) for r in rows))
+    out = Path(tempfile.mkdtemp(prefix="samplesheet_")) / Path(urlsplit(url).path).name
+    with out.open("w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=header)
+        writer.writeheader()
+        writer.writerows(staged_rows)
+    return await File.from_local(str(out))
 
 
 async def fixture_dir(rel_path: str, member: str = "") -> Dir:
