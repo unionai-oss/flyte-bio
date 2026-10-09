@@ -1,0 +1,38 @@
+# Build-context excludes for flyte image builds.
+#
+# `with_uv_project(install_project)` copies the project directory into the
+# image build context and honors ONLY this file (not .gitignore). Without it,
+# the local `.venv` (host-platform binaries) is swept in — bloating the context
+# and breaking the Linux build. Keep the context to pyproject.toml + uv.lock +
+# src/ (+ tests, which ride in via the code bundle).
+
+# uv / virtualenvs — host-platform binaries, must never enter a Linux build
+.venv/
+**/.venv/
+.env
+
+# VCS (flyte-bio builds via hatchling with a static version; .git isn't needed)
+.git/
+
+# Python build/caches
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Downloaded test fixtures
+tests/**/_fixtures/
+
+# IDE / OS / agents
+.vscode/
+.idea/
+.DS_Store
+.claude/
+AGENTS.md
