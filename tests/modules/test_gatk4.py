@@ -2,11 +2,27 @@
 
 import asyncio
 
-from flyte_bio.modules.gatk4 import gatk4_createsequencedictionary, gatk4_intervallisttobed, gatk4_markduplicates
+from flyte_bio.modules.gatk4 import (
+    gatk4_applybqsr,
+    gatk4_baserecalibrator,
+    gatk4_createsequencedictionary,
+    gatk4_gatherbqsrreports,
+    gatk4_intervallisttobed,
+    gatk4_markduplicates,
+)
 from flyte_bio.modules.samtools import samtools_view
-from tests.framework import assert_md5, assert_nonempty, env, fixture
+from tests.framework import assert_md5, assert_nonempty, assert_reads_md5, env, fixture, reads_md5
 
 HS = "genomics/homo_sapiens/"
+SC2 = "genomics/sarscov2/"
+
+
+async def sarscov2_reference():
+    return await asyncio.gather(
+        fixture(SC2 + "genome/genome.fasta"),
+        fixture(SC2 + "genome/genome.fasta.fai"),
+        fixture(SC2 + "genome/genome.dict"),
+    )
 
 
 @env.task
@@ -54,4 +70,65 @@ async def test_markduplicates_multiple() -> None:
     assert len(read_groups) >= 1, read_groups
 
 
-tests = [test_createsequencedictionary, test_intervallisttobed, test_markduplicates_multiple]
+@env.task
+async def test_baserecalibrator() -> None:
+    # upstream cases: gatk4/baserecalibrator "sarscov2 - bam" and "sarscov2 - bam - intervals"
+    (fasta, fai, dict_), bam, bai, vcf, tbi, bed = await asyncio.gather(
+        sarscov2_reference(),
+        fixture(SC2 + "illumina/bam/test.paired_end.sorted.bam"),
+        fixture(SC2 + "illumina/bam/test.paired_end.sorted.bam.bai"),
+        fixture(SC2 + "illumina/vcf/test.vcf.gz"),
+        fixture(SC2 + "illumina/vcf/test.vcf.gz.tbi"),
+        fixture(SC2 + "genome/bed/test.bed"),
+    )
+    whole, within = await asyncio.gather(
+        gatk4_baserecalibrator(bam, bai, fasta, fai, dict_, [vcf], [tbi], prefix="test"),
+        gatk4_baserecalibrator(bam, bai, fasta, fai, dict_, [vcf], [tbi], prefix="test", intervals=bed),
+    )
+    await assert_md5(whole, "e2e43abdc0c943c1a54dae816d0b9ea7", label="test.table")
+    await assert_md5(within, "9ecb5f00a2229291705addc09c0ec231", label="test.table (intervals)")
+
+
+@env.task
+async def test_gatherbqsrreports() -> None:
+    # upstream cases: gatk4/gatherbqsrreports "test-gatk4-gatherbqsrreports" and "...-multiple"
+    one, two = await asyncio.gather(
+        fixture(HS + "illumina/gatk/test.baserecalibrator.table"),
+        fixture(HS + "illumina/gatk/test2.baserecalibrator.table"),
+    )
+    single, multiple = await asyncio.gather(
+        gatk4_gatherbqsrreports([one], prefix="test"), gatk4_gatherbqsrreports([one, two], prefix="test")
+    )
+    await assert_md5(single, "9603b69fdc3b5090de2e0dd78bfcc4bf", label="gathered single")
+    await assert_md5(multiple, "0c1257eececf95db8ca378272d0f21f9", label="gathered multiple")
+
+
+@env.task
+async def test_applybqsr() -> None:
+    # upstream cases: gatk4/applybqsr "sarscov2 - bam" and "sarscov2 - bam in, cram out". Their BAM md5
+    # covers a header recording the command line; recalibration only changes base qualities, so the
+    # read sequences must come through unchanged.
+    (fasta, fai, dict_), bam, bai, table = await asyncio.gather(
+        sarscov2_reference(),
+        fixture(SC2 + "illumina/bam/test.paired_end.sorted.bam"),
+        fixture(SC2 + "illumina/bam/test.paired_end.sorted.bam.bai"),
+        fixture(SC2 + "illumina/gatk/test.baserecalibrator.table"),
+    )
+    as_bam, as_cram = await asyncio.gather(
+        gatk4_applybqsr(bam, bai, table, fasta, fai, dict_, prefix="test", suffix="bam"),
+        gatk4_applybqsr(bam, bai, table, fasta, fai, dict_, prefix="test"),
+    )
+    assert as_bam.path.endswith("/test.bam") and as_cram.path.endswith("/test.cram"), (as_bam.path, as_cram.path)
+    expected = await reads_md5(bam)
+    await assert_reads_md5(as_bam, expected, label="recalibrated bam")
+    await assert_nonempty(as_cram, label="recalibrated cram")
+
+
+tests = [
+    test_createsequencedictionary,
+    test_intervallisttobed,
+    test_markduplicates_multiple,
+    test_baserecalibrator,
+    test_gatherbqsrreports,
+    test_applybqsr,
+]

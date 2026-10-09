@@ -15,6 +15,7 @@ from flyte_bio.pipelines.variant_calling import (
     map_reads,
     mark_duplicates,
     prepare_reference,
+    recalibrate,
     samples_from_samplesheet,
 )
 from flyte_bio.samplesheet import read_samplesheet
@@ -27,6 +28,7 @@ DICT = GENOME + "genome.dict"
 INTERVALS = GENOME + "genome.interval_list"
 DBSNP = GENOME + "vcf/dbsnp_146.hg38.vcf.gz"
 KNOWN_INDELS = GENOME + "vcf/mills_and_1000G.indels.vcf.gz"
+MULTI_INTERVALS = GENOME + "genome.multi_intervals.bed"  # two intervals: two scatter chunks at 20 nt/s
 CSV = "https://raw.githubusercontent.com/nf-core/sarek/3.10.0/tests/csv/3.0/"
 FASTQ_SAMPLESHEET = CSV + "fastq_single.csv"  # one sample, two lanes (the same FASTQ pair)
 
@@ -113,9 +115,7 @@ async def test_map_reads() -> None:
     ]
     # Upstream's read groups: the test reads' names carry no flowcell, so ID is <sample>.<lane>.
     for lane, rg in zip(("test_L1", "test_L2"), mapped.read_groups):
-        assert rg == (
-            f"@RG\\tID:test.{lane}\\tPU:{lane}\\tSM:test_test\\tLB:test\\tDS:{fasta.path}\\tPL:ILLUMINA"
-        ), rg
+        assert rg == (f"@RG\\tID:test.{lane}\\tPU:{lane}\\tSM:test_test\\tLB:test\\tDS:{fasta.path}\\tPL:ILLUMINA"), rg
     for lane, bam in zip(("test_L1", "test_L2"), mapped.lane_bams):
         header = await text(await samtools_view(bam=bam, args="-H"))
         rg_lines = [line for line in header.splitlines() if line.startswith("@RG")]
@@ -164,4 +164,46 @@ async def test_mark_duplicates() -> None:
         await assert_nonempty(f, label=name)
 
 
-tests = [test_prepare_reference_from_fasta, test_prepare_reference_test_profile, test_map_reads, test_mark_duplicates]
+@env.task
+async def test_recalibrate() -> None:
+    sheet = await stage_samplesheet(FASTQ_SAMPLESHEET, ("fastq_1", "fastq_2"))
+    (sample,) = samples_from_samplesheet(await read_samplesheet(sheet))
+    fasta, fai, dict_file, dbsnp, indels, intervals = await asyncio.gather(
+        fixture(FASTA), fixture(FAI), fixture(DICT), fixture(DBSNP), fixture(KNOWN_INDELS), fixture(MULTI_INTERVALS)
+    )
+    ref = await prepare_reference(
+        fasta,
+        fai=fai,
+        sequence_dict=dict_file,
+        dbsnp=dbsnp,
+        known_indels=[indels],
+        intervals=intervals,
+        nucleotides_per_second=20,
+    )
+    assert len(ref.intervals_split) == 2, ref.intervals_split
+    marked = await mark_duplicates(await map_reads(sample, ref), ref)
+    recal = await recalibrate(marked, sample.id, ref)
+
+    # Scattered over two chunks: the tables are gathered and the CRAMs merged under upstream's names.
+    assert recal.table.path.endswith("/test.recal.table"), recal.table.path
+    assert recal.cram.path.endswith("/test.recal.cram"), recal.cram.path
+    table = await text(recal.table)
+    assert table.startswith("#:GATKReport"), table[:100]
+    assert "RecalTable" in table, "no recalibration tables in the report"
+    header = await text(await samtools_view(bam=recal.cram, args="-H"))
+    assert any(line.startswith("@PG") and "ApplyBQSR" in line for line in header.splitlines()), "no ApplyBQSR @PG"
+    records = (await text(await samtools_view(bam=recal.cram, args="-c"))).strip()
+    assert int(records) > 0, records
+    await assert_nonempty(recal.crai, label="test.recal.cram.crai")
+    for name in ("test.recal.mosdepth.global.dist.txt", "test.recal.mosdepth.summary.txt"):
+        assert await recal.qc.mosdepth.get_file(name) is not None, f"mosdepth wrote no {name}"
+    assert (await text(recal.qc.samtools_stats)).startswith("# This file was produced by samtools stats")
+
+
+tests = [
+    test_prepare_reference_from_fasta,
+    test_prepare_reference_test_profile,
+    test_map_reads,
+    test_mark_duplicates,
+    test_recalibrate,
+]

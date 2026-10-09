@@ -8,6 +8,11 @@ Exposes:
 - :func:`gatk4_markduplicates` — mark duplicates across one or more BAMs
   (e.g. a sample's lanes), writing BAM or, as upstream does, CRAM via
   samtools.
+- :func:`gatk4_baserecalibrator` — a base-quality recalibration table from
+  known sites (optionally within intervals).
+- :func:`gatk4_gatherbqsrreports` — merge per-interval recalibration tables.
+- :func:`gatk4_applybqsr` — apply a recalibration table (optionally within
+  intervals), writing CRAM or BAM.
 
 As upstream, each tool gets 80% of the task's memory as Java heap. Inputs
 whose names GATK records (the dictionary's ``UR`` field) are linked into the
@@ -104,11 +109,113 @@ gatk4_markduplicates_cmd = shell.create(
 )
 
 
+# Links the reference (FASTA + .fai + .dict, named so GATK pairs them), the
+# alignment with its index, and each known-sites VCF with its .tbi into the
+# working directory. Expects REF_FA/REF_FAI/REF_DICT, ALN/ALN_IDX and the
+# SITES/SITES_TBI arrays; sets KNOWN_SITES and ALN_LINK.
+LINK_INPUTS = r"""
+        ln -s "$REF_FA" genome.fa; ln -s "$REF_FAI" genome.fa.fai; ln -s "$REF_DICT" genome.dict
+        ALN_LINK=$(basename "$ALN"); IDX_EXT=bai; [[ "$ALN_LINK" == *.cram ]] && IDX_EXT=crai
+        ln -s "$ALN" "$ALN_LINK"; ln -s "$ALN_IDX" "$ALN_LINK.$IDX_EXT"
+        KNOWN_SITES=()
+        for v in "${SITES[@]}"; do ln -s "$v" "$(basename "$v")"; KNOWN_SITES+=(--known-sites "$(basename "$v")"); done
+        for t in "${SITES_TBI[@]}"; do ln -s "$t" "$(basename "$t")"; done
+"""
+
+gatk4_baserecalibrator_cmd = shell.create(
+    name="gatk4_baserecalibrator",
+    image=GATK4_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={
+        "alignment": File,
+        "index": File,
+        "intervals": File | None,
+        "fasta": File,
+        "fai": File,
+        "dict": File,
+        "known_sites": list[File],
+        "known_sites_tbi": list[File],
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        A=({{inputs.alignment}}); I=({{inputs.index}}); FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); D=({{inputs.dict}})
+        shopt -s nullglob
+        BED=({{inputs.intervals}}); SITES=({{inputs.known_sites}}); SITES_TBI=({{inputs.known_sites_tbi}})
+        shopt -u nullglob
+        REF_FA="${{FA[0]}}"; REF_FAI="${{FAI[0]}}"; REF_DICT="${{D[0]}}"; ALN="${{A[0]}}"; ALN_IDX="${{I[0]}}"
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        {LINK_INPUTS}
+        INTERVALS=(); [ ${{#BED[@]}} -gt 0 ] && INTERVALS=(--intervals "${{BED[0]}}")
+        gatk --java-options "{JAVA_OPTIONS}" BaseRecalibrator \
+            --input "$ALN_LINK" --output {{outputs.results}}/{{inputs.prefix}}.table --reference genome.fa \
+            "${{INTERVALS[@]}}" "${{KNOWN_SITES[@]}}" --tmp-dir . $ARGS
+    """,
+)
+
+gatk4_gatherbqsrreports_cmd = shell.create(
+    name="gatk4_gatherbqsrreports",
+    image=GATK4_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"tables": list[File], "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        TABLES=({{inputs.tables}})
+        ARGS={{inputs.args}}
+        INPUTS=(); for t in "${{TABLES[@]}}"; do INPUTS+=(--input "$t"); done
+        W=$(mktemp -d); cd "$W"
+        gatk --java-options "{JAVA_OPTIONS}" GatherBQSRReports \
+            "${{INPUTS[@]}}" --output {{outputs.results}}/{{inputs.prefix}}.table --tmp-dir . $ARGS
+    """,
+)
+
+gatk4_applybqsr_cmd = shell.create(
+    name="gatk4_applybqsr",
+    image=GATK4_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={
+        "alignment": File,
+        "index": File,
+        "table": File,
+        "intervals": File | None,
+        "fasta": File,
+        "fai": File,
+        "dict": File,
+        "prefix": str,
+        "suffix": str,
+        "args": str,
+    },
+    defaults={"suffix": "cram", "args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        A=({{inputs.alignment}}); I=({{inputs.index}}); T=({{inputs.table}})
+        FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); D=({{inputs.dict}})
+        shopt -s nullglob; BED=({{inputs.intervals}}); shopt -u nullglob
+        REF_FA="${{FA[0]}}"; REF_FAI="${{FAI[0]}}"; REF_DICT="${{D[0]}}"; ALN="${{A[0]}}"; ALN_IDX="${{I[0]}}"
+        SITES=(); SITES_TBI=()
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        {LINK_INPUTS}
+        INTERVALS=(); [ ${{#BED[@]}} -gt 0 ] && INTERVALS=(--intervals "${{BED[0]}}")
+        gatk --java-options "{JAVA_OPTIONS}" ApplyBQSR \
+            --input "$ALN_LINK" --output {{outputs.results}}/{{inputs.prefix}}.{{inputs.suffix}} --reference genome.fa \
+            --bqsr-recal-file "${{T[0]}}" "${{INTERVALS[@]}}" --tmp-dir . $ARGS
+    """,
+)
+
+
 # One image per environment: MarkDuplicates' differs, so `env` aggregates two.
 gatk4_env = flyte.TaskEnvironment.from_task(
     "gatk4_tools",
     gatk4_createsequencedictionary_cmd.as_task(),
     gatk4_intervallisttobed_cmd.as_task(),
+    gatk4_baserecalibrator_cmd.as_task(),
+    gatk4_gatherbqsrreports_cmd.as_task(),
+    gatk4_applybqsr_cmd.as_task(),
 )
 gatk4_samtools_env = flyte.TaskEnvironment.from_task("gatk4_samtools", gatk4_markduplicates_cmd.as_task())
 env = flyte.TaskEnvironment(name="gatk4", depends_on=[gatk4_env, gatk4_samtools_env])
@@ -160,3 +267,70 @@ async def gatk4_markduplicates(
         raise FileNotFoundError(f"MarkDuplicates wrote no {prefix} or {prefix}.metrics")
     index = await results.get_file(f"{prefix}.crai") if prefix.endswith(".cram") else None
     return MarkDuplicatesResult(alignment=alignment, index=index, metrics=metrics)
+
+
+async def gatk4_baserecalibrator(
+    alignment: File,
+    index: File,
+    fasta: File,
+    fai: File,
+    dict: File,
+    known_sites: list[File],
+    known_sites_tbi: list[File],
+    prefix: str,
+    intervals: File | None = None,
+    args: str = "",
+) -> File:
+    """``<prefix>.table``: recalibration covariates of ``alignment`` (BAM/CRAM) against the known sites."""
+    results = await gatk4_baserecalibrator_cmd(
+        alignment=alignment,
+        index=index,
+        intervals=intervals,
+        fasta=fasta,
+        fai=fai,
+        dict=dict,
+        known_sites=known_sites,
+        known_sites_tbi=known_sites_tbi,
+        prefix=prefix,
+        args=args,
+    )
+    return await only_file(results, f"{prefix}.table", "BaseRecalibrator")
+
+
+async def gatk4_gatherbqsrreports(tables: list[File], prefix: str, args: str = "") -> File:
+    """``<prefix>.table``: per-interval recalibration tables merged into one.
+
+    Tables are staged under their own names, so they must be distinct.
+    """
+    results = await gatk4_gatherbqsrreports_cmd(tables=tables, prefix=prefix, args=args)
+    return await only_file(results, f"{prefix}.table", "GatherBQSRReports")
+
+
+async def gatk4_applybqsr(
+    alignment: File,
+    index: File,
+    table: File,
+    fasta: File,
+    fai: File,
+    dict: File,
+    prefix: str,
+    intervals: File | None = None,
+    suffix: str = "cram",
+    args: str = "",
+) -> File:
+    """``<prefix>.<suffix>``: ``alignment`` with recalibrated base qualities (CRAM, or BAM with ``suffix="bam"``)."""
+    if suffix not in ("cram", "bam"):
+        raise ValueError(f"suffix must be cram or bam, got {suffix!r}")
+    results = await gatk4_applybqsr_cmd(
+        alignment=alignment,
+        index=index,
+        table=table,
+        intervals=intervals,
+        fasta=fasta,
+        fai=fai,
+        dict=dict,
+        prefix=prefix,
+        suffix=suffix,
+        args=args,
+    )
+    return await only_file(results, f"{prefix}.{suffix}", "ApplyBQSR")

@@ -13,6 +13,9 @@ pipeline (3.10.0):
   upstream's read groups, into coordinate-sorted BAMs.
 - :func:`mark_duplicates` — GATK MarkDuplicates across a sample's lanes into
   one CRAM, then samtools stats and mosdepth on it.
+- :func:`recalibrate` — base-quality score recalibration: BaseRecalibrator
+  and ApplyBQSR scattered over the interval chunks, gathered into one CRAM,
+  then QC'd like the duplicate-marked one.
 
 Upstream splits FASTQs into 50M-read chunks with fastp by default to map
 them in parallel; that isn't ported (each lane maps as one job), which
@@ -32,11 +35,18 @@ from flyte.io import Dir, File
 from flyte_bio.modules.bwa import bwa_index as build_bwa_index
 from flyte_bio.modules.bwa import bwa_mem
 from flyte_bio.modules.fastqc import fastqc
-from flyte_bio.modules.gatk4 import gatk4_createsequencedictionary, gatk4_intervallisttobed, gatk4_markduplicates
+from flyte_bio.modules.gatk4 import (
+    gatk4_applybqsr,
+    gatk4_baserecalibrator,
+    gatk4_createsequencedictionary,
+    gatk4_gatherbqsrreports,
+    gatk4_intervallisttobed,
+    gatk4_markduplicates,
+)
 from flyte_bio.modules.htslib import htslib_bgziptabix
 from flyte_bio.modules.intervals import build_intervals, create_intervals_bed
 from flyte_bio.modules.mosdepth import mosdepth
-from flyte_bio.modules.samtools import samtools_faidx, samtools_stats
+from flyte_bio.modules.samtools import samtools_faidx, samtools_index, samtools_merge, samtools_stats
 from flyte_bio.publish import name
 from flyte_bio.samplesheet import Row
 
@@ -366,3 +376,70 @@ async def mark_duplicates(mapped: MappedSample, reference: Reference, wes: bool 
     assert marked.index is not None
     qc = await alignment_qc(sample_id, "md", marked.alignment, marked.index, reference, wes)
     return DuplicatesMarked(cram=marked.alignment, crai=marked.index, metrics=marked.metrics, qc=qc)
+
+
+@dataclass
+class Recalibrated:
+    cram: File  # <sample>.recal.cram
+    crai: File
+    table: File  # the (gathered) recalibration table, <sample>.recal.table
+    qc: AlignmentQC
+
+
+def simple_name(f: File) -> str:
+    """A file's name without any extension (Nextflow's ``simpleName``)."""
+    return name(f).split(".", 1)[0]
+
+
+async def recalibrate(
+    marked: DuplicatesMarked, sample_id: str, reference: Reference, wes: bool = False
+) -> Recalibrated:
+    """Base-quality score recalibration of the duplicate-marked CRAM, as upstream.
+
+    BaseRecalibrator runs per interval chunk against the known sites (dbSNP
+    and the known indels), the tables are gathered, ApplyBQSR runs per chunk
+    and the chunks are merged into ``<sample>.recal.cram``, which is then
+    QC'd. Without intervals it all runs once over the whole genome.
+    """
+    known_sites = ([reference.dbsnp] if reference.dbsnp else []) + reference.known_indels
+    known_sites_tbi = ([reference.dbsnp_tbi] if reference.dbsnp_tbi else []) + reference.known_indels_tbi
+    if not known_sites:
+        raise ValueError("base-quality recalibration needs known sites: give dbsnp and/or known_indels")
+    chunks: list[File | None] = list(reference.intervals_split) or [None]
+    single = len(chunks) == 1
+
+    def prefix(chunk: File | None) -> str:
+        # As upstream: <sample>.recal, or <sample>_<interval>.recal per chunk when scattered.
+        return f"{sample_id}.recal" if single or chunk is None else f"{sample_id}_{simple_name(chunk)}.recal"
+
+    ref = (reference.fasta, reference.fai, reference.sequence_dict)
+    tables = await asyncio.gather(
+        *(
+            gatk4_baserecalibrator(
+                marked.cram, marked.crai, *ref, known_sites, known_sites_tbi, prefix=prefix(chunk), intervals=chunk
+            )
+            for chunk in chunks
+        )
+    )
+    table = tables[0] if single else await gatk4_gatherbqsrreports(list(tables), prefix=f"{sample_id}.recal")
+
+    crams = await asyncio.gather(
+        *(
+            gatk4_applybqsr(marked.cram, marked.crai, table, *ref, prefix=prefix(chunk), intervals=chunk)
+            for chunk in chunks
+        )
+    )
+    cram = (
+        crams[0]
+        if single
+        else await samtools_merge(
+            list(crams),
+            prefix=f"{sample_id}.recal",
+            fasta=reference.fasta,
+            fai=reference.fai,
+            args="--output-fmt cram,version=3.0",
+        )
+    )
+    crai = await samtools_index(bam=cram)
+    qc = await alignment_qc(sample_id, "recal", cram, crai, reference, wes)
+    return Recalibrated(cram=cram, crai=crai, table=table, qc=qc)
