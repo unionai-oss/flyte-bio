@@ -5,17 +5,21 @@ flyte-bio module tasks. So the task's image needs ``flyte-bio`` installed,
 and its environment must ``depends_on`` the flyte-bio module environments
 (which deploys every tool's task and image alongside it).
 
-Run it on rnaseq's test profile data (5 yeast samples, a few minutes)::
+Run it on rnaseq's test profile data (5 small yeast samples)::
 
     DATA=https://raw.githubusercontent.com/nf-core/test-datasets/626c8fab639062eade4b10747e919341cbf9b41a
+    curl -sO $DATA/samplesheet/v3.10/samplesheet_test.csv
     flyte run examples/rnaseq.py rnaseq_example \\
-        --samplesheet $DATA/samplesheet/v3.10/samplesheet_test.csv \\
+        --samplesheet samplesheet_test.csv \\
         --fasta $DATA/reference/genome.fasta \\
         --gtf $DATA/reference/genes_with_empty_tid.gtf.gz \\
         --transcript_fasta $DATA/reference/transcriptome.fasta
 
-For your own data, point ``--samplesheet`` at a CSV whose FASTQ paths are
-URIs the cluster can read (``s3://…``, ``gs://…``).
+The samplesheet is passed as a local file (``flyte run`` uploads it) because
+the task reads it itself, and reading ``https://`` files inside a task isn't
+reliable; the FASTQ and reference URLs only go to the tool tasks, which
+fetch ``https://`` fine. For your own data, use a samplesheet whose FASTQ
+paths are URIs the cluster can read (``s3://…``, ``gs://…``).
 """
 
 import flyte

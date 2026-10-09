@@ -147,7 +147,8 @@ async def read_samplesheet(samplesheet: File) -> list[Sample]:
     runs, merged in file order. ``fastq_2`` is empty for single-end runs, and
     an empty or missing ``strandedness`` means ``auto``. FASTQ paths must be
     URIs the cluster can read (``s3://``, ``gs://``, ``https://`` …); they are
-    referenced where they are, not copied.
+    referenced where they are, not copied. The samplesheet itself is read in
+    this task, so it should be in object storage (not ``https://``).
     """
     async with samplesheet.open("rb") as fh:
         text = bytes(await fh.read()).decode()
