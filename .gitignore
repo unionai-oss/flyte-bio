@@ -216,3 +216,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# flyte-bio
+*.py[cod]
+.venv/
+.vscode/
+.idea/
+tests/**/_fixtures/
+.DS_Store
+AGENTS.md

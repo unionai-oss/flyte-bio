@@ -1,0 +1,55 @@
+[project]
+name = "flyte-bio"
+version = "0.0.1"
+description = "Curated bioinformatics CLI tool wrappers and pipelines for Flyte (bedtools, samtools, bcftools, GATK, ...)"
+readme = "README.md"
+authors = [{ name = "Kyle Hazen", email = "kyle@union.ai" }]
+requires-python = ">=3.12"
+dependencies = [
+    "flyte>=2.10.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/flyte_bio"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/flyte_bio", "README.md", "LICENSE"]
+
+[dependency-groups]
+# Test-only: the fixture loader fetches via flyte.storage.get, whose fsspec
+# https backend needs aiohttp + requests. uv installs the default `dev`
+# group into the test image, so these land in the pod. Once fixtures move
+# to S3 (obstore-native), neither is needed and both can be dropped.
+dev = [
+    "aiohttp",
+    "requests",
+]
+
+[tool.pytest.ini_options]
+log_cli = true
+log_cli_level = 20
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F", "I", "PLW", "YTT", "ASYNC", "C4", "T10", "EXE", "ISC",
+    "LOG", "PIE", "Q", "RSE", "FLY", "PGH", "PLC", "PLE", "FURB", "RUF",
+]
+ignore = ["PGH003", "PLC0415"]
+
+[tool.ruff.lint.per-file-ignores]
+# Vendored helper scripts (flyte_bio.scripts) preserve upstream logic
+# verbatim — don't restyle them. The package __init__ is ours and stays
+# strict (it trips none of these rules).
+"src/flyte_bio/scripts/*.py" = ["PLW2901", "E501", "EXE001", "RUF005", "LOG002", "FLY002"]
+# bbmap.py embeds upstream's BBSplit index-reuse bash verbatim (long sed/jshell lines).
+"src/flyte_bio/modules/bbmap.py" = ["E501"]
+# deseq2_qc.py embeds upstream's header-relabelling sed lines verbatim.
+"src/flyte_bio/modules/deseq2_qc.py" = ["E501"]
