@@ -31,9 +31,10 @@ Composes :mod:`flyte_bio.modules` tasks into the ``star_salmon`` path:
   gene/transcript count, TPM and length matrices, bundled as gene- and
   transcript-level SummarizedExperiment RDS files, then DESeq2 PCA /
   sample-distance QC on the merged gene counts.
-- :func:`rnaseq` — run all of the above, samples in parallel.
-- :func:`read_samplesheet` — read an upstream-format samplesheet CSV into a
-  list of :class:`Sample`.
+- :func:`rnaseq` — run all of the above for the samples in a samplesheet
+  (upstream's format: ``sample, fastq_1, fastq_2, strandedness``), in parallel,
+  and optionally publish the results in upstream's ``--outdir`` layout
+  (:func:`rnaseq_layout`).
 
 These are plain async functions, not tasks: they run inside the caller's
 task and fan out to the module tasks, so the caller's
@@ -49,12 +50,11 @@ task and fan out to the module tasks, so the caller's
 
 import asyncio
 import csv
-import io
 import json
 import math
 import re
 import tempfile
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 
 import yaml
@@ -103,6 +103,8 @@ from flyte_bio.modules.umitools import (
     umitools_extract,
     umitools_prepareforrsem,
 )
+from flyte_bio.publish import expand, name, publish
+from flyte_bio.samplesheet import Row, read_samplesheet
 from flyte_bio.scripts import path as asset
 
 STRANDEDNESS = ("auto", "forward", "reverse", "unstranded")
@@ -140,36 +142,30 @@ class Sample:
         return not self.fastq_2
 
 
-async def read_samplesheet(samplesheet: File) -> list[Sample]:
-    """Samples from an upstream-format samplesheet: ``sample,fastq_1,fastq_2,strandedness``.
+def samples_from_samplesheet(rows: list[Row]) -> list[Sample]:
+    """Group samplesheet rows (one per sequencing run) into Samples, as upstream.
 
-    One row per sequencing run; rows sharing a ``sample`` are that sample's
-    runs, merged in file order. ``fastq_2`` is empty for single-end runs, and
-    an empty or missing ``strandedness`` means ``auto``. FASTQ paths must be
-    URIs the cluster can read (``s3://``, ``gs://``, ``https://`` …); they are
-    referenced where they are, not copied. The samplesheet itself is read in
-    this task, so it should be in object storage (not ``https://``).
+    Upstream's columns: ``sample``, ``fastq_1``, ``fastq_2`` (empty for
+    single-end) and ``strandedness`` (``auto`` / ``forward`` / ``reverse`` /
+    ``unstranded``). A sample's runs are merged in file order and must agree
+    on strandedness. FASTQs are referenced where they are, not copied.
     """
-    async with samplesheet.open("rb") as fh:
-        text = bytes(await fh.read()).decode()
-    runs: dict[str, list[dict[str, str]]] = {}
-    for n, row in enumerate(csv.DictReader(io.StringIO(text)), start=2):
-        sample_id = (row.get("sample") or "").strip()
-        if not sample_id or not (row.get("fastq_1") or "").strip():
-            raise ValueError(f"samplesheet line {n}: every row needs a sample and a fastq_1")
-        runs.setdefault(sample_id, []).append(row)
-
+    runs: dict[str, list[Row]] = {}
+    for row in rows:
+        runs.setdefault(row["sample"], []).append(row)
     samples = []
-    for sample_id, rows in runs.items():
-        strandedness = {(r.get("strandedness") or "").strip() or "auto" for r in rows}
+    for sample_id, sample_rows in runs.items():
+        strandedness = {r["strandedness"] for r in sample_rows}
         if len(strandedness) > 1:
-            raise ValueError(f"sample {sample_id!r}: runs disagree on strandedness {sorted(strandedness)}")
-        mates_2 = [(r.get("fastq_2") or "").strip() for r in rows]
+            lines = [r.line for r in sample_rows]
+            raise ValueError(
+                f"sample {sample_id!r} (lines {lines}): runs disagree on strandedness {sorted(strandedness)}"
+            )
         samples.append(
             Sample(
                 id=sample_id,
-                fastq_1=[File.from_existing_remote(r["fastq_1"].strip()) for r in rows],
-                fastq_2=[File.from_existing_remote(m) for m in mates_2 if m],
+                fastq_1=[File.from_existing_remote(r["fastq_1"]) for r in sample_rows],
+                fastq_2=[File.from_existing_remote(r["fastq_2"]) for r in sample_rows if r["fastq_2"]],
                 strandedness=strandedness.pop(),
             )
         )
@@ -288,6 +284,7 @@ class RnaseqResult:
     failed_trimming: dict[str, float] = field(default_factory=dict)
     deseq2_qc: Deseq2QCResult | None = None  # None when skip_deseq2_qc
     multiqc: MultiQCResult | None = None  # None when skip_multiqc
+    outdir: Dir | None = None  # the published results tree, when outdir/publish was asked for
 
 
 async def maybe_gunzip(file: File | None) -> File | None:
@@ -1003,7 +1000,7 @@ async def merge_quantifications(
 
 
 async def rnaseq(
-    samples: list[Sample],
+    samplesheet: File,
     fasta: File,
     gtf: File | None = None,
     gff: File | None = None,
@@ -1045,8 +1042,15 @@ async def rnaseq(
     umitools_grouping_method: str = "directional",
     umitools_dedup_stats: bool = False,
     umitools_dedup_primary_only: bool = False,
+    outdir: str | None = None,
+    publish_results: bool = False,
 ) -> RnaseqResult:
     """Prepare the genome while preprocessing every sample, then align and quantify them in parallel.
+
+    ``samplesheet`` is upstream's ``--input``: a CSV with columns ``sample``,
+    ``fastq_1``, ``fastq_2`` and ``strandedness``, one row per sequencing run
+    (see :func:`samples_from_samplesheet`). It is read before anything runs,
+    so a malformed sheet fails the run up front.
 
     ``salmon_index_dir`` is only used to infer strandedness for
     ``strandedness="auto"`` samples; without it one is built from the genome
@@ -1061,23 +1065,28 @@ async def rnaseq(
     ``skip_umi_extract``, for reads that already carry them in their names)
     and deduplicates the genome and transcriptome BAMs in place of
     MarkDuplicates. The UMI-tools options mirror upstream's parameters.
+
+    Outputs: everything is returned in the :class:`RnaseqResult`. Like
+    upstream's ``--outdir``, ``outdir`` (e.g. ``s3://my-bucket/rnaseq``) also
+    lays the results out there in upstream's folder structure
+    (:func:`rnaseq_layout`); ``publish_results=True`` does the same in Flyte's
+    own storage. Either way ``result.outdir`` is that tree as a Dir, for
+    downstream tasks.
     """
     if not skip_bbsplit and bbsplit_fasta_list is None and bbsplit_index_dir is None:
         raise ValueError("BBSplit needs bbsplit_fasta_list or bbsplit_index_dir (or skip_bbsplit=True)")
+    samples = samples_from_samplesheet(await read_samplesheet(samplesheet))
     if with_umi and not skip_umi_extract and not umitools_bc_pattern:
         raise ValueError("with_umi needs umitools_bc_pattern to extract the UMIs (or skip_umi_extract=True)")
     if umi_discard_read not in (0, 1, 2):
         raise ValueError("umi_discard_read must be 0, 1 or 2")
-    for name, value in (
+    for param, value in (
         ("umitools_bc_pattern", umitools_bc_pattern),
         ("umitools_bc_pattern2", umitools_bc_pattern2),
         ("umitools_umi_separator", umitools_umi_separator),
     ):
         if any(c.isspace() for c in value):
-            raise ValueError(f"{name} must not contain whitespace")
-    ids = [s.id for s in samples]
-    if len(ids) != len(set(ids)):
-        raise ValueError("sample ids must be unique; put a sample's runs in one Sample")
+            raise ValueError(f"{param} must not contain whitespace")
 
     genome = asyncio.create_task(
         prepare_genome(
@@ -1161,7 +1170,100 @@ async def rnaseq(
             stranded_threshold=stranded_threshold,
             unstranded_threshold=unstranded_threshold,
         )
+    if outdir is not None or publish_results:
+        result.outdir = await publish(await rnaseq_layout(result), outdir)
     return result
+
+
+async def rnaseq_layout(result: RnaseqResult, aligner: str = "star_salmon") -> dict[str, File | Dir | None]:
+    """Upstream's results layout for a run: relative path -> output, for :func:`~flyte_bio.publish.publish`.
+
+    Follows upstream's default ``publishDir`` paths (``fastqc/``,
+    ``trimgalore/``, ``<aligner>/`` with its ``log/``, ``samtools_stats/``,
+    ``qualimap/`` … folders, ``multiqc/<aligner>/``). Like upstream by default,
+    it leaves out intermediates: merged and trimmed reads, the prepared genome
+    and indices, and the genome BAM before duplicate marking or UMI
+    deduplication. dupRadar's outputs are grouped per sample rather than per
+    plot type.
+    """
+    a = aligner
+    out: dict[str, File | Dir | None] = {}
+
+    def samtools_stats(prefix: str, stats: File, flagstat: File, idxstats: File) -> None:
+        for kind, f in (("stats", stats), ("flagstat", flagstat), ("idxstats", idxstats)):
+            out[f"{a}/samtools_stats/{prefix}.bam.{kind}"] = f
+
+    for r in result.samples:
+        sid, pre, aln = r.sample, r.preprocessing, r.alignment
+        if pre.raw_fastqc is not None:
+            out.update(await expand("fastqc/raw", pre.raw_fastqc))
+        if pre.trimming is not None:
+            async for f in pre.trimming.results.walk():
+                n = name(f)
+                if n.endswith(("_fastqc.html", "_fastqc.zip")):
+                    out[f"fastqc/trim/{n}"] = f
+                elif n.endswith("_trimming_report.txt"):
+                    out[f"trimgalore/{n}"] = f
+        for stage, log in pre.lint.items():
+            out[f"fq_lint/{stage}/{sid}.fq_lint.txt"] = log
+        if pre.bbsplit is not None:
+            out[f"bbsplit/{sid}.stats.txt"] = pre.bbsplit.stats
+        if pre.umi_extract is not None:
+            out[f"umitools/{name(pre.umi_extract.log)}"] = pre.umi_extract.log
+
+        async for f in aln.star_output.walk():
+            n = name(f)
+            if n.startswith("Log.") or n == "SJ.out.tab":
+                out[f"{a}/log/{sid}.{n}"] = f
+        samtools_stats(f"{sid}.sorted", aln.stats, aln.flagstat, aln.idxstats)
+
+        # The genome BAM downstream steps used: UMI-deduplicated or duplicate-marked.
+        if r.umi_dedup is not None:
+            u = r.umi_dedup
+            out[f"{a}/{sid}.umi_dedup.sorted.bam"] = u.bam
+            out[f"{a}/{sid}.umi_dedup.sorted.bam.bai"] = u.bai
+            samtools_stats(f"{sid}.umi_dedup.sorted", u.stats, u.flagstat, u.idxstats)
+            out[f"{a}/umitools/genomic_dedup_log/{name(u.genome.log)}"] = u.genome.log
+            out[f"{a}/umitools/transcriptomic_dedup_log/{name(u.transcriptome.log)}"] = u.transcriptome.log
+            for side in (u.genome, u.transcriptome):
+                for f in (side.edit_distance, side.per_umi, side.per_umi_per_position):
+                    if f is not None:
+                        out[f"{a}/umitools/{name(f)}"] = f
+            if u.prepare_for_rsem_log is not None:
+                log = u.prepare_for_rsem_log
+                out[f"{a}/umitools/prepare_for_quantification_log/{name(log)}"] = log
+        elif r.markduplicates is not None:
+            md = r.markduplicates
+            out[f"{a}/{sid}.markdup.sorted.bam"] = md.bam
+            out[f"{a}/{sid}.markdup.sorted.bam.bai"] = md.bai
+            out[f"{a}/picard_metrics/{name(md.metrics)}"] = md.metrics
+            samtools_stats(f"{sid}.markdup.sorted", md.stats, md.flagstat, md.idxstats)
+
+        out[f"{a}/{sid}"] = r.salmon
+        out[f"{a}/qualimap/{sid}"] = r.qualimap
+        if r.dupradar is not None:
+            out[f"{a}/dupradar/{sid}"] = r.dupradar.results
+        for module, d in r.rseqc.items():
+            out.update(await expand(f"{a}/rseqc/{module}", d))
+        if r.biotype_counts is not None:
+            for f in (r.biotype_counts.counts, r.biotype_counts.summary):
+                out[f"{a}/featurecounts/{name(f)}"] = f
+        if r.biotype_qc is not None:
+            for f in (r.biotype_qc.counts_mqc, r.biotype_qc.rrna_mqc):
+                out[f"{a}/featurecounts/{name(f)}"] = f
+        if r.stringtie is not None:
+            out.update(await expand(f"{a}/stringtie", r.stringtie.results))
+        for f in r.bigwig.values():
+            out[f"{a}/bigwig/{name(f)}"] = f
+
+    m = result.salmon
+    for f in (m.tx2gene, m.gene_rds, m.transcript_rds, *(getattr(m.tximport, k.name) for k in fields(m.tximport))):
+        out[f"{a}/{name(f)}"] = f
+    if result.deseq2_qc is not None:
+        out.update(await expand(f"{a}/deseq2_qc", result.deseq2_qc.results))
+    if result.multiqc is not None:
+        out.update(await expand(f"multiqc/{a}", result.multiqc.results))
+    return out
 
 
 # ---------------------------------------------------------------------------

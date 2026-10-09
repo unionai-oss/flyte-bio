@@ -23,10 +23,10 @@ paths are URIs the cluster can read (``s3://…``, ``gs://…``).
 """
 
 import flyte
-from flyte.io import File
+from flyte.io import Dir, File
 
 from flyte_bio import env as bio_env
-from flyte_bio.pipelines.rnaseq import read_samplesheet, rnaseq
+from flyte_bio.pipelines.rnaseq import rnaseq
 
 # flyte-bio isn't on PyPI yet: install it from GitHub. To run your local
 # checkout instead, use `.with_uv_project("pyproject.toml",
@@ -47,17 +47,23 @@ async def rnaseq_example(
     fasta: File,
     gtf: File,
     transcript_fasta: File | None = None,
-) -> tuple[File, File]:
-    """Quantify every sample; return the merged gene counts and the MultiQC report."""
-    samples = await read_samplesheet(samplesheet)
+    outdir: str | None = None,
+) -> Dir:
+    """Quantify every sample; return the results in upstream's --outdir layout.
+
+    With ``outdir`` (e.g. ``s3://my-bucket/rnaseq``) the results land there;
+    without it, in Flyte's storage. Either way the returned Dir is that tree.
+    """
     result = await rnaseq(
-        samples,
+        samplesheet,
         fasta=fasta,
         gtf=gtf,
         transcript_fasta=transcript_fasta,
+        outdir=outdir,
+        publish_results=True,
         # Any other upstream option is a keyword argument, e.g.
         # skip_bbsplit=False with bbsplit_fasta_list={...}, with_umi=True with
         # umitools_bc_pattern="NNNNNN", or skip_qualimap=True.
     )
-    assert result.multiqc is not None
-    return result.salmon.tximport.counts_gene, result.multiqc.report
+    assert result.outdir is not None
+    return result.outdir
