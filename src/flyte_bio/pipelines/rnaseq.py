@@ -32,6 +32,8 @@ Composes :mod:`flyte_bio.modules` tasks into the ``star_salmon`` path:
   transcript-level SummarizedExperiment RDS files, then DESeq2 PCA /
   sample-distance QC on the merged gene counts.
 - :func:`rnaseq` — run all of the above, samples in parallel.
+- :func:`read_samplesheet` — read an upstream-format samplesheet CSV into a
+  list of :class:`Sample`.
 
 These are plain async functions, not tasks: they run inside the caller's
 task and fan out to the module tasks, so the caller's
@@ -47,6 +49,7 @@ task and fan out to the module tasks, so the caller's
 
 import asyncio
 import csv
+import io
 import json
 import math
 import re
@@ -135,6 +138,42 @@ class Sample:
     @property
     def single_end(self) -> bool:
         return not self.fastq_2
+
+
+async def read_samplesheet(samplesheet: File) -> list[Sample]:
+    """Samples from an upstream-format samplesheet: ``sample,fastq_1,fastq_2,strandedness``.
+
+    One row per sequencing run; rows sharing a ``sample`` are that sample's
+    runs, merged in file order. ``fastq_2`` is empty for single-end runs, and
+    an empty or missing ``strandedness`` means ``auto``. FASTQ paths must be
+    URIs the cluster can read (``s3://``, ``gs://``, ``https://`` …); they are
+    referenced where they are, not copied. The samplesheet itself is read in
+    this task, so it should be in object storage (not ``https://``).
+    """
+    async with samplesheet.open("rb") as fh:
+        text = bytes(await fh.read()).decode()
+    runs: dict[str, list[dict[str, str]]] = {}
+    for n, row in enumerate(csv.DictReader(io.StringIO(text)), start=2):
+        sample_id = (row.get("sample") or "").strip()
+        if not sample_id or not (row.get("fastq_1") or "").strip():
+            raise ValueError(f"samplesheet line {n}: every row needs a sample and a fastq_1")
+        runs.setdefault(sample_id, []).append(row)
+
+    samples = []
+    for sample_id, rows in runs.items():
+        strandedness = {(r.get("strandedness") or "").strip() or "auto" for r in rows}
+        if len(strandedness) > 1:
+            raise ValueError(f"sample {sample_id!r}: runs disagree on strandedness {sorted(strandedness)}")
+        mates_2 = [(r.get("fastq_2") or "").strip() for r in rows]
+        samples.append(
+            Sample(
+                id=sample_id,
+                fastq_1=[File.from_existing_remote(r["fastq_1"].strip()) for r in rows],
+                fastq_2=[File.from_existing_remote(m) for m in mates_2 if m],
+                strandedness=strandedness.pop(),
+            )
+        )
+    return samples
 
 
 @dataclass

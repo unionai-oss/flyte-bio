@@ -29,37 +29,136 @@ module suite can depend on this one env.
 
 ## Install
 
-This package is not yet published. For development, clone and install with
-[uv](https://docs.astral.sh/uv/):
+flyte-bio isn't on PyPI yet. Install it from GitHub:
 
 ```bash
-git clone https://github.com/<org>/flyte-bio
+uv add "flyte-bio @ https://github.com/unionai-oss/flyte-bio/archive/refs/heads/main.zip"
+```
+
+or, to work on it, clone and install with [uv](https://docs.astral.sh/uv/):
+
+```bash
+git clone https://github.com/unionai-oss/flyte-bio
 cd flyte-bio
 uv sync
 ```
 
-`flyte` is currently pinned to a dev branch of
-[flyteorg/flyte-sdk](https://github.com/flyteorg/flyte-sdk) (PR
-[#1055](https://github.com/flyteorg/flyte-sdk/pull/1055)), which adds the
-`flyte.extras.shell` task wrapper this package builds on.
+It needs `flyte>=2.10.0`, whose shell tasks stage file inputs under their
+original names.
 
 ## Usage
+
+Every tool runs as a task in its own biocontainer. Your code runs in your own
+task, which awaits the flyte-bio tasks, so two things need setting up:
+
+- **Your task's image needs flyte-bio installed**, because your task imports
+  it (the tool images don't: they never import flyte-bio).
+- **Your `TaskEnvironment` must `depends_on` the flyte-bio environments**, so
+  that deploying or running yours also registers every tool task and its
+  image. `flyte_bio.env` depends on all of them.
+
+### Calling a module
 
 ```python
 import flyte
 from flyte.io import File
+
 from flyte_bio import env as bio_env
 from flyte_bio.modules.bedtools import bedtools_intersect
 
+FLYTE_BIO = "flyte-bio @ https://github.com/unionai-oss/flyte-bio/archive/refs/heads/main.zip"
+
 env = flyte.TaskEnvironment(
     name="genomics_pipeline",
+    image=flyte.Image.from_debian_base().with_pip_packages(FLYTE_BIO),
     depends_on=[bio_env],
 )
 
+
 @env.task
-async def pipeline(annotation: File, peaks: list[File]) -> list[File]:
+async def overlaps(annotation: File, peaks: list[File]) -> File:
     return await bedtools_intersect(a=annotation, b=peaks, wa=True, f=0.5)
 ```
+
+### Running the rnaseq pipeline
+
+[`examples/rnaseq.py`](examples/rnaseq.py) is a complete, runnable example.
+The core of it:
+
+```python
+import flyte
+from flyte.io import File
+
+from flyte_bio import env as bio_env
+from flyte_bio.pipelines.rnaseq import read_samplesheet, rnaseq
+
+FLYTE_BIO = "flyte-bio @ https://github.com/unionai-oss/flyte-bio/archive/refs/heads/main.zip"
+
+env = flyte.TaskEnvironment(
+    name="rnaseq_example",
+    image=flyte.Image.from_debian_base().with_pip_packages(FLYTE_BIO),
+    resources=flyte.Resources(cpu=2, memory="4Gi"),
+    depends_on=[bio_env],
+)
+
+
+@env.task
+async def rnaseq_example(
+    samplesheet: File,
+    fasta: File,
+    gtf: File,
+    transcript_fasta: File | None = None,
+) -> tuple[File, File]:
+    samples = await read_samplesheet(samplesheet)
+    result = await rnaseq(samples, fasta=fasta, gtf=gtf, transcript_fasta=transcript_fasta)
+    return result.salmon.tximport.counts_gene, result.multiqc.report
+```
+
+The samplesheet uses upstream's format, with one row per sequencing run. Rows
+that share a `sample` are merged, `fastq_2` is empty for single-end reads, and
+`strandedness` is `auto`, `forward`, `reverse` or `unstranded`:
+
+```csv
+sample,fastq_1,fastq_2,strandedness
+CONTROL_REP1,s3://my-bucket/reads/ctrl1_R1.fastq.gz,s3://my-bucket/reads/ctrl1_R2.fastq.gz,auto
+CONTROL_REP1,s3://my-bucket/reads/ctrl1b_R1.fastq.gz,s3://my-bucket/reads/ctrl1b_R2.fastq.gz,auto
+TREATED_REP1,s3://my-bucket/reads/treat1_R1.fastq.gz,,reverse
+```
+
+FASTQ paths must be URIs the cluster can read (`s3://`, `gs://`, `https://`).
+They are read where they are, not copied. The samplesheet itself is read by
+your task, so give it as an `s3://`/`gs://` URI or a local file (`flyte run`
+uploads it); reading `https://` files inside a task isn't reliable.
+
+To try it on rnaseq's test data (5 small yeast samples):
+
+```bash
+DATA=https://raw.githubusercontent.com/nf-core/test-datasets/626c8fab639062eade4b10747e919341cbf9b41a
+curl -sO $DATA/samplesheet/v3.10/samplesheet_test.csv
+flyte run examples/rnaseq.py rnaseq_example \
+    --samplesheet samplesheet_test.csv \
+    --fasta $DATA/reference/genome.fasta \
+    --gtf $DATA/reference/genes_with_empty_tid.gtf.gz \
+    --transcript_fasta $DATA/reference/transcriptome.fasta
+```
+
+`rnaseq()` takes upstream's options as keyword arguments. Some examples:
+- `skip_qualimap=True`;
+- `skip_bbsplit=False` with `bbsplit_fasta_list={"human": File(...)}`;
+- `with_umi=True` with `umitools_bc_pattern="NNNNNN"`;
+- `min_mapped_reads=10`.
+
+It returns an `RnaseqResult` holding everything the run produced:
+- `result.genome`: the prepared references and STAR index;
+- `result.samples`: per sample, the reads and QC, the alignment, salmon,
+  duplicates, Qualimap, RSeQC, StringTie and bigWigs;
+- `result.salmon`: the merged count/TPM matrices and SummarizedExperiment RDS
+  files;
+- `result.deseq2_qc` and `result.multiqc`.
+
+The building blocks (`prepare_genome`, `preprocess_reads`, `align_star`,
+`dedup_umi`, `quantify_salmon_bam`, `merge_quantifications`, …) can also be
+called on their own.
 
 ## Currently available
 
