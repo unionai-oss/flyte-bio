@@ -1,20 +1,41 @@
 """Tests for flyte_bio.modules.gatk4 (md5s from upstream's gatk4 module snapshots)."""
 
 import asyncio
+import gzip
+
+from flyte.io import File
 
 from flyte_bio.modules.gatk4 import (
     gatk4_applybqsr,
     gatk4_baserecalibrator,
+    gatk4_cnnscorevariants,
     gatk4_createsequencedictionary,
+    gatk4_filtervarianttranches,
     gatk4_gatherbqsrreports,
+    gatk4_haplotypecaller,
     gatk4_intervallisttobed,
     gatk4_markduplicates,
+    gatk4_mergevcfs,
 )
 from flyte_bio.modules.samtools import samtools_view
 from tests.framework import assert_md5, assert_nonempty, assert_reads_md5, env, fixture, reads_md5
 
 HS = "genomics/homo_sapiens/"
 SC2 = "genomics/sarscov2/"
+DBSNP = HS + "genome/vcf/dbsnp_146.hg38.vcf.gz"
+
+
+async def vcf_lines(vcf: File) -> tuple[list[str], list[str]]:
+    """A gzipped VCF's (header lines, record lines)."""
+    async with vcf.open("rb") as fh:
+        lines = gzip.decompress(bytes(await fh.read())).decode().splitlines()
+    return [x for x in lines if x.startswith("#")], [x for x in lines if not x.startswith("#")]
+
+
+async def human_reference():
+    return await asyncio.gather(
+        fixture(HS + "genome/genome.fasta"), fixture(HS + "genome/genome.fasta.fai"), fixture(HS + "genome/genome.dict")
+    )
 
 
 async def sarscov2_reference():
@@ -124,6 +145,76 @@ async def test_applybqsr() -> None:
     await assert_nonempty(as_cram, label="recalibrated cram")
 
 
+@env.task
+async def test_haplotypecaller() -> None:
+    # upstream case: gatk4/haplotypecaller "homo_sapiens - [cram, crai] - fasta - fai - dict - sites - sites_tbi"
+    # (its snapshot records only the output names)
+    (fasta, fai, dict_), cram, crai, dbsnp, dbsnp_tbi = await asyncio.gather(
+        human_reference(),
+        fixture(HS + "illumina/cram/test.paired_end.sorted.cram"),
+        fixture(HS + "illumina/cram/test.paired_end.sorted.cram.crai"),
+        fixture(DBSNP),
+        fixture(DBSNP + ".tbi"),
+    )
+    calls = await gatk4_haplotypecaller(
+        cram, crai, fasta, fai, dict_, "test_cram_sites", dbsnp=dbsnp, dbsnp_tbi=dbsnp_tbi
+    )
+    assert calls.vcf.path.endswith("/test_cram_sites.vcf.gz"), calls.vcf.path
+    assert calls.tbi.path.endswith("/test_cram_sites.vcf.gz.tbi"), calls.tbi.path
+    header, records = await vcf_lines(calls.vcf)
+    assert header[0].startswith("##fileformat=VCF"), header[0]
+    assert any(h.startswith("##GATKCommandLine=<ID=HaplotypeCaller") for h in header), "not a HaplotypeCaller VCF"
+    assert records, "HaplotypeCaller called nothing on the test CRAM"
+
+
+@env.task
+async def test_mergevcfs() -> None:
+    # upstream case: gatk4/mergevcfs "test_gatk4_mergevcfs" (snapshot records only names)
+    dbsnp, gnomad, (_, _, dict_) = await asyncio.gather(
+        fixture(DBSNP), fixture(HS + "genome/vcf/gnomAD.r2.1.1.vcf.gz"), human_reference()
+    )
+    merged = await gatk4_mergevcfs([dbsnp, gnomad], "test", dict=dict_)
+    assert merged.vcf.path.endswith("/test.vcf.gz"), merged.vcf.path
+    _, records = await vcf_lines(merged.vcf)
+    expected = len((await vcf_lines(dbsnp))[1]) + len((await vcf_lines(gnomad))[1])
+    assert len(records) == expected, (len(records), expected)
+
+
+@env.task
+async def test_cnnscorevariants() -> None:
+    # upstream case: gatk4/cnnscorevariants "homo sapiens - vcf". Its variantsMD5 comes from htsjdk's
+    # VariantContext rendering, so check the scores instead.
+    (fasta, fai, dict_), vcf, tbi = await asyncio.gather(
+        human_reference(),
+        fixture(HS + "illumina/gvcf/test.genome.vcf.gz"),
+        fixture(HS + "illumina/gvcf/test.genome.vcf.gz.tbi"),
+    )
+    scored = await gatk4_cnnscorevariants(vcf, tbi, fasta, fai, dict_, "test")
+    assert scored.vcf.path.endswith("/test.cnn.vcf.gz"), scored.vcf.path
+    header, records = await vcf_lines(scored.vcf)
+    assert any(h.startswith("##INFO=<ID=CNN_1D") for h in header), "no CNN_1D INFO header"
+    assert records and all("CNN_1D=" in r.split("\t")[7] for r in records), records[:2]
+
+
+@env.task
+async def test_filtervarianttranches() -> None:
+    # upstream case: gatk4/filtervarianttranches "homo sapiens - vcf" (ext.args "--info-key CNN_1D")
+    (fasta, fai, dict_), vcf, tbi, dbsnp, dbsnp_tbi = await asyncio.gather(
+        human_reference(),
+        fixture(HS + "illumina/gatk/haplotypecaller_calls/test_haplotcaller.cnn.vcf.gz"),
+        fixture(HS + "illumina/gatk/haplotypecaller_calls/test_haplotcaller.cnn.vcf.gz.tbi"),
+        fixture(DBSNP),
+        fixture(DBSNP + ".tbi"),
+    )
+    filtered = await gatk4_filtervarianttranches(
+        vcf, tbi, [dbsnp], [dbsnp_tbi], fasta, fai, dict_, "test", args="--info-key CNN_1D"
+    )
+    assert filtered.vcf.path.endswith("/test.filtered.vcf.gz"), filtered.vcf.path
+    header, records = await vcf_lines(filtered.vcf)
+    assert any(h.startswith("##FILTER=<ID=CNN_1D_") for h in header), "no tranche FILTER headers"
+    assert records and all(r.split("\t")[6] for r in records), "records without a FILTER value"
+
+
 tests = [
     test_createsequencedictionary,
     test_intervallisttobed,
@@ -131,4 +222,8 @@ tests = [
     test_baserecalibrator,
     test_gatherbqsrreports,
     test_applybqsr,
+    test_haplotypecaller,
+    test_mergevcfs,
+    test_cnnscorevariants,
+    test_filtervarianttranches,
 ]

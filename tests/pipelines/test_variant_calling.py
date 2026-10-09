@@ -6,12 +6,14 @@ be checked against them.
 """
 
 import asyncio
+import gzip
 import hashlib
 
 from flyte.io import File
 
 from flyte_bio.modules.samtools import samtools_view
 from flyte_bio.pipelines.variant_calling import (
+    call_variants,
     map_reads,
     mark_duplicates,
     prepare_reference,
@@ -29,6 +31,16 @@ INTERVALS = GENOME + "genome.interval_list"
 DBSNP = GENOME + "vcf/dbsnp_146.hg38.vcf.gz"
 KNOWN_INDELS = GENOME + "vcf/mills_and_1000G.indels.vcf.gz"
 MULTI_INTERVALS = GENOME + "genome.multi_intervals.bed"  # two intervals: two scatter chunks at 20 nt/s
+MAPPED_BAM = "genomics/homo_sapiens/illumina/bam/test.paired_end.sorted.bam"  # upstream's mapped_single_bam.csv
+
+
+async def vcf_records(vcf: File) -> tuple[list[str], list[str]]:
+    """A gzipped VCF's (header lines, record lines)."""
+    async with vcf.open("rb") as fh:
+        lines = gzip.decompress(bytes(await fh.read())).decode().splitlines()
+    return [x for x in lines if x.startswith("#")], [x for x in lines if not x.startswith("#")]
+
+
 CSV = "https://raw.githubusercontent.com/nf-core/sarek/3.10.0/tests/csv/3.0/"
 FASTQ_SAMPLESHEET = CSV + "fastq_single.csv"  # one sample, two lanes (the same FASTQ pair)
 
@@ -200,10 +212,63 @@ async def test_recalibrate() -> None:
     assert (await text(recal.qc.samtools_stats)).startswith("# This file was produced by samtools stats")
 
 
+@env.task
+async def test_call_variants() -> None:
+    # upstream case: tests/variant_calling_haplotypecaller.nf.test, first scenario
+    # (--step variant_calling from mapped_single_bam.csv, test profile, --nucleotides_per_second 20)
+    fasta, fai, dict_file, dbsnp, indels, intervals, bam, bai = await asyncio.gather(
+        fixture(FASTA),
+        fixture(FAI),
+        fixture(DICT),
+        fixture(DBSNP),
+        fixture(KNOWN_INDELS),
+        fixture(INTERVALS),
+        fixture(MAPPED_BAM),
+        fixture(MAPPED_BAM + ".bai"),
+    )
+    ref = await prepare_reference(
+        fasta,
+        fai=fai,
+        sequence_dict=dict_file,
+        dbsnp=dbsnp,
+        known_indels=[indels],
+        intervals=intervals,
+        nucleotides_per_second=20,
+    )
+    # The test profile's filter arguments.
+    result = await call_variants(bam, bai, "test", ref, filter_args="--info-key CNN_1D --indel-tranche 0")
+    assert result.calls.vcf.path.endswith("/test.haplotypecaller.vcf.gz"), result.calls.vcf.path
+    assert result.scored is not None and result.scored.vcf.path.endswith("/test.cnn.vcf.gz"), result.scored
+    assert result.filtered is not None, result
+    assert result.filtered.vcf.path.endswith("/test.haplotypecaller.filtered.vcf.gz"), result.filtered.vcf.path
+    assert result.final is result.filtered
+    header, calls = await vcf_records(result.calls.vcf)
+    assert calls, "no calls"
+    assert any(line.startswith("##GATKCommandLine=<ID=HaplotypeCaller") and "CONSERVATIVE" in line for line in header)
+    # dbSNP IDs are annotated where the calls hit known sites.
+    filtered_header, filtered = await vcf_records(result.filtered.vcf)
+    assert len(filtered) == len(calls), (len(filtered), len(calls))
+    assert any(h.startswith("##FILTER=<ID=CNN_1D_") for h in filtered_header), "no tranche filters"
+    assert all("CNN_1D=" in r.split("\t")[7] for r in filtered), "records without a CNN score"
+
+    # Scattered over two chunks (and unfiltered): the per-chunk calls are merged in genome order.
+    multi = await fixture(MULTI_INTERVALS)
+    scattered_ref = await prepare_reference(
+        fasta, fai=fai, sequence_dict=dict_file, dbsnp=dbsnp, intervals=multi, nucleotides_per_second=20
+    )
+    scattered = await call_variants(bam, bai, "test", scattered_ref, skip_filter=True)
+    assert scattered.filtered is None and scattered.final is scattered.calls
+    assert scattered.calls.vcf.path.endswith("/test.haplotypecaller.vcf.gz"), scattered.calls.vcf.path
+    _, merged = await vcf_records(scattered.calls.vcf)
+    positions = [int(r.split("\t")[1]) for r in merged]
+    assert merged and positions == sorted(positions), positions[:10]
+
+
 tests = [
     test_prepare_reference_from_fasta,
     test_prepare_reference_test_profile,
     test_map_reads,
     test_mark_duplicates,
     test_recalibrate,
+    test_call_variants,
 ]

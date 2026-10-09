@@ -16,6 +16,9 @@ pipeline (3.10.0):
 - :func:`recalibrate` — base-quality score recalibration: BaseRecalibrator
   and ApplyBQSR scattered over the interval chunks, gathered into one CRAM,
   then QC'd like the duplicate-marked one.
+- :func:`call_variants` — GATK HaplotypeCaller scattered over the interval
+  chunks and merged, then (by default) CNNScoreVariants +
+  FilterVariantTranches.
 
 Upstream splits FASTQs into 50M-read chunks with fastp by default to map
 them in parallel; that isn't ported (each lane maps as one job), which
@@ -36,12 +39,17 @@ from flyte_bio.modules.bwa import bwa_index as build_bwa_index
 from flyte_bio.modules.bwa import bwa_mem
 from flyte_bio.modules.fastqc import fastqc
 from flyte_bio.modules.gatk4 import (
+    IndexedVcf,
     gatk4_applybqsr,
     gatk4_baserecalibrator,
+    gatk4_cnnscorevariants,
     gatk4_createsequencedictionary,
+    gatk4_filtervarianttranches,
     gatk4_gatherbqsrreports,
+    gatk4_haplotypecaller,
     gatk4_intervallisttobed,
     gatk4_markduplicates,
+    gatk4_mergevcfs,
 )
 from flyte_bio.modules.htslib import htslib_bgziptabix
 from flyte_bio.modules.intervals import build_intervals, create_intervals_bed
@@ -443,3 +451,86 @@ async def recalibrate(
     crai = await samtools_index(bam=cram)
     qc = await alignment_qc(sample_id, "recal", cram, crai, reference, wes)
     return Recalibrated(cram=cram, crai=crai, table=table, qc=qc)
+
+
+@dataclass
+class GermlineCalls:
+    calls: IndexedVcf  # <sample>.haplotypecaller.vcf.gz (merged across interval chunks)
+    scored: IndexedVcf | None  # <sample>.cnn.vcf.gz; None when the filter is skipped
+    filtered: IndexedVcf | None  # <sample>.haplotypecaller.filtered.vcf.gz; None when skipped
+
+    @property
+    def final(self) -> IndexedVcf:
+        """The VCF downstream steps use: the filtered one when filtering ran."""
+        return self.filtered or self.calls
+
+
+async def call_variants(
+    cram: File,
+    crai: File,
+    sample_id: str,
+    reference: Reference,
+    skip_filter: bool = False,
+    pcr_indel_model: str = "CONSERVATIVE",
+    filter_args: str = "--info-key CNN_1D",
+) -> GermlineCalls:
+    """GATK HaplotypeCaller germline calling of a (recalibrated) CRAM, as upstream.
+
+    HaplotypeCaller runs per interval chunk (annotating dbSNP IDs), the
+    chunks are merged into ``<sample>.haplotypecaller.vcf.gz``, and unless
+    ``skip_filter`` the calls are scored with GATK's 1D CNN over the calling
+    intervals and filtered by sensitivity tranches against dbSNP and the
+    known indels (``filter_args``; upstream's test profile adds
+    ``--indel-tranche 0``).
+    """
+    chunks: list[File | None] = list(reference.intervals_split) or [None]
+    single = len(chunks) == 1
+    ref = (reference.fasta, reference.fai, reference.sequence_dict)
+
+    def prefix(chunk: File | None) -> str:
+        # As upstream: <sample>.haplotypecaller, or .haplotypecaller.<interval> per chunk when scattered.
+        if single or chunk is None:
+            return f"{sample_id}.haplotypecaller"
+        return f"{sample_id}.haplotypecaller.{base_name(chunk)}"
+
+    per_chunk = await asyncio.gather(
+        *(
+            gatk4_haplotypecaller(
+                cram,
+                crai,
+                *ref,
+                prefix=prefix(chunk),
+                intervals=chunk,
+                dbsnp=reference.dbsnp,
+                dbsnp_tbi=reference.dbsnp_tbi,
+                args=f"--pcr-indel-model {pcr_indel_model}" if pcr_indel_model else "",
+            )
+            for chunk in chunks
+        )
+    )
+    calls = (
+        per_chunk[0]
+        if single
+        else await gatk4_mergevcfs(
+            [c.vcf for c in per_chunk], prefix=f"{sample_id}.haplotypecaller", dict=reference.sequence_dict
+        )
+    )
+    if skip_filter:
+        return GermlineCalls(calls=calls, scored=None, filtered=None)
+
+    known_sites = ([reference.dbsnp] if reference.dbsnp else []) + reference.known_indels
+    known_sites_tbi = ([reference.dbsnp_tbi] if reference.dbsnp_tbi else []) + reference.known_indels_tbi
+    if not known_sites:
+        raise ValueError("HaplotypeCaller filtering needs known sites: give dbsnp and/or known_indels, or skip_filter")
+    # As upstream: one pass over all calling intervals (scattering fails on chunks without SNPs).
+    scored = await gatk4_cnnscorevariants(calls.vcf, calls.tbi, *ref, prefix=sample_id, intervals=reference.intervals)
+    filtered = await gatk4_filtervarianttranches(
+        scored.vcf,
+        scored.tbi,
+        known_sites,
+        known_sites_tbi,
+        *ref,
+        prefix=f"{sample_id}.haplotypecaller",
+        args=filter_args,
+    )
+    return GermlineCalls(calls=calls, scored=scored, filtered=filtered)
