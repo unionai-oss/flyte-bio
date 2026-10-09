@@ -28,6 +28,7 @@ from tests import test_utils
 from tests.framework import env, gather_tests
 from tests.modules import (
     test_bbmap,
+    test_bcftools,
     test_bedtools,
     test_bwa,
     test_cat,
@@ -59,12 +60,14 @@ from tests.modules import (
     test_tximport,
     test_ucsc,
     test_umitools,
+    test_vcftools,
 )
 from tests.pipelines import test_rnaseq, test_variant_calling
 
 ALL_TESTS = [
     *test_utils.tests,
     *test_bbmap.tests,
+    *test_bcftools.tests,
     *test_bedtools.tests,
     *test_bwa.tests,
     *test_cat.tests,
@@ -96,6 +99,7 @@ ALL_TESTS = [
     *test_tximport.tests,
     *test_ucsc.tests,
     *test_umitools.tests,
+    *test_vcftools.tests,
     *test_rnaseq.tests,
     *test_variant_calling.tests,
 ]

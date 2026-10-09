@@ -4,6 +4,7 @@ Each submodule wraps one tool family, sharing a single biocontainer image
 across its tasks:
 
 - :mod:`flyte_bio.modules.bbmap` — BBSplit (index build + read binning).
+- :mod:`flyte_bio.modules.bcftools` — VCF statistics.
 - :mod:`flyte_bio.modules.bedtools` — genome arithmetic (intersect, sort,
   merge, genomecov).
 - :mod:`flyte_bio.modules.bwa` — BWA short-read alignment (index).
@@ -38,6 +39,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.ucsc` — bedClip / bedGraphToBigWig.
 - :mod:`flyte_bio.modules.umitools` — UMI extraction and deduplication.
 - :mod:`flyte_bio.modules.untar` — tar archive extraction.
+- :mod:`flyte_bio.modules.vcftools` — VCF summaries (Ts/Tv, filters).
 
 The module-level :data:`env` here is an aggregate
 :class:`flyte.TaskEnvironment` depending on every submodule's env.
@@ -51,6 +53,7 @@ Pipelines depend on it once to gain access to every wrapped tool::
 import flyte
 
 from .bbmap import env as bbmap_env
+from .bcftools import env as bcftools_env
 from .bedtools import env as bedtools_env
 from .bedtools import genomecov_env
 from .bwa import env as bwa_env
@@ -85,11 +88,13 @@ from .tximport import env as tximport_env
 from .ucsc import env as ucsc_env
 from .umitools import env as umitools_env
 from .untar import env as untar_env
+from .vcftools import env as vcftools_env
 
 env = flyte.TaskEnvironment(
     name="flyte_bio_modules",
     depends_on=[
         bbmap_env,
+        bcftools_env,
         bedtools_env,
         bwa_env,
         gatk4_env,
@@ -124,11 +129,13 @@ env = flyte.TaskEnvironment(
         ucsc_env,
         umitools_env,
         untar_env,
+        vcftools_env,
     ],
 )
 
 __all__ = [
     "bbmap_env",
+    "bcftools_env",
     "bedtools_env",
     "bwa_env",
     "cat_env",
@@ -164,4 +171,5 @@ __all__ = [
     "ucsc_env",
     "umitools_env",
     "untar_env",
+    "vcftools_env",
 ]

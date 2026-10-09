@@ -68,16 +68,26 @@ samtools_sort = shell.create(
 
 # `args` carries the view options, e.g. `-F 0x900 -b` for a BAM of primary
 # alignments. Without an output-format flag the output is SAM without header.
+# Decoding a CRAM's records needs its reference: pass `fasta` and `fai`.
 samtools_view = shell.create(
     name="samtools_view",
     image=SAMTOOLS_IMAGE,
     resources=DEFAULT_RESOURCES,
-    inputs={"bam": File, "args": str},
+    inputs={"bam": File, "fasta": File | None, "fai": File | None, "args": str},
     defaults={"args": ""},
     outputs={"out": File},
     script=r"""
+        BAM=({inputs.bam})
+        shopt -s nullglob; FA=({inputs.fasta}); FAI=({inputs.fai}); shopt -u nullglob
         ARGS={inputs.args}
-        samtools view $ARGS -o {outputs.out} {inputs.bam}
+        REF=()
+        if [ ${#FA[@]} -gt 0 ]; then
+            W=$(mktemp -d)
+            ln -s "${FA[0]}" "$W/genome.fa"
+            if [ ${#FAI[@]} -gt 0 ]; then ln -s "${FAI[0]}" "$W/genome.fa.fai"; fi
+            REF=(--reference "$W/genome.fa")
+        fi
+        samtools view $ARGS "${REF[@]}" -o {outputs.out} "${BAM[0]}"
     """,
 )
 

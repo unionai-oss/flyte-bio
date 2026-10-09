@@ -13,12 +13,15 @@ from flyte.io import File
 
 from flyte_bio.modules.samtools import samtools_view
 from flyte_bio.pipelines.variant_calling import (
+    SampleQC,
     call_variants,
     map_reads,
     mark_duplicates,
+    multiqc_report,
     prepare_reference,
     recalibrate,
     samples_from_samplesheet,
+    vcf_qc,
 )
 from flyte_bio.samplesheet import read_samplesheet
 from tests.framework import assert_md5, assert_nonempty, env, fixture, stage_samplesheet
@@ -264,6 +267,54 @@ async def test_call_variants() -> None:
     assert merged and positions == sorted(positions), positions[:10]
 
 
+@env.task
+async def test_fastq_to_report() -> None:
+    # FASTQ -> MarkDuplicates -> BQSR -> HaplotypeCaller -> VCF QC -> MultiQC, on the test profile's
+    # reference (one interval chunk at 20 nt/s).
+    sheet = await stage_samplesheet(FASTQ_SAMPLESHEET, ("fastq_1", "fastq_2"))
+    (sample,) = samples_from_samplesheet(await read_samplesheet(sheet))
+    fasta, fai, dict_file, dbsnp, indels, intervals = await asyncio.gather(
+        fixture(FASTA), fixture(FAI), fixture(DICT), fixture(DBSNP), fixture(KNOWN_INDELS), fixture(INTERVALS)
+    )
+    ref = await prepare_reference(
+        fasta,
+        fai=fai,
+        sequence_dict=dict_file,
+        dbsnp=dbsnp,
+        known_indels=[indels],
+        intervals=intervals,
+        nucleotides_per_second=20,
+    )
+    mapped = await map_reads(sample, ref)
+    marked = await mark_duplicates(mapped, ref)
+    recal = await recalibrate(marked, sample.id, ref)
+    calls = await call_variants(
+        recal.cram, recal.crai, sample.id, ref, filter_args="--info-key CNN_1D --indel-tranche 0"
+    )
+    # The test reads come from the whole genome but the reference is 40 kb of chr22: the reads that map
+    # carry ~8% mismatches, BQSR rightly lowers their qualities, and HaplotypeCaller calls nothing. With no
+    # records to score, the CNN filter is skipped (GATK would refuse the VCF) and QC runs on the calls.
+    _, records = await vcf_records(calls.calls.vcf)
+    assert records == [] and calls.filtered is None and calls.final is calls.calls, (len(records), calls)
+    qc = await vcf_qc(calls.final)
+    assert qc.bcftools_stats.path.endswith("/test.haplotypecaller.bcftools_stats.txt"), qc.bcftools_stats
+    for f, suffix in (
+        (qc.tstv_count, "TsTv.count"),
+        (qc.tstv_qual, "TsTv.qual"),
+        (qc.filter_summary, "FILTER.summary"),
+    ):
+        assert f.path.endswith(f"/test.haplotypecaller.{suffix}"), f.path
+        await assert_nonempty(f, label=suffix)
+
+    report = await multiqc_report(
+        [SampleQC(sample.id, fastqc=mapped.fastqc, markduplicates=marked, recalibrated=recal, vcf=qc)]
+    )
+    await assert_nonempty(report.report, label="multiqc_report.html")
+    data = [f.path.rsplit("/", 1)[-1].lower() async for f in report.results.walk() if "_data/" in f.path]
+    for module in ("fastqc", "picard", "samtools", "mosdepth", "gatk", "bcftools", "vcftools"):
+        assert any(module in n for n in data), f"MultiQC parsed no {module} outputs: {sorted(data)}"
+
+
 tests = [
     test_prepare_reference_from_fasta,
     test_prepare_reference_test_profile,
@@ -271,4 +322,5 @@ tests = [
     test_mark_duplicates,
     test_recalibrate,
     test_call_variants,
+    test_fastq_to_report,
 ]

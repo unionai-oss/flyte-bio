@@ -19,6 +19,10 @@ pipeline (3.10.0):
 - :func:`call_variants` — GATK HaplotypeCaller scattered over the interval
   chunks and merged, then (by default) CNNScoreVariants +
   FilterVariantTranches.
+- :func:`vcf_qc` — bcftools stats and vcftools Ts/Tv and FILTER summaries of
+  the calls.
+- :func:`multiqc_report` — one MultiQC report over every sample's QC, with
+  upstream's config.
 
 Upstream splits FASTQs into 50M-read chunks with fastp by default to map
 them in parallel; that isn't ported (each lane maps as one job), which
@@ -30,11 +34,14 @@ task and fan out to the module tasks, so the caller's
 """
 
 import asyncio
+import tempfile
 import zlib
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from flyte.io import Dir, File
 
+from flyte_bio.modules.bcftools import bcftools_stats
 from flyte_bio.modules.bwa import bwa_index as build_bwa_index
 from flyte_bio.modules.bwa import bwa_mem
 from flyte_bio.modules.fastqc import fastqc
@@ -54,9 +61,12 @@ from flyte_bio.modules.gatk4 import (
 from flyte_bio.modules.htslib import htslib_bgziptabix
 from flyte_bio.modules.intervals import build_intervals, create_intervals_bed
 from flyte_bio.modules.mosdepth import mosdepth
+from flyte_bio.modules.multiqc import MultiQCResult, multiqc
 from flyte_bio.modules.samtools import samtools_faidx, samtools_index, samtools_merge, samtools_stats
+from flyte_bio.modules.vcftools import vcftools
 from flyte_bio.publish import name
 from flyte_bio.samplesheet import Row
+from flyte_bio.scripts import path as asset
 
 
 @dataclass
@@ -453,6 +463,27 @@ async def recalibrate(
     return Recalibrated(cram=cram, crai=crai, table=table, qc=qc)
 
 
+async def vcf_has_records(vcf: File) -> bool:
+    """Whether a (b)gzipped VCF has any variant records, reading only as far as the first one."""
+    decompressor = zlib.decompressobj(zlib.MAX_WBITS | 16)
+    pending = b""
+    async with vcf.open("rb") as fh:
+        while True:
+            chunk = bytes(await fh.read(64 * 1024))
+            if not chunk:
+                return False
+            # bgzf is a series of gzip members: restart the decompressor at each one.
+            while chunk:
+                pending += decompressor.decompress(chunk)
+                chunk = decompressor.unused_data
+                if decompressor.eof:
+                    decompressor = zlib.decompressobj(zlib.MAX_WBITS | 16)
+            lines = pending.split(b"\n")
+            pending = lines.pop()
+            if any(line and not line.startswith(b"#") for line in lines):
+                return True
+
+
 @dataclass
 class GermlineCalls:
     calls: IndexedVcf  # <sample>.haplotypecaller.vcf.gz (merged across interval chunks)
@@ -481,7 +512,9 @@ async def call_variants(
     ``skip_filter`` the calls are scored with GATK's 1D CNN over the calling
     intervals and filtered by sensitivity tranches against dbSNP and the
     known indels (``filter_args``; upstream's test profile adds
-    ``--indel-tranche 0``).
+    ``--indel-tranche 0``). GATK refuses to score or filter a VCF without
+    records, which upstream lets fail; a sample with no calls skips the
+    filter instead (``scored`` and ``filtered`` are None).
     """
     chunks: list[File | None] = list(reference.intervals_split) or [None]
     single = len(chunks) == 1
@@ -515,7 +548,7 @@ async def call_variants(
             [c.vcf for c in per_chunk], prefix=f"{sample_id}.haplotypecaller", dict=reference.sequence_dict
         )
     )
-    if skip_filter:
+    if skip_filter or not await vcf_has_records(calls.vcf):
         return GermlineCalls(calls=calls, scored=None, filtered=None)
 
     known_sites = ([reference.dbsnp] if reference.dbsnp else []) + reference.known_indels
@@ -534,3 +567,100 @@ async def call_variants(
         args=filter_args,
     )
     return GermlineCalls(calls=calls, scored=scored, filtered=filtered)
+
+
+@dataclass
+class VcfQC:
+    bcftools_stats: File  # <vcf name>.bcftools_stats.txt
+    tstv_count: File  # <vcf name>.TsTv.count
+    tstv_qual: File  # <vcf name>.TsTv.qual
+    filter_summary: File  # <vcf name>.FILTER.summary
+
+
+def vcf_prefix(vcf: File) -> str:
+    """A VCF's name without ``.vcf[.gz]`` (upstream's ``vcf.baseName - ".vcf"``)."""
+    n = name(vcf)
+    return n.removesuffix(".gz").removesuffix(".vcf")
+
+
+async def vcf_qc(vcf: IndexedVcf) -> VcfQC:
+    """QC of a sample's calls, as upstream: bcftools stats and vcftools Ts/Tv and FILTER summaries."""
+    prefix = vcf_prefix(vcf.vcf)
+    stats, count, qual, summary = await asyncio.gather(
+        bcftools_stats(vcf.vcf, prefix=prefix),
+        vcftools(vcf.vcf, prefix=prefix, args="--TsTv-by-count"),
+        vcftools(vcf.vcf, prefix=prefix, args="--TsTv-by-qual"),
+        vcftools(vcf.vcf, prefix=prefix, args="--FILTER-summary"),
+    )
+
+    async def pick(results: Dir, suffix: str) -> File:
+        f = await results.get_file(f"{prefix}.{suffix}")
+        if f is None:
+            raise FileNotFoundError(f"vcftools wrote no {prefix}.{suffix}")
+        return f
+
+    return VcfQC(
+        bcftools_stats=stats,
+        tstv_count=await pick(count, "TsTv.count"),
+        tstv_qual=await pick(qual, "TsTv.qual"),
+        filter_summary=await pick(summary, "FILTER.summary"),
+    )
+
+
+@dataclass
+class SampleQC:
+    """What one sample contributes to the MultiQC report."""
+
+    sample_id: str
+    fastqc: list[Dir] = field(default_factory=list)
+    markduplicates: DuplicatesMarked | None = None
+    recalibrated: Recalibrated | None = None
+    vcf: VcfQC | None = None
+
+
+async def multiqc_report(samples: list[SampleQC]) -> MultiQCResult:
+    """One MultiQC report over every sample's QC, with upstream's config.
+
+    The reports are laid out under the names upstream gives them, which is
+    what MultiQC's modules and the config's sample-name cleaning key on.
+    """
+    root = Path(tempfile.mkdtemp(prefix="multiqc_"))
+    downloads = []
+
+    def put(f: File | None, rel: str) -> None:
+        if f is not None:
+            (root / rel).parent.mkdir(parents=True, exist_ok=True)
+            downloads.append(f.download(str(root / rel)))
+
+    async def put_dir(d: Dir | None, rel: str, suffixes: tuple[str, ...] = ()) -> None:
+        if d is None:
+            return
+        base = d.path.rstrip("/")
+        async for f in d.walk():
+            sub = f.path[len(base) :].lstrip("/")
+            if not suffixes or sub.endswith(suffixes):
+                put(f, f"{rel}/{sub}")
+
+    for s in samples:
+        sid = s.sample_id
+        for i, report in enumerate(s.fastqc):
+            await put_dir(report, f"fastqc/{sid}/{i}", ("_fastqc.zip",))
+        md = s.markduplicates
+        if md is not None:
+            put(md.metrics, f"markduplicates/{name(md.metrics)}")
+            put(md.qc.samtools_stats, f"samtools/{sid}.md.cram.stats")
+            await put_dir(md.qc.mosdepth, f"mosdepth/{sid}", (".txt",))
+        recal = s.recalibrated
+        if recal is not None:
+            put(recal.table, f"bqsr/{name(recal.table)}")
+            put(recal.qc.samtools_stats, f"samtools/{sid}.recal.cram.stats")
+            await put_dir(recal.qc.mosdepth, f"mosdepth/{sid}", (".txt",))
+        q = s.vcf
+        if q is not None:
+            for f in (q.bcftools_stats, q.tstv_count, q.tstv_qual, q.filter_summary):
+                put(f, f"vcf/{sid}/{name(f)}")
+
+    await asyncio.gather(*downloads)
+    data = await Dir.from_local(str(root))
+    config = await File.from_local(str(asset("multiqc_config_variant_calling.yml")))
+    return await multiqc(data, configs=[config], prefix="multiqc_report")
