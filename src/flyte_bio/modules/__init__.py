@@ -29,6 +29,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.qualimap` — RNA-seq alignment QC.
 - :mod:`flyte_bio.modules.rseqc` — RSeQC BAM QC (7 scripts).
 - :mod:`flyte_bio.modules.salmon` — transcript quantification (index, quant).
+- :mod:`flyte_bio.modules.simpleaf` — single-cell quantification with alevin-fry (index, quant).
 - :mod:`flyte_bio.modules.samtools` — alignment sort/index/stats/faidx.
 - :mod:`flyte_bio.modules.star` — spliced RNA-seq aligner (index, align).
 - :mod:`flyte_bio.modules.stringtie` — transcript assembly / quantification.
@@ -80,6 +81,7 @@ from .qualimap import env as qualimap_env
 from .rseqc import env as rseqc_env
 from .salmon import env as salmon_env
 from .samtools import env as samtools_env
+from .simpleaf import env as simpleaf_env
 from .star import env as star_env
 from .stringtie import env as stringtie_env
 from .subread import env as subread_env
@@ -122,6 +124,7 @@ env = flyte.TaskEnvironment(
         rseqc_env,
         salmon_env,
         samtools_env,
+        simpleaf_env,
         star_env,
         stringtie_env,
         subread_env,
@@ -165,6 +168,7 @@ __all__ = [
     "rseqc_env",
     "salmon_env",
     "samtools_env",
+    "simpleaf_env",
     "star_env",
     "stringtie_env",
     "subread_env",
