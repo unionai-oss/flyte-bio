@@ -18,6 +18,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.gffread` — GFF/GTF conversion + transcript FASTA.
 - :mod:`flyte_bio.modules.gtf2bed` — derive a BED12 gene model from a GTF.
 - :mod:`flyte_bio.modules.gtffilter` — restrict a GTF to a genome's sequences.
+- :mod:`flyte_bio.modules.gtfgenefilter` — keep GTF lines on a genome's sequences (scRNA-seq).
 - :mod:`flyte_bio.modules.gunzip` — single-file gzip decompression.
 - :mod:`flyte_bio.modules.htslib` — bgzip + tabix.
 - :mod:`flyte_bio.modules.intervals` — scatter-gather genomic intervals.
@@ -67,6 +68,7 @@ from .gatk4 import env as gatk4_env
 from .gffread import env as gffread_env
 from .gtf2bed import env as gtf2bed_env
 from .gtffilter import env as gtffilter_env
+from .gtfgenefilter import env as gtfgenefilter_env
 from .gunzip import env as gunzip_env
 from .htslib import env as htslib_env
 from .intervals import env as intervals_env
@@ -108,6 +110,7 @@ env = flyte.TaskEnvironment(
         gffread_env,
         gtf2bed_env,
         gtffilter_env,
+        gtfgenefilter_env,
         gunzip_env,
         htslib_env,
         intervals_env,
@@ -150,6 +153,7 @@ __all__ = [
     "gffread_env",
     "gtf2bed_env",
     "gtffilter_env",
+    "gtfgenefilter_env",
     "gunzip_env",
     "htslib_env",
     "intervals_env",

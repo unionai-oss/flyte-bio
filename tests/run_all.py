@@ -41,6 +41,8 @@ from tests.modules import (
     test_gffread,
     test_gtf2bed,
     test_gtffilter,
+    test_gtfgenefilter,
+    test_gunzip,
     test_htslib,
     test_intervals,
     test_mosdepth,
@@ -62,7 +64,7 @@ from tests.modules import (
     test_umitools,
     test_vcftools,
 )
-from tests.pipelines import test_rnaseq, test_variant_calling
+from tests.pipelines import test_rnaseq, test_scrnaseq, test_variant_calling
 
 ALL_TESTS = [
     *test_utils.tests,
@@ -80,6 +82,8 @@ ALL_TESTS = [
     *test_gffread.tests,
     *test_gtf2bed.tests,
     *test_gtffilter.tests,
+    *test_gtfgenefilter.tests,
+    *test_gunzip.tests,
     *test_htslib.tests,
     *test_intervals.tests,
     *test_mosdepth.tests,
@@ -101,6 +105,7 @@ ALL_TESTS = [
     *test_umitools.tests,
     *test_vcftools.tests,
     *test_rnaseq.tests,
+    *test_scrnaseq.tests,
     *test_variant_calling.tests,
 ]
 

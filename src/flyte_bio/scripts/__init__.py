@@ -77,6 +77,7 @@ ship_in_bundle(
     "strand_check_summary.yaml",
     "strand_check_composition.yaml",
     "multiqc_config_variant_calling.yml",
+    "filter_gtf_for_genes_in_genome.py",
 )
 
 

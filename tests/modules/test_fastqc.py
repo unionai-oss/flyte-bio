@@ -6,7 +6,7 @@ names and that the HTML report describes the reads, not md5s.
 
 from flyte.io import Dir
 
-from flyte_bio.modules.fastqc import fastqc
+from flyte_bio.modules.fastqc import fastqc, fastqc_reads
 from tests.framework import env, fixture
 
 FASTQ = "genomics/sarscov2/illumina/fastq/"
@@ -38,4 +38,14 @@ async def test_fastqc_paired_end() -> None:
     await assert_report(results, "test_2")
 
 
-tests = [test_fastqc_single_end, test_fastqc_paired_end]
+@env.task
+async def test_fastqc_reads() -> None:
+    # upstream case: fastqc "sarscov2 multiple" (several FASTQs, named <prefix>_1, _2, ... in input order)
+    r1, r2 = await fixture(FASTQ + "test_1.fastq.gz"), await fixture(FASTQ + "test_2.fastq.gz")
+    several, one = await fastqc_reads(reads=[r1, r2], prefix="test"), await fastqc_reads(reads=[r1], prefix="test")
+    await assert_report(several, "test_1")
+    await assert_report(several, "test_2")
+    await assert_report(one, "test")
+
+
+tests = [test_fastqc_single_end, test_fastqc_paired_end, test_fastqc_reads]
