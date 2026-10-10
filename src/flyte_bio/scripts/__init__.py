@@ -76,6 +76,7 @@ ship_in_bundle(
     "sample_status_header.txt",
     "strand_check_summary.yaml",
     "strand_check_composition.yaml",
+    "multiqc_config_variant_calling.yml",
 )
 
 

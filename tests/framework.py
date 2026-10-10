@@ -61,6 +61,7 @@ deployment. Nothing is cached by hand.
 
 
 import asyncio
+import csv
 import gzip
 import hashlib
 import os
@@ -156,6 +157,35 @@ async def fixture(rel_path: str) -> File:
     return await File.from_local(local)
 
 
+async def stage_samplesheet(url: str, file_columns: tuple[str, ...]) -> File:
+    """A copy of an upstream samplesheet whose file cells point at cached fixture copies.
+
+    Pipelines read their samplesheet inside the task, and upstream's test
+    sheets point at ``https://`` URLs, which can't be read there reliably. So
+    every non-empty ``file_columns`` cell is fetched with :func:`fixture` and
+    replaced by its staged path; other columns are kept as they are.
+    """
+    sheet = await fixture(url)
+    async with sheet.open("rb") as fh:
+        rows = list(csv.DictReader(bytes(await fh.read()).decode().splitlines()))
+    header = list(rows[0]) if rows else []
+
+    async def stage(row: dict[str, str]) -> dict[str, str]:
+        staged = dict(row)
+        for column in file_columns:
+            if row.get(column):
+                staged[column] = (await fixture(row[column])).path
+        return staged
+
+    staged_rows = await asyncio.gather(*(stage(r) for r in rows))
+    out = Path(tempfile.mkdtemp(prefix="samplesheet_")) / Path(urlsplit(url).path).name
+    with out.open("w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=header)
+        writer.writeheader()
+        writer.writerows(staged_rows)
+    return await File.from_local(str(out))
+
+
 async def fixture_dir(rel_path: str, member: str = "") -> Dir:
     """Extract a ``.tar.gz`` fixture and upload (part of) it as a Flyte :class:`Dir`.
 
@@ -249,14 +279,14 @@ async def assert_gunzipped_md5(file: File, expected: str, *, label: str = "") ->
         )
 
 
-async def assert_reads_md5(bam: File, expected: str, *, label: str = "") -> None:
-    """Assert the md5 of ``bam``'s read sequences matches ``expected``.
+async def reads_md5(bam: File) -> str:
+    """The md5 of ``bam``'s read sequences, as nft-bam's ``getReadsMD5`` computes it.
 
-    Mirrors nft-bam's ``getReadsMD5`` (nft-utils' ``md5Reads`` in upstream
-    snapshots): one md5 over every record's SEQ, concatenated in file
-    order, printed as hex without leading zeros. Header, flags, positions
-    and tags don't count. (nft-bam's ``getSamLinesMD5`` hashes htsjdk's SAM
-    text, which ``samtools view`` doesn't reproduce byte for byte.)
+    One md5 over every record's SEQ, concatenated in file order, printed as
+    hex without leading zeros (nft-utils' ``md5Reads`` in upstream
+    snapshots). Header, flags, positions and tags don't count. (nft-bam's
+    ``getSamLinesMD5`` hashes htsjdk's SAM text, which ``samtools view``
+    doesn't reproduce byte for byte.)
     """
     sam = await samtools_view(bam=bam)
     h = hashlib.md5()
@@ -264,7 +294,12 @@ async def assert_reads_md5(bam: File, expected: str, *, label: str = "") -> None
         text = bytes(await fh.read()).decode()
     for line in text.splitlines():
         h.update(line.split("\t")[9].encode())
-    actual = h.hexdigest().lstrip("0")
+    return h.hexdigest().lstrip("0")
+
+
+async def assert_reads_md5(bam: File, expected: str, *, label: str = "") -> None:
+    """Assert :func:`reads_md5` of ``bam`` matches ``expected``."""
+    actual = await reads_md5(bam)
     if actual != expected:
         prefix = f"{label}: " if label else ""
         raise AssertionError(

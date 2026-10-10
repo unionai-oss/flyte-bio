@@ -5,6 +5,7 @@ Exposes the subset of the samtools suite the RNA-seq pipeline leans on:
 - :data:`samtools_faidx` — index a FASTA (and emit chromosome sizes).
 - :data:`samtools_sort` — coordinate-sort an alignment.
 - :data:`samtools_view` — filter or convert an alignment.
+- :func:`samtools_merge` — merge sorted BAMs / CRAMs into one.
 - :data:`samtools_index` — build a BAM index (``.bai``).
 - :data:`samtools_stats` — full alignment statistics.
 - :data:`samtools_flagstat` — FLAG-field tallies.
@@ -18,7 +19,7 @@ All tasks share one htslib+samtools biocontainer, so they live in a single
 
 import flyte
 from flyte.extras import shell
-from flyte.io import File
+from flyte.io import Dir, File
 
 # Pinned biocontainer URI (matches the version the RNA-seq pipeline pins).
 SAMTOOLS_IMAGE = "community.wave.seqera.io/library/htslib_samtools:1.23.1--5b6bb4ede7e612e5"
@@ -67,16 +68,57 @@ samtools_sort = shell.create(
 
 # `args` carries the view options, e.g. `-F 0x900 -b` for a BAM of primary
 # alignments. Without an output-format flag the output is SAM without header.
+# Decoding a CRAM's records needs its reference: pass `fasta` and `fai`.
 samtools_view = shell.create(
     name="samtools_view",
     image=SAMTOOLS_IMAGE,
     resources=DEFAULT_RESOURCES,
-    inputs={"bam": File, "args": str},
+    inputs={"bam": File, "fasta": File | None, "fai": File | None, "args": str},
     defaults={"args": ""},
     outputs={"out": File},
     script=r"""
+        BAM=({inputs.bam})
+        shopt -s nullglob; FA=({inputs.fasta}); FAI=({inputs.fai}); shopt -u nullglob
         ARGS={inputs.args}
-        samtools view $ARGS -o {outputs.out} {inputs.bam}
+        REF=()
+        if [ ${#FA[@]} -gt 0 ]; then
+            W=$(mktemp -d)
+            ln -s "${FA[0]}" "$W/genome.fa"
+            if [ ${#FAI[@]} -gt 0 ]; then ln -s "${FAI[0]}" "$W/genome.fa.fai"; fi
+            REF=(--reference "$W/genome.fa")
+        fi
+        samtools view $ARGS "${REF[@]}" -o {outputs.out} "${BAM[0]}"
+    """,
+)
+
+
+# As upstream: the output format follows `--output-fmt` in args, else the
+# first input's; a CRAM needs the reference (linked with its .fai into a
+# writable place, as htslib may index it).
+samtools_merge_cmd = shell.create(
+    name="samtools_merge",
+    image=SAMTOOLS_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"alignments": list[File], "fasta": File | None, "fai": File | None, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        IN=({inputs.alignments})
+        shopt -s nullglob; FA=({inputs.fasta}); FAI=({inputs.fai}); shopt -u nullglob
+        ARGS={inputs.args}
+        case " $ARGS " in
+            *"--output-fmt cram"*) EXT=cram ;;
+            *"--output-fmt sam"*) EXT=sam ;;
+            *"--output-fmt bam"*) EXT=bam ;;
+            *) EXT="${IN[0]##*.}" ;;
+        esac
+        W=$(mktemp -d); REF=()
+        if [ ${#FA[@]} -gt 0 ]; then
+            ln -s "${FA[0]}" "$W/genome.fa"
+            if [ ${#FAI[@]} -gt 0 ]; then ln -s "${FAI[0]}" "$W/genome.fa.fai"; fi
+            REF=(--reference "$W/genome.fa")
+        fi
+        samtools merge $ARGS "${REF[@]}" {outputs.results}/{inputs.prefix}.$EXT "${IN[@]}"
     """,
 )
 
@@ -96,14 +138,25 @@ samtools_index = shell.create(
 )
 
 
+# A CRAM needs its reference: pass `fasta` and its `fai`, linked side by side
+# (samtools would otherwise try to index the read-only staged FASTA).
 samtools_stats = shell.create(
     name="samtools_stats",
     image=SAMTOOLS_IMAGE,
     resources=DEFAULT_RESOURCES,
-    inputs={"bam": File},
+    inputs={"bam": File, "fasta": File | None, "fai": File | None},
     outputs={"stats": File},
     script=r"""
-        samtools stats {inputs.bam} > {outputs.stats}
+        BAM=({inputs.bam})
+        shopt -s nullglob; FA=({inputs.fasta}); FAI=({inputs.fai}); shopt -u nullglob
+        REF=()
+        if [ ${#FA[@]} -gt 0 ]; then
+            W=$(mktemp -d)
+            ln -s "${FA[0]}" "$W/genome.fa"
+            [ ${#FAI[@]} -gt 0 ] && ln -s "${FAI[0]}" "$W/genome.fa.fai"
+            REF=(--reference "$W/genome.fa")
+        fi
+        samtools stats "${REF[@]}" "${BAM[0]}" > {outputs.stats}
     """,
 )
 
@@ -141,8 +194,27 @@ env = flyte.TaskEnvironment.from_task(
     samtools_faidx.as_task(),
     samtools_sort.as_task(),
     samtools_view.as_task(),
+    samtools_merge_cmd.as_task(),
     samtools_index.as_task(),
     samtools_stats.as_task(),
     samtools_flagstat.as_task(),
     samtools_idxstats.as_task(),
 )
+
+
+async def samtools_merge(
+    alignments: list[File],
+    prefix: str,
+    fasta: File | None = None,
+    fai: File | None = None,
+    args: str = "",
+) -> File:
+    """Merge sorted alignments into ``<prefix>.<ext>`` (the inputs' format unless ``--output-fmt`` says).
+
+    Inputs are staged under their own names, so they must be distinct.
+    """
+    results = await samtools_merge_cmd(alignments=alignments, fasta=fasta, fai=fai, prefix=prefix, args=args)
+    merged = [f async for f in results.walk() if f.path.rsplit("/", 1)[-1].startswith(f"{prefix}.")]
+    if len(merged) != 1:
+        raise FileNotFoundError(f"samtools merge wrote {len(merged)} {prefix}.* files, expected one")
+    return merged[0]

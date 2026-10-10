@@ -28,16 +28,22 @@ from tests import test_utils
 from tests.framework import env, gather_tests
 from tests.modules import (
     test_bbmap,
+    test_bcftools,
     test_bedtools,
+    test_bwa,
     test_cat,
     test_catadditionalfasta,
     test_deseq2_qc,
     test_dupradar,
     test_fastqc,
     test_fq,
+    test_gatk4,
     test_gffread,
     test_gtf2bed,
     test_gtffilter,
+    test_htslib,
+    test_intervals,
+    test_mosdepth,
     test_multiqc,
     test_multiqccustombiotype,
     test_picard,
@@ -54,22 +60,29 @@ from tests.modules import (
     test_tximport,
     test_ucsc,
     test_umitools,
+    test_vcftools,
 )
-from tests.pipelines import test_rnaseq
+from tests.pipelines import test_rnaseq, test_variant_calling
 
 ALL_TESTS = [
     *test_utils.tests,
     *test_bbmap.tests,
+    *test_bcftools.tests,
     *test_bedtools.tests,
+    *test_bwa.tests,
     *test_cat.tests,
     *test_catadditionalfasta.tests,
     *test_deseq2_qc.tests,
     *test_dupradar.tests,
     *test_fastqc.tests,
     *test_fq.tests,
+    *test_gatk4.tests,
     *test_gffread.tests,
     *test_gtf2bed.tests,
     *test_gtffilter.tests,
+    *test_htslib.tests,
+    *test_intervals.tests,
+    *test_mosdepth.tests,
     *test_multiqc.tests,
     *test_multiqccustombiotype.tests,
     *test_picard.tests,
@@ -86,7 +99,9 @@ ALL_TESTS = [
     *test_tximport.tests,
     *test_ucsc.tests,
     *test_umitools.tests,
+    *test_vcftools.tests,
     *test_rnaseq.tests,
+    *test_variant_calling.tests,
 ]
 
 

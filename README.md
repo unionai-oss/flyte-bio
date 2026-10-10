@@ -197,22 +197,64 @@ The building blocks (`prepare_genome`, `preprocess_reads`, `align_star`,
 `dedup_umi`, `quantify_salmon_bam`, `merge_quantifications`, …) can also be
 called on their own.
 
+### Running the variant calling pipeline
+
+[`examples/variant_calling.py`](examples/variant_calling.py) runs the germline
+GATK route the same way:
+
+```python
+from flyte_bio.pipelines.variant_calling import variant_calling
+
+
+@env.task
+async def variant_calling_example(
+    samplesheet: File, fasta: File, dbsnp: File, known_indels: File, outdir: str | None = None
+) -> Dir:
+    result = await variant_calling(
+        samplesheet, fasta=fasta, dbsnp=dbsnp, known_indels=[known_indels],
+        outdir=outdir, publish_results=True,
+    )
+    return result.outdir
+```
+
+The samplesheet uses upstream's columns, with one row per lane:
+`patient,sex,status,sample,lane,fastq_1,fastq_2`. `status` is 0 (normal); tumor
+samples aren't supported yet. A sample's lanes are mapped separately and merged
+when duplicates are marked. Reference files that aren't supplied are built: the
+FASTA index, sequence dictionary, BWA index and the tabix indexes of the known
+sites. `intervals` (BED or interval list) restricts calling to target regions;
+`wes=True` marks exome data. Recalibration and the CNN filter need `dbsnp`
+and/or `known_indels`, unless they're turned off with `skip_baserecalibrator`
+or `skip_haplotypecaller_filter`.
+
+Published results follow upstream's layout:
+- `preprocessing/{markduplicates,recal_table,recalibrated}/<sample>/`;
+- `variant_calling/haplotypecaller/<sample>/`;
+- `reports/{fastqc,markduplicates,samtools,mosdepth,bcftools,vcftools}/`;
+- `multiqc/`.
+
 ## Currently available
 
 ### Modules (`flyte_bio.modules`)
 
 - `bbmap` — `bbsplit_index`, `bbsplit`
+- `bcftools` — `bcftools_stats`
 - `bedtools` — `bedtools_intersect`, `bedtools_sort`, `bedtools_merge`, `bedtools_genomecov`
+- `bwa` — `bwa_index`, `bwa_mem`
 - `cat` — `cat_fastq`
 - `catadditionalfasta` — `cat_additional_fasta`
 - `deseq2_qc` — `deseq2_qc`
 - `dupradar` — `dupradar`
 - `fastqc` — `fastqc`
 - `fq` — `fq_subsample`, `fq_lint`
+- `gatk4` — `gatk4_createsequencedictionary`, `gatk4_intervallisttobed`, `gatk4_markduplicates`, `gatk4_baserecalibrator`, `gatk4_gatherbqsrreports`, `gatk4_applybqsr`, `gatk4_haplotypecaller`, `gatk4_mergevcfs`, `gatk4_cnnscorevariants`, `gatk4_filtervarianttranches`
 - `gffread` — `gffread_gff_to_gtf`, `gffread_transcripts_fasta`
 - `gtf2bed` — `gtf2bed`
 - `gtffilter` — `gtf_filter`
 - `gunzip` — `gunzip`
+- `htslib` — `htslib_bgziptabix`
+- `intervals` — `build_intervals`, `create_intervals_bed`
+- `mosdepth` — `mosdepth`
 - `multiqc` — `multiqc`
 - `multiqccustombiotype` — `multiqc_custom_biotype`
 - `picard` — `picard_markduplicates`
@@ -220,7 +262,7 @@ called on their own.
 - `rseqc` — `bam_stat`, `infer_experiment`, `inner_distance`, `junction_annotation`,
   `junction_saturation`, `read_distribution`, `read_duplication`, `rseqc`
 - `salmon` — `salmon_index`, `salmon_quant_reads`, `salmon_quant_bam`
-- `samtools` — `samtools_faidx`, `samtools_sort`, `samtools_view`, `samtools_index`, `samtools_stats`, `samtools_flagstat`, `samtools_idxstats`
+- `samtools` — `samtools_faidx`, `samtools_sort`, `samtools_view`, `samtools_merge`, `samtools_index`, `samtools_stats`, `samtools_flagstat`, `samtools_idxstats`
 - `star` — `star_genome_generate`, `star_align`
 - `stringtie` — `stringtie`
 - `subread` — `featurecounts`
@@ -231,6 +273,7 @@ called on their own.
 - `ucsc` — `bedclip`, `bedgraphtobigwig`
 - `umitools` — `umitools_extract`, `umitools_dedup`, `umitools_prepareforrsem`
 - `untar` — `untar`
+- `vcftools` — `vcftools`
 
 ### Pipelines (`flyte_bio.pipelines`)
 
@@ -245,6 +288,17 @@ called on their own.
   ported too. Nextflow-specific report sections (run parameters, software
   versions, methods text) and the other off-by-default options (rRNA removal,
   UMICollapse, Preseq, Kraken, other aligners) are not ported.
+- `variant_calling` — germline short-variant calling with GATK HaplotypeCaller
+  (the germline HaplotypeCaller route of the upstream variant-calling pipeline,
+  3.10.0): `prepare_reference`, `map_reads`, `mark_duplicates`, `recalibrate`,
+  `call_variants`, `vcf_qc`, `multiqc_report`, `variant_calling`. FastQC,
+  BWA-MEM per lane with upstream's read groups, GATK MarkDuplicates to CRAM,
+  base-quality recalibration and HaplotypeCaller scattered over interval
+  chunks, the CNN score + tranche filter, samtools stats / mosdepth /
+  bcftools / vcftools QC and MultiQC. Not ported: fastp trimming and FASTQ
+  splitting, UMIs, other aligners, joint germline calling, the other callers
+  (somatic, structural, copy number), annotation and Spark / Sentieon /
+  Parabricks.
 
 More tools and pipelines are added as needed. Contributions following the same
 pattern (one file per tool family, sharing one biocontainer image, exposing a
