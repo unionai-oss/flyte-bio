@@ -13,6 +13,7 @@ pipeline (4.2.0):
   intronic transcriptome, unless one is given.
 - :func:`quantify` — simpleaf quant per sample with the protocol's
   chemistry and barcode whitelist.
+- :func:`cell_qc` — QCatch cell calling and QC report on a sample's quantification.
 
 These are plain async functions, not tasks: they run inside the caller's
 task and fan out to the module tasks, so the caller's
@@ -30,6 +31,7 @@ from flyte.io import Dir, File
 from flyte_bio.modules.fastqc import fastqc_reads
 from flyte_bio.modules.gtfgenefilter import gtf_gene_filter
 from flyte_bio.modules.gunzip import gunzip
+from flyte_bio.modules.qcatch import QcatchResult, qcatch
 from flyte_bio.modules.simpleaf import SimpleafIndex, SimpleafQuant, simpleaf_index, simpleaf_quant
 from flyte_bio.samplesheet import Row
 
@@ -181,4 +183,25 @@ async def quantify(
         resolution=resolution,
         cell_filter="unfiltered-pl",
         permit_list=whitelist,
+    )
+
+
+async def cell_qc(
+    sample: Sample,
+    quant: SimpleafQuant,
+    proto: Protocol,
+    remove_doublets: bool = False,
+    n_partitions: int | None = None,
+) -> QcatchResult:
+    """QCatch over a sample's simpleaf quantification, with the protocol's QCatch chemistry, as upstream.
+
+    QCatch's cell calling needs a realistic number of barcodes: on a toy
+    dataset (such as upstream's test profile, which skips QCatch) it fails.
+    """
+    return await qcatch(
+        quant.quant,
+        prefix=sample.id,
+        chemistry=proto.qcatch,
+        remove_doublets=remove_doublets,
+        n_partitions=n_partitions,
     )

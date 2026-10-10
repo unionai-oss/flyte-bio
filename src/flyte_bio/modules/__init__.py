@@ -26,6 +26,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.multiqc` — aggregate QC report.
 - :mod:`flyte_bio.modules.multiqccustombiotype` — biotype counts for MultiQC.
 - :mod:`flyte_bio.modules.picard` — Picard MarkDuplicates.
+- :mod:`flyte_bio.modules.qcatch` — cell-level QC of a simpleaf quantification.
 - :mod:`flyte_bio.modules.qualimap` — RNA-seq alignment QC.
 - :mod:`flyte_bio.modules.rseqc` — RSeQC BAM QC (7 scripts).
 - :mod:`flyte_bio.modules.salmon` — transcript quantification (index, quant).
@@ -77,6 +78,7 @@ from .mosdepth import env as mosdepth_env
 from .multiqc import env as multiqc_env
 from .multiqccustombiotype import env as multiqccustombiotype_env
 from .picard import env as picard_env
+from .qcatch import env as qcatch_env
 from .qualimap import env as qualimap_env
 from .rseqc import env as rseqc_env
 from .salmon import env as salmon_env
@@ -120,6 +122,7 @@ env = flyte.TaskEnvironment(
         multiqc_env,
         multiqccustombiotype_env,
         picard_env,
+        qcatch_env,
         qualimap_env,
         rseqc_env,
         salmon_env,
@@ -164,6 +167,7 @@ __all__ = [
     "multiqc_env",
     "multiqccustombiotype_env",
     "picard_env",
+    "qcatch_env",
     "qualimap_env",
     "rseqc_env",
     "salmon_env",
