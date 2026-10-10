@@ -11,8 +11,8 @@ report_section_order:
   "nf-core-sarek-summary":
     order: -1002
 
-# Upstream: true. Off until flyteorg/flyte#8149 or flyteorg/stow#32 is deployed; see the
-# README's "Workarounds pending upstream fixes".
+# Upstream: true. Off until flyteorg/flyte#8149 or flyteorg/stow#32 is deployed; see
+# docs/known-issues.md.
 export_plots: false
 export_plots_timeout: 660
 
