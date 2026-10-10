@@ -1,31 +1,20 @@
 # flyte-bio
 
-Curated bioinformatics building blocks for Flyte.
+Bioinformatics tools and pipelines for [Flyte](https://www.union.ai/docs/v2/flyte/).
 
 > [!WARNING]
 > This package is still experimental and is not ready for general use or
 > publication yet. The APIs, module layout, and packaging details may still
 > change.
 
-A collection of typed Flyte tasks for popular bioinformatics tools — bedtools,
-samtools, bcftools, GATK, Picard, BWA, STAR, salmon, kallisto, and friends —
-each shipped via its official biocontainer image, plus higher-level pipelines
-composed from those tasks. Built on `flyte.extras.shell`.
+flyte-bio has two layers:
 
-The package is split into two sub-packages:
-
-- `flyte_bio.modules` — one file per tool family. Each exposes callable shell
-  tasks (`bedtools_intersect`, `samtools_view`, ...) and a module-level `env`
-  (a `flyte.TaskEnvironment`) that pipelines add to their `depends_on`. Adding
-  the env causes the deploy pipeline to register the task and pull/build the
-  underlying biocontainer image.
-- `flyte_bio.pipelines` — higher-level workflows (`rnaseq`, variant calling,
-  ...) that compose module tasks. Each pipeline exposes its own
-  `TaskEnvironment`.
-
-The package root re-exports `flyte_bio.env`, an aggregate environment that
-depends on every module env. Pipelines that want broad access to the bio
-module suite can depend on this one env.
+- **Modules** (`flyte_bio.modules`) wrap individual tools as Flyte tasks:
+  samtools, BWA, GATK, STAR, salmon, MultiQC and others. Each tool runs in its
+  official biocontainer, so your own image doesn't need the tools installed.
+- **Pipelines** (`flyte_bio.pipelines`) compose those tasks into complete
+  workflows, ported from established Nextflow pipelines: RNA-seq
+  quantification and germline variant calling.
 
 ## Install
 
@@ -35,44 +24,42 @@ flyte-bio isn't on PyPI yet. Install it from GitHub:
 uv add "flyte-bio @ https://github.com/unionai-oss/flyte-bio/archive/refs/heads/main.zip"
 ```
 
-or, to work on it, clone and install with [uv](https://docs.astral.sh/uv/):
-
-```bash
-git clone https://github.com/unionai-oss/flyte-bio
-cd flyte-bio
-uv sync
-```
-
-It needs `flyte>=2.10.0`, whose shell tasks stage file inputs under their
-original names.
+It needs `flyte>=2.10.0`.
 
 ## Usage
 
-Every tool runs as a task in its own biocontainer. Your code runs in your own
-task, which awaits the flyte-bio tasks, so two things need setting up:
+Your code runs in your own Flyte task, which calls the flyte-bio tasks. That
+needs two things:
 
-- **Your task's image needs flyte-bio installed**, because your task imports
-  it (the tool images don't: they never import flyte-bio).
-- **Your `TaskEnvironment` must `depends_on` the flyte-bio environments**, so
-  that deploying or running yours also registers every tool task and its
-  image. `flyte_bio.env` depends on all of them.
-
-### Calling a module
+- **flyte-bio installed in your task's image**, because your task imports it.
+  The tool containers don't need it.
+- **A `depends_on` on the flyte-bio environments**, so running or deploying
+  your task also registers every tool task and its container.
+  `flyte_bio.env` covers all of them.
 
 ```python
 import flyte
-from flyte.io import File
 
 from flyte_bio import env as bio_env
-from flyte_bio.modules.bedtools import bedtools_intersect
 
 FLYTE_BIO = "flyte-bio @ https://github.com/unionai-oss/flyte-bio/archive/refs/heads/main.zip"
 
 env = flyte.TaskEnvironment(
-    name="genomics_pipeline",
+    name="my_analysis",
     image=flyte.Image.from_debian_base().with_pip_packages(FLYTE_BIO),
+    resources=flyte.Resources(cpu=2, memory="4Gi"),
     depends_on=[bio_env],
 )
+```
+
+### A module
+
+Module functions are ordinary async calls inside your task:
+
+```python
+from flyte.io import File
+
+from flyte_bio.modules.bedtools import bedtools_intersect
 
 
 @env.task
@@ -80,434 +67,38 @@ async def overlaps(annotation: File, peaks: list[File]) -> File:
     return await bedtools_intersect(a=annotation, b=peaks, wa=True, f=0.5)
 ```
 
-### Running the rnaseq pipeline
+### A pipeline
 
-[`examples/rnaseq.py`](examples/rnaseq.py) is a complete, runnable example.
-The core of it:
+A pipeline takes a samplesheet CSV, like the Nextflow pipeline's `--input`,
+and can publish its results in that pipeline's `--outdir` layout:
 
 ```python
-import flyte
 from flyte.io import Dir, File
 
-from flyte_bio import env as bio_env
 from flyte_bio.pipelines.rnaseq import rnaseq
 
-FLYTE_BIO = "flyte-bio @ https://github.com/unionai-oss/flyte-bio/archive/refs/heads/main.zip"
-
-env = flyte.TaskEnvironment(
-    name="rnaseq_example",
-    image=flyte.Image.from_debian_base().with_pip_packages(FLYTE_BIO),
-    resources=flyte.Resources(cpu=2, memory="4Gi"),
-    depends_on=[bio_env],
-)
-
 
 @env.task
-async def rnaseq_example(
-    samplesheet: File,
-    fasta: File,
-    gtf: File,
-    transcript_fasta: File | None = None,
-    outdir: str | None = None,
-) -> Dir:
-    result = await rnaseq(
-        samplesheet, fasta=fasta, gtf=gtf, transcript_fasta=transcript_fasta,
-        outdir=outdir, publish_results=True,
-    )
-    return result.outdir  # the results tree, in upstream's --outdir layout
-```
-
-Like upstream's `--input`, the pipeline takes a samplesheet CSV in upstream's
-format, with one row per sequencing run. It needs the columns `sample`,
-`fastq_1`, `fastq_2` and `strandedness`, and the run fails up front if one is
-missing. Rows that share a `sample` are merged, `fastq_2` is empty for
-single-end reads, and `strandedness` is `auto`, `forward`, `reverse` or
-`unstranded`:
-
-```csv
-sample,fastq_1,fastq_2,strandedness
-CONTROL_REP1,s3://my-bucket/reads/ctrl1_R1.fastq.gz,s3://my-bucket/reads/ctrl1_R2.fastq.gz,auto
-CONTROL_REP1,s3://my-bucket/reads/ctrl1b_R1.fastq.gz,s3://my-bucket/reads/ctrl1b_R2.fastq.gz,auto
-TREATED_REP1,s3://my-bucket/reads/treat1_R1.fastq.gz,,reverse
-```
-
-FASTQ paths must be URIs the cluster can read (`s3://`, `gs://`, `https://`).
-They are read where they are, not copied. The samplesheet itself is read by
-your task, so give it as an `s3://`/`gs://` URI or a local file (`flyte run`
-uploads it); reading `https://` files inside a task isn't reliable.
-
-To try it on rnaseq's test data (5 small yeast samples):
-
-```bash
-DATA=https://raw.githubusercontent.com/nf-core/test-datasets/626c8fab639062eade4b10747e919341cbf9b41a
-curl -sO $DATA/samplesheet/v3.10/samplesheet_test.csv
-flyte run examples/rnaseq.py rnaseq_example \
-    --samplesheet samplesheet_test.csv \
-    --fasta $DATA/reference/genome.fasta \
-    --gtf $DATA/reference/genes_with_empty_tid.gtf.gz \
-    --transcript_fasta $DATA/reference/transcriptome.fasta
-    # add --outdir s3://my-bucket/rnaseq to publish the results there
-```
-
-`rnaseq()` takes upstream's options as keyword arguments. Some examples:
-- `skip_qualimap=True`;
-- `skip_bbsplit=False` with `bbsplit_fasta_list={"human": File(...)}`;
-- `with_umi=True` with `umitools_bc_pattern="NNNNNN"`;
-- `min_mapped_reads=10`.
-
-#### Outputs
-
-Every output is kept in Flyte's storage, and `rnaseq()` returns an
-`RnaseqResult` that holds all of them (below). Like upstream's `--outdir`, the
-pipeline can also lay the results out in upstream's folder structure:
-- `fastqc/`, `trimgalore/` and `fq_lint/` for read QC;
-- `star_salmon/` for the BAMs, plus `log/`, `samtools_stats/`, `qualimap/`,
-  `rseqc/`, `stringtie/`, `bigwig/`, per-sample salmon folders and the
-  `salmon.merged.*` matrices;
-- `multiqc/star_salmon/` for the report.
-
-There are two ways to get that tree:
-- `outdir="s3://my-bucket/rnaseq"` publishes to your bucket (the cluster's
-  role needs write access to it);
-- `publish_results=True` publishes to Flyte's own storage.
-
-Either way, `result.outdir` is the tree as a `Dir`, so a downstream task can
-take it as an input. Copies inside one object store are server-side. Like
-upstream by default, intermediates (trimmed reads, the prepared genome and
-indices) aren't published.
-
-The same mechanism is a generic utility for any pipeline:
-`flyte_bio.publish.publish(layout, outdir=None)` takes a mapping of relative
-path to `File`/`Dir` and returns the published `Dir`.
-`flyte_bio.pipelines.rnaseq.rnaseq_layout(result)` is rnaseq's mapping.
-
-It returns an `RnaseqResult` holding everything the run produced:
-- `result.genome`: the prepared references and STAR index;
-- `result.samples`: per sample, the reads and QC, the alignment, salmon,
-  duplicates, Qualimap, RSeQC, StringTie and bigWigs;
-- `result.salmon`: the merged count/TPM matrices and SummarizedExperiment RDS
-  files;
-- `result.deseq2_qc` and `result.multiqc`.
-
-Every pipeline reads its samplesheet with `flyte_bio.samplesheet.read_samplesheet`,
-which returns the CSV's rows as dicts. Each pipeline then indexes the columns
-it defines; a missing column raises an error naming it.
-
-The building blocks (`prepare_genome`, `preprocess_reads`, `align_star`,
-`dedup_umi`, `quantify_salmon_bam`, `merge_quantifications`, …) can also be
-called on their own.
-
-### Running the variant calling pipeline
-
-[`examples/variant_calling.py`](examples/variant_calling.py) runs the germline
-GATK route the same way:
-
-```python
-from flyte_bio.pipelines.variant_calling import variant_calling
-
-
-@env.task
-async def variant_calling_example(
-    samplesheet: File, fasta: File, dbsnp: File, known_indels: File, outdir: str | None = None
-) -> Dir:
-    result = await variant_calling(
-        samplesheet, fasta=fasta, dbsnp=dbsnp, known_indels=[known_indels],
-        outdir=outdir, publish_results=True,
-    )
+async def quantify(samplesheet: File, fasta: File, gtf: File, outdir: str | None = None) -> Dir:
+    result = await rnaseq(samplesheet, fasta=fasta, gtf=gtf, outdir=outdir, publish_results=True)
     return result.outdir
 ```
 
-The samplesheet uses upstream's columns, with one row per lane:
-`patient,sex,status,sample,lane,fastq_1,fastq_2`. `status` is 0 (normal); tumor
-samples aren't supported yet. A sample's lanes are mapped separately and merged
-when duplicates are marked. Reference files that aren't supplied are built: the
-FASTA index, sequence dictionary, BWA index and the tabix indexes of the known
-sites. `intervals` (BED or interval list) restricts calling to target regions;
-`wes=True` marks exome data. Recalibration and the CNN filter need `dbsnp`
-and/or `known_indels`, unless they're turned off with `skip_baserecalibrator`
-or `skip_haplotypecaller_filter`.
-
-Published results follow upstream's layout:
-- `preprocessing/{markduplicates,recal_table,recalibrated}/<sample>/`;
-- `variant_calling/haplotypecaller/<sample>/`;
-- `reports/{fastqc,markduplicates,samtools,mosdepth,bcftools,vcftools}/`;
-- `multiqc/`.
-
-## Currently available
-
-### Modules (`flyte_bio.modules`)
-
-- `bbmap` — `bbsplit_index`, `bbsplit`
-- `bcftools` — `bcftools_stats`
-- `bedtools` — `bedtools_intersect`, `bedtools_sort`, `bedtools_merge`, `bedtools_genomecov`
-- `bwa` — `bwa_index`, `bwa_mem`
-- `cat` — `cat_fastq`
-- `catadditionalfasta` — `cat_additional_fasta`
-- `deseq2_qc` — `deseq2_qc`
-- `dupradar` — `dupradar`
-- `fastqc` — `fastqc`
-- `fq` — `fq_subsample`, `fq_lint`
-- `gatk4` — `gatk4_createsequencedictionary`, `gatk4_intervallisttobed`, `gatk4_markduplicates`, `gatk4_baserecalibrator`, `gatk4_gatherbqsrreports`, `gatk4_applybqsr`, `gatk4_haplotypecaller`, `gatk4_mergevcfs`, `gatk4_cnnscorevariants`, `gatk4_filtervarianttranches`
-- `gffread` — `gffread_gff_to_gtf`, `gffread_transcripts_fasta`
-- `gtf2bed` — `gtf2bed`
-- `gtffilter` — `gtf_filter`
-- `gunzip` — `gunzip`
-- `htslib` — `htslib_bgziptabix`
-- `intervals` — `build_intervals`, `create_intervals_bed`
-- `mosdepth` — `mosdepth`
-- `multiqc` — `multiqc`
-- `multiqccustombiotype` — `multiqc_custom_biotype`
-- `picard` — `picard_markduplicates`
-- `qualimap` — `qualimap_rnaseq`
-- `rseqc` — `bam_stat`, `infer_experiment`, `inner_distance`, `junction_annotation`,
-  `junction_saturation`, `read_distribution`, `read_duplication`, `rseqc`
-- `salmon` — `salmon_index`, `salmon_quant_reads`, `salmon_quant_bam`
-- `samtools` — `samtools_faidx`, `samtools_sort`, `samtools_view`, `samtools_merge`, `samtools_index`, `samtools_stats`, `samtools_flagstat`, `samtools_idxstats`
-- `star` — `star_genome_generate`, `star_align`
-- `stringtie` — `stringtie`
-- `subread` — `featurecounts`
-- `summarizedexperiment` — `summarized_experiment`
-- `trimgalore` — `trimgalore`
-- `tx2gene` — `tx2gene`
-- `tximport` — `tximport`, `collect_quants`
-- `ucsc` — `bedclip`, `bedgraphtobigwig`
-- `umitools` — `umitools_extract`, `umitools_dedup`, `umitools_prepareforrsem`
-- `untar` — `untar`
-- `vcftools` — `vcftools`
-
-### Pipelines (`flyte_bio.pipelines`)
-
-- `rnaseq` — STAR alignment + salmon quantification (the `star_salmon` path
-  of rnaseq 3.26.0): `prepare_genome`, `align_star`, `quantify_salmon_bam`,
-  `rnaseq`, with read linting, QC/trimming, BBSplit, strandedness inference,
-  duplicate marking, StringTie, bigWig coverage, dupRadar, Qualimap, RSeQC, the
-  featureCounts biotype QC, the tximport/SummarizedExperiment merge, deseq2_qc
-  and the MultiQC report — upstream's full default path. UMI handling
-  (`with_umi`: UMI-tools extraction before trimming and deduplication of the
-  genome and transcriptome BAMs in place of MarkDuplicates, `dedup_umi`) is
-  ported too. Nextflow-specific report sections (run parameters, software
-  versions, methods text) and the other off-by-default options (rRNA removal,
-  UMICollapse, Preseq, Kraken, other aligners) are not ported.
-- `variant_calling` — germline short-variant calling with GATK HaplotypeCaller
-  (the germline HaplotypeCaller route of the upstream variant-calling pipeline,
-  3.10.0): `prepare_reference`, `map_reads`, `mark_duplicates`, `recalibrate`,
-  `call_variants`, `vcf_qc`, `multiqc_report`, `variant_calling`. FastQC,
-  BWA-MEM per lane with upstream's read groups, GATK MarkDuplicates to CRAM,
-  base-quality recalibration and HaplotypeCaller scattered over interval
-  chunks, the CNN score + tranche filter, samtools stats / mosdepth /
-  bcftools / vcftools QC and MultiQC. Not ported: fastp trimming and FASTQ
-  splitting, UMIs, other aligners, joint germline calling, the other callers
-  (somatic, structural, copy number), annotation and Spark / Sentieon /
-  Parabricks.
-
-More tools and pipelines are added as needed. Contributions following the same
-pattern (one file per tool family, sharing one biocontainer image, exposing a
-module-level `env`) are welcome once the plugin is ready to stabilize. The
-top-level `flyte_bio.env` is intended to grow alongside the modules.
-
-## Workarounds pending upstream fixes
-
-### MultiQC `export_plots` is off (flyteorg/flyte#8149, flyteorg/stow#32)
-
-The vendored `scripts/multiqc_config.yml` sets `export_plots: false` (upstream:
-`true`), so the MultiQC output Dir holds the HTML report and data tables but
-not the static PNG/SVG/PDF plot exports. With the exports, the output is a few
-hundred files, and the copilot uploader sidecar runs out of memory uploading
-them: since stow v0.5.0 (flyteorg/flyte#8115) every file is read into memory
-while it uploads, and copilot uploads all of a Dir's files at once.
-
-Revert to `true` once either fix is **merged and deployed** (for Union
-clusters: the `flyte2` submodule pin in the `cloud` repo includes it and the
-cluster has been redeployed):
-
-- [flyteorg/flyte#8149](https://github.com/flyteorg/flyte/pull/8149) — copilot
-  uploads at most 8 files at once;
-- [flyteorg/stow#32](https://github.com/flyteorg/stow/pull/32) — stow streams
-  file bodies instead of buffering them (also needs a stow release and a
-  `go.mod` bump in flyte).
-
-## Porting an nf-core module
-
-Most wrappers in this package are direct ports of [nf-core/modules](https://github.com/nf-core/modules):
-same biocontainer, same flag set, same test fixtures. Following the same source
-keeps semantics consistent and gives us a free regression oracle — every
-nf-core module ships a snapshot file with expected output MD5s that we can
-assert against.
-
-The pattern, end to end:
-
-### 1. Pull the upstream module
-
-For a tool like `samtools sort` (`modules/nf-core/samtools/sort/`):
-
 ```bash
-gh api 'repos/nf-core/modules/contents/modules/nf-core/samtools/sort/main.nf' \
-  --jq '.content' | base64 -d
+flyte run my_analysis.py quantify --samplesheet samples.csv --fasta genome.fa --gtf genes.gtf
 ```
 
-The three files worth reading:
+[`examples/`](examples/) has a complete, runnable script for each pipeline.
 
-- `main.nf` — gives the **pinned biocontainer URI** (the `quay.io/biocontainers/...`
-  line) and the **invocation template** showing which flags are exposed.
-- `tests/main.nf.test` — names the upstream test cases and which fixtures
-  (from [nf-core/test-datasets@modules](https://github.com/nf-core/test-datasets/tree/modules))
-  they consume.
-- `tests/main.nf.test.snap` — holds the expected output MD5 per test case
-  (look for `"<filename>:md5,<hex>"`). These are our assertion targets.
+## Documentation
 
-### 2. Write the shell wrapper
-
-Add a new module under `src/flyte_bio/modules/`, following `bedtools.py` as
-the template. Each tool family lives in one file and shares one biocontainer
-image:
-
-```python
-from flyte.extras import shell
-from flyte.io import File
-import flyte
-
-SAMTOOLS_IMAGE = "quay.io/biocontainers/samtools:1.21--h50ea8bc_0"  # from main.nf
-DEFAULT_RESOURCES = flyte.Resources(cpu=1, memory="6Gi")  # nf-core process_single
-
-samtools_sort = shell.create(
-    name="samtools_sort",
-    image=SAMTOOLS_IMAGE,
-    resources=DEFAULT_RESOURCES,
-    inputs={
-        "input": File,
-        "n": bool,         # sort by read name
-        "threads": int | None,
-        ...
-    },
-    defaults={"n": False, ...},  # every non-optional bool needs a default
-    outputs={"bam": File},
-    script=r"""
-        samtools sort {flags.n} {flags.threads} \
-            -o {outputs.bam} {inputs.input}
-    """,
-)
-
-env = flyte.TaskEnvironment.from_task("samtools", samtools_sort.as_task(), ...)
-```
-
-A few rules worth internalizing:
-
-- **Image URI** comes verbatim from the upstream `main.nf` container line
-  (the `quay.io/biocontainers/...` branch, not the singularity URL).
-- **Default resources** mirror nf-core's `process_single` label (1 cpu, 6 GiB)
-  unless the upstream module uses a different one (`process_medium`,
-  `process_high`, ...). Override per-call when a workload needs more.
-- **Defaults** must cover every bool input. Optional scalars (`T | None`)
-  are implicitly `None` and don't need an entry. Without defaults, callers
-  have to pass every flag explicitly.
-- **Flag names** default to `-{input_name}`. Use `flag_aliases={"py_name": "-cli-name"}`
-  when the CLI flag would collide with a Python keyword or an output name.
-- **Bundle** every task in a module-level `env` via `flyte.TaskEnvironment.from_task`,
-  and add that env to the aggregate `flyte_bio.modules.env` in
-  `src/flyte_bio/modules/__init__.py`.
-
-### 3. Write an end-to-end test
-
-Tests in this repo are themselves Flyte tasks. Locally they run via the
-local executor; remotely (`flyte run`) each test lands in its own pod, so
-hundreds of tests scale horizontally across the cluster instead of
-contending for one machine's docker daemon. There is no pytest — the
-"runner" is just an `asyncio.gather` inside a top-level task.
-
-The helpers in [`tests/framework.py`](tests/framework.py) cover everything
-you'll need:
-
-- `env` — the `TaskEnvironment` to decorate tests with. Already depends on
-  `flyte_bio.modules.env`, so every wrapped tool is in scope.
-- `fixture(rel_path)` — cached Flyte task that fetches a file from
-  `nf-core/test-datasets@modules`. The path matches what an upstream
-  `main.nf.test` references via `params.modules_testdata_base_path` —
-  paste it straight in.
-- `assert_md5(file, expected, label=...)` — streams the file and raises
-  `AssertionError` on md5 mismatch.
-- `gather_tests([...])` — runs tests in parallel, prints a summary,
-  raises if any failed. Use it inside a driver task.
-
-A new test is one async function:
-
-```python
-from flyte_bio.modules.samtools import samtools_sort
-from tests.framework import env, fixture, assert_md5
-
-@env.task
-async def test_samtools_sort() -> None:
-    # nf-core: samtools/sort "test_samtools_sort"
-    bam = await fixture("genomics/sarscov2/illumina/bam/test.paired_end.bam")
-    out = await samtools_sort(input=bam)
-    await assert_md5(out, expected="<md5 from main.nf.test.snap>", label="samtools sort")
-```
-
-Then export it from the module's `tests` list and (if it's in a new file)
-import that list in [`tests/run_all.py`](tests/run_all.py):
-
-```python
-# tests/modules/test_samtools.py
-tests = [test_samtools_sort, ...]
-
-# tests/run_all.py
-from tests.modules import test_samtools
-ALL_TESTS = [*test_bedtools.tests, *test_samtools.tests, ...]
-```
-
-### 4. Run it
-
-Tests run against an actual Flyte cluster via the native `flyte run` CLI.
-There's no custom entry point or `--mode` flag — the target cluster,
-project, domain, and auth all come from your Flyte config (`--config`
-flag, `FLYTE_CONFIG`, or `~/.flyte/config.yaml`). Run from the project
-root so the `tests` package is importable.
-
-**Devbox** (the fast inner loop). First, in another terminal:
-
-```bash
-flyte start devbox
-```
-
-That spins up a local Union cluster at `localhost:30080` and points your
-default config at it. Then:
-
-```bash
-flyte run tests/run_all.py run_all
-```
-
-Each test gets its own pod on the devbox, the `fixture` task is
-cached so each dataset downloads once, and the wrapped tool tasks reuse
-their biocontainer images across actions. Because `flyte run` reads the
-config (a `localhost` endpoint) before building the image, the test image
-auto-targets the devbox's local registry — no extra flags.
-
-**Remote** (full CI run, scale horizontally) — point at another config:
-
-```bash
-flyte --config ~/.flyte/prod.yaml run tests/run_all.py run_all
-```
-
-Same test code, same Flyte caching semantics — just a different config.
-The default push registry for a non-devbox cluster is `ghcr.io/flyteorg`
-(which only Flyte CI can push to); if your cluster's registry differs,
-set `FLYTE_IMAGE_REGISTRY` to it. To run without any cluster, use
-`flyte run --local tests/run_all.py run_all`.
-
-To iterate on a subset, write a small sibling driver that imports only
-the tests you care about:
-
-```python
-# tests/modules/run_bedtools.py
-from tests.framework import env, gather_tests
-from tests.modules.test_bedtools import tests
-
-@env.task
-async def run() -> str:
-    return await gather_tests(tests)
-```
-
-Invoke it the same way: `flyte run tests/modules/run_bedtools.py run`.
-
-If an md5 assert fails, the summary lists which test failed and the
-expected-vs-actual hex. The wrapped task's stdout/stderr show up in the
-Flyte UI for that action's pod.
+- **[Modules](docs/modules.md):** how modules work, and every available tool.
+- **[Pipelines](docs/pipelines/README.md):** inputs, outputs and the shared
+  utilities, with a page per pipeline:
+  - [rnaseq](docs/pipelines/rnaseq.md): STAR + salmon RNA-seq quantification.
+  - [variant_calling](docs/pipelines/variant_calling.md): germline variant
+    calling with BWA-MEM and GATK HaplotypeCaller.
+- **[Contributing](docs/contributing.md):** porting a tool, and writing and
+  running tests.
+- **[Known issues](docs/known-issues.md):** temporary workarounds for
+  upstream bugs.
