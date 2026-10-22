@@ -82,6 +82,7 @@ ship_in_bundle(
     "concat_h5ad.py",
     "anndatar_convert.r",
     "anndata_barcodes.py",
+    "multiqc_config_scrnaseq.yml",
 )
 
 

@@ -18,6 +18,8 @@ pipeline (4.2.0):
   combined, and every h5ad as Seurat and SingleCellExperiment RDS files.
 - :func:`remove_background` — CellBender cell calling (CPU or GPU) on the
   raw matrices, which are restricted to its cells and converted likewise.
+- :func:`multiqc_report` — one MultiQC report over the FastQC reports and
+  simpleaf quantifications.
 
 These are plain async functions, not tasks: they run inside the caller's
 task and fan out to the module tasks, so the caller's
@@ -27,6 +29,7 @@ task and fan out to the module tasks, so the caller's
 import asyncio
 import tempfile
 import urllib.request
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,10 +41,12 @@ from flyte_bio.modules.cellbender import CellbenderResult, cellbender_removeback
 from flyte_bio.modules.fastqc import fastqc_reads
 from flyte_bio.modules.gtfgenefilter import gtf_gene_filter
 from flyte_bio.modules.gunzip import gunzip
+from flyte_bio.modules.multiqc import MultiQCResult, multiqc
 from flyte_bio.modules.qcatch import QcatchResult, qcatch
 from flyte_bio.modules.scanpy import concat_h5ad, mtx_to_h5ad_simpleaf
 from flyte_bio.modules.simpleaf import SimpleafIndex, SimpleafQuant, simpleaf_index, simpleaf_quant
 from flyte_bio.samplesheet import Row
+from flyte_bio.scripts import path as asset
 
 
 @dataclass
@@ -254,6 +259,40 @@ async def matrices_from_h5ads(h5ads: dict[str, File], samplesheet: File, input_t
         samples={s: Matrix(h5ad=h5ads[s], rds=r) for s, r in zip(ids, all_rds)},
         combined=Matrix(h5ad=combined, rds=all_rds[-1]),
     )
+
+
+async def multiqc_report(fastqc: dict[str, Dir], quants: dict[str, SimpleafQuant]) -> MultiQCResult:
+    """One MultiQC report over the samples' FastQC reports and simpleaf quantifications, with upstream's config.
+
+    As upstream stages them: every FastQC zip and HTML, and each sample's
+    ``af_quant`` in a directory of its own. Of ``af_quant``, only its
+    top-level JSON summaries are passed, not the count matrices.
+    """
+    root = Path(tempfile.mkdtemp(prefix="multiqc_"))
+    downloads = []
+
+    async def put_dir(d: Dir, rel: str, keep: Callable[[str], bool]) -> None:
+        base = d.path.rstrip("/")
+        async for f in d.walk():
+            sub = f.path[len(base) :].lstrip("/")
+            if keep(sub):
+                (root / rel / sub).parent.mkdir(parents=True, exist_ok=True)
+                downloads.append(f.download(str(root / rel / sub)))
+
+    def fastqc_report(sub: str) -> bool:
+        return sub.endswith(("_fastqc.zip", "_fastqc.html"))
+
+    def summary_json(sub: str) -> bool:
+        return "/" not in sub and sub.endswith(".json")
+
+    for sample_id, reports in fastqc.items():
+        await put_dir(reports, f"fastqc/{sample_id}", fastqc_report)
+    for sample_id, quant in quants.items():
+        await put_dir(quant.quant, f"simpleaf/{sample_id}/af_quant", summary_json)
+    await asyncio.gather(*downloads)
+    data = await Dir.from_local(str(root))
+    config = await File.from_local(str(asset("multiqc_config_scrnaseq.yml")))
+    return await multiqc(data, configs=[config], prefix="multiqc_report")
 
 
 @dataclass

@@ -16,6 +16,7 @@ from flyte_bio.modules.simpleaf import SimpleafQuant
 from flyte_bio.pipelines.scrnaseq import (
     barcode_whitelist,
     convert_matrices,
+    multiqc_report,
     prepare_index,
     prepare_reference,
     protocol,
@@ -148,6 +149,32 @@ async def test_convert_matrices() -> None:
 
 
 @env.task
+async def test_multiqc_report() -> None:
+    _, samples = await staged_samples()
+    fasta, gtf = await asyncio.gather(fixture(FASTA), fixture(GTF))
+    proto = protocol("10XV2")
+    reference, whitelist = await asyncio.gather(prepare_reference(fasta, gtf), barcode_whitelist(proto))
+    index = await prepare_index(reference)
+    fastqc, quants = await asyncio.gather(
+        asyncio.gather(*(read_qc(s) for s in samples)),
+        asyncio.gather(*(quantify(s, index, proto, whitelist) for s in samples)),
+    )
+    ids = [s.id for s in samples]
+    report = await multiqc_report(dict(zip(ids, fastqc)), dict(zip(ids, quants)))
+    await assert_nonempty(report.report, label="multiqc_report.html")
+
+    files = [f async for f in report.results.walk()]
+    table = next((f for f in files if f.path.endswith("_data/multiqc_fastqc.txt")), None)
+    assert table is not None, sorted(f.path.rsplit("/", 1)[-1] for f in files)
+    reported = {line.split("\t")[0] for line in (await text(table)).splitlines()[1:]}
+    # Every lane's R1 and R2: Sample_X has one lane, Sample_Y two.
+    expected = {"Sample_X_1", "Sample_X_2", *(f"Sample_Y_{n}" for n in (1, 2, 3, 4))}
+    assert reported == expected, reported
+    # Upstream's config exports the plots too.
+    assert any("_plots/" in f.path for f in files), "no exported plots"
+
+
+@env.task
 async def test_remove_background() -> None:
     # Upstream's pipeline test skips CellBender, which can't train on the toy reads' few
     # cells, so this runs it on the module test's raw PBMC matrix for 5 epochs instead.
@@ -177,4 +204,11 @@ async def test_remove_background() -> None:
         await assert_nonempty(f, label=f.path)
 
 
-tests = [test_prepare_reference, test_read_qc, test_quantify, test_convert_matrices, test_remove_background]
+tests = [
+    test_prepare_reference,
+    test_read_qc,
+    test_quantify,
+    test_convert_matrices,
+    test_multiqc_report,
+    test_remove_background,
+]
