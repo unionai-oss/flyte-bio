@@ -78,6 +78,9 @@ ship_in_bundle(
     "strand_check_composition.yaml",
     "multiqc_config_variant_calling.yml",
     "filter_gtf_for_genes_in_genome.py",
+    "mtx_to_h5ad_simpleaf.py",
+    "concat_h5ad.py",
+    "anndatar_convert.r",
 )
 
 

@@ -14,6 +14,8 @@ pipeline (4.2.0):
 - :func:`quantify` — simpleaf quant per sample with the protocol's
   chemistry and barcode whitelist.
 - :func:`cell_qc` — QCatch cell calling and QC report on a sample's quantification.
+- :func:`convert_matrices` — each sample's counts as h5ad, all of them
+  combined, and every h5ad as Seurat and SingleCellExperiment RDS files.
 
 These are plain async functions, not tasks: they run inside the caller's
 task and fan out to the module tasks, so the caller's
@@ -28,10 +30,12 @@ from pathlib import Path
 
 from flyte.io import Dir, File
 
+from flyte_bio.modules.anndatar import RdsObjects, anndatar_convert
 from flyte_bio.modules.fastqc import fastqc_reads
 from flyte_bio.modules.gtfgenefilter import gtf_gene_filter
 from flyte_bio.modules.gunzip import gunzip
 from flyte_bio.modules.qcatch import QcatchResult, qcatch
+from flyte_bio.modules.scanpy import concat_h5ad, mtx_to_h5ad_simpleaf
 from flyte_bio.modules.simpleaf import SimpleafIndex, SimpleafQuant, simpleaf_index, simpleaf_quant
 from flyte_bio.samplesheet import Row
 
@@ -204,4 +208,39 @@ async def cell_qc(
         chemistry=proto.qcatch,
         remove_doublets=remove_doublets,
         n_partitions=n_partitions,
+    )
+
+
+@dataclass
+class Matrix:
+    """One count matrix: the h5ad and its R conversions, named ``<id>_<input_type>_matrix.*``."""
+
+    h5ad: File
+    rds: RdsObjects
+
+
+@dataclass
+class Matrices:
+    samples: dict[str, Matrix]  # by sample ID
+    combined: Matrix  # every sample's cells, annotated from the samplesheet
+
+
+async def convert_matrices(quants: dict[str, SimpleafQuant], samplesheet: File) -> Matrices:
+    """Upstream's h5ad conversion of the simpleaf counts (``raw``: not cell-filtered).
+
+    Each sample's ``af_quant`` becomes ``<sample>_raw_matrix.h5ad``; those are
+    concatenated into ``combined_raw_matrix.h5ad``, each cell annotated with
+    its sample's samplesheet columns; and every h5ad is also written as
+    ``.seurat.rds`` and ``.sce.rds``.
+    """
+    ids = list(quants)
+    h5ads = await asyncio.gather(*(mtx_to_h5ad_simpleaf(quants[s].quant, s, "raw") for s in ids))
+    combined = await concat_h5ad(list(h5ads), samplesheet, prefix="combined_raw")
+    all_rds = await asyncio.gather(
+        *(anndatar_convert(h, f"{s}_raw_matrix") for s, h in zip(ids, h5ads)),
+        anndatar_convert(combined, "combined_raw_matrix"),
+    )
+    return Matrices(
+        samples={s: Matrix(h5ad=h, rds=r) for s, h, r in zip(ids, h5ads, all_rds)},
+        combined=Matrix(h5ad=combined, rds=all_rds[-1]),
     )

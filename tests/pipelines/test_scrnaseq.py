@@ -7,11 +7,15 @@ mouse chr19 (GRCm38.p6 genome, GENCODE vM19 annotation).
 import asyncio
 import gzip
 import json
+import math
 
+import anndata
 from flyte.io import File
 
+from flyte_bio.modules.simpleaf import SimpleafQuant
 from flyte_bio.pipelines.scrnaseq import (
     barcode_whitelist,
+    convert_matrices,
     prepare_index,
     prepare_reference,
     protocol,
@@ -20,7 +24,7 @@ from flyte_bio.pipelines.scrnaseq import (
     samples_from_samplesheet,
 )
 from flyte_bio.samplesheet import read_samplesheet
-from tests.framework import env, fixture, stage_samplesheet
+from tests.framework import assert_nonempty, env, fixture, stage_samplesheet
 
 DATA = "https://github.com/nf-core/test-datasets/raw/scrnaseq/"
 SAMPLESHEET = DATA + "samplesheet-2-0.csv"
@@ -88,4 +92,58 @@ async def test_quantify() -> None:
     assert reads in info.values(), (reads, info)
 
 
-tests = [test_prepare_reference, test_read_qc, test_quantify]
+async def read_h5ad(f: File):
+    return anndata.read_h5ad(await f.download())
+
+
+async def simpleaf_counts(quant: SimpleafQuant) -> tuple[int, int, float]:
+    """(cells, genes, total count) of simpleaf's own h5ad export in ``alevin/``.
+
+    Not ``quants_mat.mtx``: that keeps spliced, unspliced and ambiguous counts
+    as separate columns per gene, while the h5ad (the conversion's input) has
+    one column per gene.
+    """
+    m = await read_h5ad(await quant.quant.get_file("alevin/quants.h5ad"))
+    return m.n_obs, m.n_vars, float(m.X.sum())
+
+
+@env.task
+async def test_convert_matrices() -> None:
+    # Upstream's snapshot pins these files' md5s, but they record each tool's command
+    # line (with its file paths) in uns, so they can't match byte for byte here: the
+    # checks are on content instead.
+    sheet, samples = await staged_samples()
+    fasta, gtf = await asyncio.gather(fixture(FASTA), fixture(GTF))
+    proto = protocol("10XV2")
+    reference, whitelist = await asyncio.gather(prepare_reference(fasta, gtf), barcode_whitelist(proto))
+    index = await prepare_index(reference)
+    quants = await asyncio.gather(*(quantify(s, index, proto, whitelist) for s in samples))
+    matrices = await convert_matrices({s.id: q for s, q in zip(samples, quants)}, sheet)
+    assert list(matrices.samples) == ["Sample_X", "Sample_Y"], list(matrices.samples)
+
+    total_cells = 0
+    for (sample_id, matrix), quant in zip(matrices.samples.items(), quants):
+        assert matrix.h5ad.path.endswith(f"/{sample_id}_raw_matrix.h5ad"), matrix.h5ad.path
+        adata = await read_h5ad(matrix.h5ad)
+        cells, genes, total = await simpleaf_counts(quant)
+        assert adata.shape == (cells, genes), (sample_id, adata.shape, cells, genes)
+        assert math.isclose(float(adata.X.sum()), total, rel_tol=1e-6), (sample_id, float(adata.X.sum()), total)
+        assert list(adata.obs_names) == sorted(adata.obs_names), sample_id
+        assert set(adata.obs["sample"]) == {sample_id}, set(adata.obs["sample"])
+        assert not any("." in g for g in adata.var_names), sample_id
+        assert "runtime_seconds" not in json.loads(adata.uns["simpleaf_map_info"]), sample_id
+        total_cells += cells
+        for f in (matrix.rds.sce, matrix.rds.seurat):
+            await assert_nonempty(f, label=f.path)
+
+    combined = matrices.combined
+    assert combined.h5ad.path.endswith("/combined_raw_matrix.h5ad"), combined.h5ad.path
+    adata = await read_h5ad(combined.h5ad)
+    # Upstream labels each cell with its file's name minus "_matrix.h5ad".
+    assert adata.n_obs == total_cells, (adata.n_obs, total_cells)
+    assert set(adata.obs["sample"]) == {"Sample_X_raw", "Sample_Y_raw"}, set(adata.obs["sample"])
+    for f in (combined.rds.sce, combined.rds.seurat):
+        await assert_nonempty(f, label=f.path)
+
+
+tests = [test_prepare_reference, test_read_qc, test_quantify, test_convert_matrices]

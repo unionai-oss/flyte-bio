@@ -3,6 +3,7 @@
 Each submodule wraps one tool family, sharing a single biocontainer image
 across its tasks:
 
+- :mod:`flyte_bio.modules.anndatar` — h5ad to Seurat / SingleCellExperiment RDS.
 - :mod:`flyte_bio.modules.bbmap` — BBSplit (index build + read binning).
 - :mod:`flyte_bio.modules.bcftools` — VCF statistics.
 - :mod:`flyte_bio.modules.bedtools` — genome arithmetic (intersect, sort,
@@ -30,6 +31,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.qualimap` — RNA-seq alignment QC.
 - :mod:`flyte_bio.modules.rseqc` — RSeQC BAM QC (7 scripts).
 - :mod:`flyte_bio.modules.salmon` — transcript quantification (index, quant).
+- :mod:`flyte_bio.modules.scanpy` — AnnData conversions (simpleaf to h5ad, concatenation).
 - :mod:`flyte_bio.modules.simpleaf` — single-cell quantification with alevin-fry (index, quant).
 - :mod:`flyte_bio.modules.samtools` — alignment sort/index/stats/faidx.
 - :mod:`flyte_bio.modules.star` — spliced RNA-seq aligner (index, align).
@@ -55,6 +57,7 @@ Pipelines depend on it once to gain access to every wrapped tool::
 
 import flyte
 
+from .anndatar import env as anndatar_env
 from .bbmap import env as bbmap_env
 from .bcftools import env as bcftools_env
 from .bedtools import env as bedtools_env
@@ -83,6 +86,7 @@ from .qualimap import env as qualimap_env
 from .rseqc import env as rseqc_env
 from .salmon import env as salmon_env
 from .samtools import env as samtools_env
+from .scanpy import env as scanpy_env
 from .simpleaf import env as simpleaf_env
 from .star import env as star_env
 from .stringtie import env as stringtie_env
@@ -99,6 +103,7 @@ from .vcftools import env as vcftools_env
 env = flyte.TaskEnvironment(
     name="flyte_bio_modules",
     depends_on=[
+        anndatar_env,
         bbmap_env,
         bcftools_env,
         bedtools_env,
@@ -127,6 +132,7 @@ env = flyte.TaskEnvironment(
         rseqc_env,
         salmon_env,
         samtools_env,
+        scanpy_env,
         simpleaf_env,
         star_env,
         stringtie_env,
@@ -143,6 +149,7 @@ env = flyte.TaskEnvironment(
 )
 
 __all__ = [
+    "anndatar_env",
     "bbmap_env",
     "bcftools_env",
     "bedtools_env",
@@ -172,6 +179,7 @@ __all__ = [
     "rseqc_env",
     "salmon_env",
     "samtools_env",
+    "scanpy_env",
     "simpleaf_env",
     "star_env",
     "stringtie_env",

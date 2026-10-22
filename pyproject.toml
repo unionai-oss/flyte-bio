@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [{ name = "Kyle Hazen", email = "kyle@union.ai" }]
 requires-python = ">=3.12"
 dependencies = [
-    "flyte>=2.10.0",
+    "flyte>=2.12.1",
 ]
 
 [build-system]
@@ -24,8 +24,10 @@ include = ["src/flyte_bio", "README.md", "LICENSE"]
 # https backend needs aiohttp + requests. uv installs the default `dev`
 # group into the test image, so these land in the pod. Once fixtures move
 # to S3 (obstore-native), neither is needed and both can be dropped.
+# anndata (with scipy) lets the scRNA-seq tests check h5ad contents.
 dev = [
     "aiohttp",
+    "anndata>=0.13.4",
     "requests",
 ]
 
