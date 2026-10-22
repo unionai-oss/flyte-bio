@@ -16,6 +16,8 @@ pipeline (4.2.0):
 - :func:`cell_qc` — QCatch cell calling and QC report on a sample's quantification.
 - :func:`convert_matrices` — each sample's counts as h5ad, all of them
   combined, and every h5ad as Seurat and SingleCellExperiment RDS files.
+- :func:`remove_background` — CellBender cell calling (CPU or GPU) on the
+  raw matrices, which are restricted to its cells and converted likewise.
 
 These are plain async functions, not tasks: they run inside the caller's
 task and fan out to the module tasks, so the caller's
@@ -30,7 +32,9 @@ from pathlib import Path
 
 from flyte.io import Dir, File
 
+from flyte_bio.modules.anndata import anndata_barcodes
 from flyte_bio.modules.anndatar import RdsObjects, anndatar_convert
+from flyte_bio.modules.cellbender import CellbenderResult, cellbender_removebackground
 from flyte_bio.modules.fastqc import fastqc_reads
 from flyte_bio.modules.gtfgenefilter import gtf_gene_filter
 from flyte_bio.modules.gunzip import gunzip
@@ -235,12 +239,50 @@ async def convert_matrices(quants: dict[str, SimpleafQuant], samplesheet: File) 
     """
     ids = list(quants)
     h5ads = await asyncio.gather(*(mtx_to_h5ad_simpleaf(quants[s].quant, s, "raw") for s in ids))
-    combined = await concat_h5ad(list(h5ads), samplesheet, prefix="combined_raw")
+    return await matrices_from_h5ads(dict(zip(ids, h5ads)), samplesheet, "raw")
+
+
+async def matrices_from_h5ads(h5ads: dict[str, File], samplesheet: File, input_type: str) -> Matrices:
+    """Per-sample ``<sample>_<input_type>_matrix.h5ad`` files, combined and each converted to RDS."""
+    ids = list(h5ads)
+    combined = await concat_h5ad(list(h5ads.values()), samplesheet, prefix=f"combined_{input_type}")
     all_rds = await asyncio.gather(
-        *(anndatar_convert(h, f"{s}_raw_matrix") for s, h in zip(ids, h5ads)),
-        anndatar_convert(combined, "combined_raw_matrix"),
+        *(anndatar_convert(h5ads[s], f"{s}_{input_type}_matrix") for s in ids),
+        anndatar_convert(combined, f"combined_{input_type}_matrix"),
     )
     return Matrices(
-        samples={s: Matrix(h5ad=h, rds=r) for s, h, r in zip(ids, h5ads, all_rds)},
+        samples={s: Matrix(h5ad=h5ads[s], rds=r) for s, r in zip(ids, all_rds)},
         combined=Matrix(h5ad=combined, rds=all_rds[-1]),
+    )
+
+
+@dataclass
+class BackgroundRemoval:
+    cellbender: dict[str, CellbenderResult]  # by sample ID
+    matrices: Matrices  # the raw h5ads restricted to CellBender's cells: <sample>_cellbender_filter_matrix.*
+
+
+async def remove_background(
+    raw: dict[str, File],
+    samplesheet: File,
+    gpu: bool = False,
+    cellbender_args: str = "",
+) -> BackgroundRemoval:
+    """Upstream's CellBender step on each sample's raw h5ad (by sample ID).
+
+    CellBender calls the cells (on a GPU when ``gpu``); each raw h5ad is then
+    restricted to them as ``<sample>_cellbender_filter_matrix.h5ad``, which
+    are combined and converted to RDS like the raw matrices. The counts stay
+    raw: CellBender's denoised counts are only in its ``.h5`` outputs.
+    """
+    ids = list(raw)
+    results = await asyncio.gather(
+        *(cellbender_removebackground(raw[s], s, gpu=gpu, args=cellbender_args) for s in ids)
+    )
+    filtered = await asyncio.gather(
+        *(anndata_barcodes(raw[s], r.barcodes, f"{s}_cellbender_filter_matrix") for s, r in zip(ids, results))
+    )
+    return BackgroundRemoval(
+        cellbender=dict(zip(ids, results)),
+        matrices=await matrices_from_h5ads(dict(zip(ids, filtered)), samplesheet, "cellbender_filter"),
     )

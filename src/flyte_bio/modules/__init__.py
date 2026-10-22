@@ -3,6 +3,7 @@
 Each submodule wraps one tool family, sharing a single biocontainer image
 across its tasks:
 
+- :mod:`flyte_bio.modules.anndata` — subset an h5ad to listed barcodes.
 - :mod:`flyte_bio.modules.anndatar` — h5ad to Seurat / SingleCellExperiment RDS.
 - :mod:`flyte_bio.modules.bbmap` — BBSplit (index build + read binning).
 - :mod:`flyte_bio.modules.bcftools` — VCF statistics.
@@ -14,6 +15,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.dupradar` — duplication rate vs expression QC.
 - :mod:`flyte_bio.modules.fastqc` — read quality-control reports.
 - :mod:`flyte_bio.modules.catadditionalfasta` — append an extra FASTA + GTF.
+- :mod:`flyte_bio.modules.cellbender` — ambient RNA and empty droplet removal (CPU or GPU).
 - :mod:`flyte_bio.modules.fq` — FASTQ subsampling and linting.
 - :mod:`flyte_bio.modules.gatk4` — GATK tools (sequence dictionary, interval lists).
 - :mod:`flyte_bio.modules.gffread` — GFF/GTF conversion + transcript FASTA.
@@ -57,6 +59,7 @@ Pipelines depend on it once to gain access to every wrapped tool::
 
 import flyte
 
+from .anndata import env as anndata_env
 from .anndatar import env as anndatar_env
 from .bbmap import env as bbmap_env
 from .bcftools import env as bcftools_env
@@ -65,6 +68,7 @@ from .bedtools import genomecov_env
 from .bwa import env as bwa_env
 from .cat import env as cat_env
 from .catadditionalfasta import env as catadditionalfasta_env
+from .cellbender import env as cellbender_env
 from .deseq2_qc import env as deseq2_qc_env
 from .dupradar import env as dupradar_env
 from .fastqc import env as fastqc_env
@@ -103,6 +107,7 @@ from .vcftools import env as vcftools_env
 env = flyte.TaskEnvironment(
     name="flyte_bio_modules",
     depends_on=[
+        anndata_env,
         anndatar_env,
         bbmap_env,
         bcftools_env,
@@ -112,6 +117,7 @@ env = flyte.TaskEnvironment(
         genomecov_env,
         cat_env,
         catadditionalfasta_env,
+        cellbender_env,
         deseq2_qc_env,
         dupradar_env,
         fastqc_env,
@@ -149,6 +155,7 @@ env = flyte.TaskEnvironment(
 )
 
 __all__ = [
+    "anndata_env",
     "anndatar_env",
     "bbmap_env",
     "bcftools_env",
@@ -156,6 +163,7 @@ __all__ = [
     "bwa_env",
     "cat_env",
     "catadditionalfasta_env",
+    "cellbender_env",
     "deseq2_qc_env",
     "dupradar_env",
     "env",

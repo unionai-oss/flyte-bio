@@ -21,6 +21,7 @@ from flyte_bio.pipelines.scrnaseq import (
     protocol,
     quantify,
     read_qc,
+    remove_background,
     samples_from_samplesheet,
 )
 from flyte_bio.samplesheet import read_samplesheet
@@ -146,4 +147,34 @@ async def test_convert_matrices() -> None:
         await assert_nonempty(f, label=f.path)
 
 
-tests = [test_prepare_reference, test_read_qc, test_quantify, test_convert_matrices]
+@env.task
+async def test_remove_background() -> None:
+    # Upstream's pipeline test skips CellBender, which can't train on the toy reads' few
+    # cells, so this runs it on the module test's raw PBMC matrix for 5 epochs instead.
+    sheet, _ = await staged_samples()
+    raw = await fixture("genomics/homo_sapiens/scrnaseq/h5ad/SRR28679759_raw_matrix.h5ad")
+    result = await remove_background({"pbmc": raw}, sheet, cellbender_args="--epochs 5")
+    assert list(result.cellbender) == ["pbmc"], list(result.cellbender)
+
+    matrix = result.matrices.samples["pbmc"]
+    assert matrix.h5ad.path.endswith("/pbmc_cellbender_filter_matrix.h5ad"), matrix.h5ad.path
+    cells = (await text(result.cellbender["pbmc"].barcodes)).split()
+    adata, unfiltered = await asyncio.gather(read_h5ad(matrix.h5ad), read_h5ad(raw))
+    assert 0 < len(cells) < unfiltered.n_obs, (len(cells), unfiltered.n_obs)
+    # The raw counts of CellBender's cells, in its order.
+    assert list(adata.obs_names) == cells, (adata.obs_names[:3], cells[:3])
+    assert list(adata.var_names) == list(unfiltered.var_names)
+    assert math.isclose(float(adata.X.sum()), float(unfiltered[cells].X.sum()), rel_tol=1e-6)
+    for f in (matrix.rds.sce, matrix.rds.seurat):
+        await assert_nonempty(f, label=f.path)
+
+    combined = result.matrices.combined
+    assert combined.h5ad.path.endswith("/combined_cellbender_filter_matrix.h5ad"), combined.h5ad.path
+    adata = await read_h5ad(combined.h5ad)
+    assert adata.n_obs == len(cells), (adata.n_obs, len(cells))
+    assert set(adata.obs["sample"]) == {"pbmc_cellbender_filter"}, set(adata.obs["sample"])
+    for f in (combined.rds.sce, combined.rds.seurat):
+        await assert_nonempty(f, label=f.path)
+
+
+tests = [test_prepare_reference, test_read_qc, test_quantify, test_convert_matrices, test_remove_background]

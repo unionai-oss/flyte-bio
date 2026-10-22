@@ -27,12 +27,14 @@ passes them to :func:`gather_tests` — and run it the same way:
 from tests import test_utils
 from tests.framework import env, gather_tests
 from tests.modules import (
+    test_anndata,
     test_bbmap,
     test_bcftools,
     test_bedtools,
     test_bwa,
     test_cat,
     test_catadditionalfasta,
+    test_cellbender,
     test_deseq2_qc,
     test_dupradar,
     test_fastqc,
@@ -70,12 +72,14 @@ from tests.pipelines import test_rnaseq, test_scrnaseq, test_variant_calling
 
 ALL_TESTS = [
     *test_utils.tests,
+    *test_anndata.tests,
     *test_bbmap.tests,
     *test_bcftools.tests,
     *test_bedtools.tests,
     *test_bwa.tests,
     *test_cat.tests,
     *test_catadditionalfasta.tests,
+    *test_cellbender.tests,
     *test_deseq2_qc.tests,
     *test_dupradar.tests,
     *test_fastqc.tests,
