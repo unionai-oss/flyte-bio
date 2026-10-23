@@ -20,6 +20,8 @@ pipeline (4.2.0):
   raw matrices, which are restricted to its cells and converted likewise.
 - :func:`multiqc_report` — one MultiQC report over the FastQC reports and
   simpleaf quantifications.
+- :func:`scrnaseq` — the whole route from a samplesheet, optionally
+  published in upstream's ``--outdir`` layout (:func:`scrnaseq_layout`).
 
 These are plain async functions, not tasks: they run inside the caller's
 task and fan out to the module tasks, so the caller's
@@ -27,12 +29,14 @@ task and fan out to the module tasks, so the caller's
 """
 
 import asyncio
+import re
 import tempfile
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+import flyte
 from flyte.io import Dir, File
 
 from flyte_bio.modules.anndata import anndata_barcodes
@@ -45,7 +49,8 @@ from flyte_bio.modules.multiqc import MultiQCResult, multiqc
 from flyte_bio.modules.qcatch import QcatchResult, qcatch
 from flyte_bio.modules.scanpy import concat_h5ad, mtx_to_h5ad_simpleaf
 from flyte_bio.modules.simpleaf import SimpleafIndex, SimpleafQuant, simpleaf_index, simpleaf_quant
-from flyte_bio.samplesheet import Row
+from flyte_bio.publish import expand, name, publish
+from flyte_bio.samplesheet import Row, read_samplesheet
 from flyte_bio.scripts import path as asset
 
 
@@ -139,13 +144,21 @@ PROTOCOLS = {
 }
 
 
-def protocol(name: str) -> Protocol:
+def get_protocol(name: str) -> Protocol:
+    """Upstream's protocol for ``name``; any other name goes to simpleaf as its chemistry, unmodified, as upstream.
+
+    That covers simpleaf's own chemistry names and custom read geometries.
+    Upstream's ``auto`` is cellranger-only, so it's refused here.
+    """
+    if name == "auto":
+        raise ValueError(f"protocol 'auto' is only supported by cellranger: give simpleaf's, e.g. {sorted(PROTOCOLS)}")
     if name not in PROTOCOLS:
-        raise ValueError(f"protocol must be one of {sorted(PROTOCOLS)} for simpleaf, got {name!r}")
+        flyte.logger.warning(f"Protocol {name!r} not recognized: passing it on to simpleaf unmodified")
+        return Protocol(name, None, None)
     return PROTOCOLS[name]
 
 
-async def barcode_whitelist(proto: Protocol, override: File | None = None) -> File | None:
+async def get_barcode_whitelist(proto: Protocol, override: File | None = None) -> File | None:
     """``override``, else the protocol's whitelist from upstream's assets (None for protocols without one)."""
     if override is not None or proto.whitelist is None:
         return override
@@ -325,3 +338,183 @@ async def remove_background(
         cellbender=dict(zip(ids, results)),
         matrices=await matrices_from_h5ads(dict(zip(ids, filtered)), samplesheet, "cellbender_filter"),
     )
+
+
+@dataclass
+class SampleResult:
+    sample: Sample
+    fastqc: Dir | None  # None when skip_fastqc
+    quant: SimpleafQuant
+    qcatch: QcatchResult | None  # None when skip_qcatch
+
+
+@dataclass
+class ScrnaseqResult:
+    reference: Reference
+    index: SimpleafIndex
+    samples: list[SampleResult]
+    raw: Matrices  # <sample>_raw_matrix.* and combined_raw_matrix.*
+    cellbender: BackgroundRemoval | None = None  # None when skip_cellbender
+    multiqc: MultiQCResult | None = None  # None when skip_multiqc
+    outdir: Dir | None = None  # the published results tree, when outdir/publish_results was asked for
+
+
+async def scrnaseq(
+    samplesheet: File,
+    fasta: File,
+    gtf: File,
+    protocol: str,
+    barcode_whitelist: File | None = None,
+    simpleaf_index: Dir | None = None,
+    txp2gene: File | None = None,
+    transcript_fasta: File | None = None,
+    simpleaf_umi_resolution: str = "cr-like",
+    skip_fastqc: bool = False,
+    skip_qcatch: bool = False,
+    remove_doublets: bool = False,
+    qcatch_n_partitions: int | None = None,
+    skip_cellbender: bool = False,
+    cellbender_gpu: bool = False,
+    cellbender_args: str = "",
+    skip_multiqc: bool = False,
+    save_reference: bool = False,
+    save_align_intermeds: bool = True,
+    outdir: str | None = None,
+    publish_results: bool = False,
+) -> ScrnaseqResult:
+    """Droplet scRNA-seq from FASTQ to count matrices with simpleaf, as upstream's default (``simpleaf``) route.
+
+    ``samplesheet`` is upstream's ``--input``: a CSV with columns ``sample``,
+    ``fastq_1`` (cell barcode + UMI) and ``fastq_2`` (cDNA), optionally
+    ``expected_cells`` and ``seq_center``, one row per lane. It is read
+    before anything runs. ``protocol`` is required, as upstream's ``auto``
+    is cellranger-only: one of upstream's (``10XV1``..``10XV4``,
+    ``dropseq``), or else passed to simpleaf as its chemistry.
+
+    The reference is prepared and indexed once (or ``simpleaf_index`` is
+    used, with ``txp2gene``; ``transcript_fasta`` + ``txp2gene`` build the
+    index from transcripts instead of the genome). Every sample is then
+    FastQC'd and quantified against the protocol's barcode whitelist (or
+    ``barcode_whitelist``) in parallel, and cell-QC'd with QCatch. The
+    raw counts are converted to h5ad and RDS, per sample and combined;
+    CellBender (``cellbender_gpu`` runs it on a GPU) calls cells on them,
+    and its cells' counts are converted likewise. MultiQC reports on all of
+    it.
+
+    QCatch and CellBender need realistic data: upstream's test profile skips
+    both (``skip_qcatch``, ``skip_cellbender``).
+
+    Outputs: everything is returned in the :class:`ScrnaseqResult`. Like
+    upstream's ``--outdir``, ``outdir`` (e.g. ``s3://my-bucket/scrnaseq``)
+    also lays the results out there in upstream's folder structure
+    (:func:`scrnaseq_layout`); ``publish_results=True`` does the same in
+    Flyte's own storage. ``save_reference`` also publishes the filtered GTF
+    and the built index, and ``save_align_intermeds=False`` leaves out
+    simpleaf's mapping (``af_map``), as upstream.
+    """
+    samples = samples_from_samplesheet(await read_samplesheet(samplesheet))
+    if not samples:
+        raise ValueError("the samplesheet has no samples")
+    proto = get_protocol(protocol)
+
+    reference = await prepare_reference(fasta, gtf)
+    index, whitelist = await asyncio.gather(
+        prepare_index(reference, index=simpleaf_index, txp2gene=txp2gene, transcript_fasta=transcript_fasta),
+        get_barcode_whitelist(proto, barcode_whitelist),
+    )
+
+    async def fastqc(sample: Sample) -> Dir | None:
+        return None if skip_fastqc else await read_qc(sample)
+
+    async def run_sample(sample: Sample) -> SampleResult:
+        reports, quant = await asyncio.gather(
+            fastqc(sample),
+            quantify(sample, index, proto, whitelist, resolution=simpleaf_umi_resolution),
+        )
+        qc = None
+        if not skip_qcatch:
+            qc = await cell_qc(sample, quant, proto, remove_doublets=remove_doublets, n_partitions=qcatch_n_partitions)
+        return SampleResult(sample, reports, quant, qc)
+
+    results = list(await asyncio.gather(*(run_sample(s) for s in samples)))
+    ids = [r.sample.id for r in results]
+    raw = await convert_matrices({r.sample.id: r.quant for r in results}, samplesheet)
+    result = ScrnaseqResult(reference=reference, index=index, samples=results, raw=raw)
+
+    async def background() -> None:
+        if not skip_cellbender:
+            result.cellbender = await remove_background(
+                {s: raw.samples[s].h5ad for s in ids}, samplesheet, gpu=cellbender_gpu, cellbender_args=cellbender_args
+            )
+
+    async def report() -> None:
+        if not skip_multiqc:
+            fastqc = {r.sample.id: r.fastqc for r in results if r.fastqc is not None}
+            result.multiqc = await multiqc_report(fastqc, {r.sample.id: r.quant for r in results})
+
+    await asyncio.gather(background(), report())
+    if outdir is not None or publish_results:
+        layout = await scrnaseq_layout(result, save_reference=save_reference, save_align_intermeds=save_align_intermeds)
+        result.outdir = await publish(layout, outdir)
+    return result
+
+
+async def scrnaseq_layout(
+    result: ScrnaseqResult, save_reference: bool = False, save_align_intermeds: bool = True
+) -> dict[str, File | Dir | None]:
+    """Upstream's results layout for a run: relative path -> output, for :func:`~flyte_bio.publish.publish`.
+
+    Follows upstream's default ``publishDir`` paths: ``fastqc/``,
+    ``simpleaf/<sample>/`` (``simpleaf_quant/``, ``qcatch/``,
+    ``cellbender_removebackground/``), ``simpleaf/mtx_conversions/`` and
+    ``multiqc/``. ``save_reference`` adds ``gtf_filter/`` and the built
+    ``simpleaf/simpleaf_index/``; without ``save_align_intermeds``,
+    ``simpleaf_quant/af_map/`` is left out.
+    """
+    out: dict[str, File | Dir | None] = {}
+    if save_reference:
+        out[f"gtf_filter/{name(result.reference.gtf)}"] = result.reference.gtf
+        if result.index.ref is not None:  # built here, not given
+            out.update(await expand("simpleaf/simpleaf_index/index", result.index.index))
+            out.update(await expand("simpleaf/simpleaf_index/ref", result.index.ref))
+    for r in result.samples:
+        sid = r.sample.id
+        if r.fastqc is not None:
+            out.update(await expand("fastqc", r.fastqc))
+        quant_dir = f"simpleaf/{sid}/simpleaf_quant"
+        if save_align_intermeds:
+            out.update(await expand(f"{quant_dir}/af_map", r.quant.map))
+        out.update(await expand(f"{quant_dir}/af_quant", r.quant.quant))
+        if r.qcatch is not None:
+            for f in (r.qcatch.report, r.qcatch.filtered_h5ad, r.qcatch.metrics_summary):
+                out[f"simpleaf/{sid}/qcatch/{name(f)}"] = f
+
+    def put_matrices(m: Matrices) -> None:
+        for sid, matrix in m.samples.items():
+            for f in (matrix.h5ad, matrix.rds.sce, matrix.rds.seurat):
+                out[f"simpleaf/mtx_conversions/{sid}/{name(f)}"] = f
+        for f in (m.combined.h5ad, m.combined.rds.sce, m.combined.rds.seurat):
+            out[f"simpleaf/mtx_conversions/{name(f)}"] = f
+
+    put_matrices(result.raw)
+    if result.cellbender is not None:
+        for sid, cb in result.cellbender.cellbender.items():
+            for f in (
+                cb.h5,
+                cb.filtered_h5,
+                cb.posterior_h5,
+                cb.barcodes,
+                cb.metrics,
+                cb.report,
+                cb.pdf,
+                cb.log,
+                cb.checkpoint,
+            ):
+                if f is not None:
+                    out[f"simpleaf/{sid}/cellbender_removebackground/{name(f)}"] = f
+        put_matrices(result.cellbender.matrices)
+    if result.multiqc is not None:
+        # Upstream runs MultiQC without --filename, so its folders get MultiQC's default names.
+        for path, f in (await expand("multiqc", result.multiqc.results)).items():
+            out[re.sub(r"^multiqc/multiqc_report_(data|plots)/", r"multiqc/multiqc_\1/", path)] = f
+    return out

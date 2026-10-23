@@ -14,7 +14,7 @@ flyte-bio has two layers:
   official biocontainer, so your own image doesn't need the tools installed.
 - **Pipelines** (`flyte_bio.pipelines`) compose those tasks into complete
   workflows, ported from established Nextflow pipelines: RNA-seq
-  quantification and germline variant calling.
+  quantification, single-cell RNA-seq and germline variant calling.
 
 ## Install
 
@@ -24,7 +24,7 @@ flyte-bio isn't on PyPI yet. Install it from GitHub:
 uv add "flyte-bio @ https://github.com/unionai-oss/flyte-bio/archive/refs/heads/main.zip"
 ```
 
-It needs `flyte>=2.10.0`.
+It needs `flyte>=2.12.1`.
 
 ## Usage
 
@@ -96,6 +96,8 @@ flyte run my_analysis.py quantify --samplesheet samples.csv --fasta genome.fa --
 - **[Pipelines](docs/pipelines/README.md):** inputs, outputs and the shared
   utilities, with a page per pipeline:
   - [rnaseq](docs/pipelines/rnaseq.md): STAR + salmon RNA-seq quantification.
+  - [scrnaseq](docs/pipelines/scrnaseq.md): droplet single-cell RNA-seq with
+    simpleaf (alevin-fry).
   - [variant_calling](docs/pipelines/variant_calling.md): germline variant
     calling with BWA-MEM and GATK HaplotypeCaller.
 - **[Contributing](docs/contributing.md):** porting a tool, and writing and
