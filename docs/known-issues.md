@@ -31,15 +31,6 @@ has been redeployed.
   file bodies instead of buffering them. This one also needs a stow release
   and a `go.mod` bump in flyte.
 
-## Editing a module's script doesn't invalidate its cache
-
-Every shell task currently gets the same cache version, so after you change a
-module's script, cached results from the old script can still be used. Rename
-the task or disable its cache while iterating.
-
-**Fix:** [flyteorg/flyte-sdk#1657](https://github.com/flyteorg/flyte-sdk/pull/1657),
-which versions container tasks by image, command and arguments.
-
 ## Shell tasks can't override resources per call
 
 `task.override(resources=...)` fails on shell tasks with

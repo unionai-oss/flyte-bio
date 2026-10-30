@@ -212,7 +212,5 @@ sends the output to the container log, which `flyte get logs <run>` shows.
 
 ### Cached results after editing a script
 
-Shell tasks are cached on their inputs, and today every shell task gets the
-same cache version, so editing a module's script doesn't invalidate its cache
-(fix in flyteorg/flyte-sdk#1657). Until that lands, after changing a script,
-rename the task or set `cache="disable"` while you iterate.
+Shell tasks are cached on their inputs and versioned by their image, command
+and arguments (flyte 2.12 and later), so editing a module's script reruns it.
