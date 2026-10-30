@@ -164,8 +164,7 @@ multiqc/
   score or filter an empty VCF. Upstream fails the run.
 - **The read group's `DS:` field** records the FASTA's storage path, where
   upstream records `--fasta` as given.
-- **MultiQC:** the custom logo is dropped, and plot export is off for now
-  ([known issues](../known-issues.md)).
+- **MultiQC:** the custom logo is dropped.
 
 ## Tests
 
