@@ -67,6 +67,7 @@ import hashlib
 import os
 import tarfile
 import tempfile
+import zipfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -187,7 +188,7 @@ async def stage_samplesheet(url: str, file_columns: tuple[str, ...]) -> File:
 
 
 async def fixture_dir(rel_path: str, member: str = "") -> Dir:
-    """Extract a ``.tar.gz`` fixture and upload (part of) it as a Flyte :class:`Dir`.
+    """Extract a ``.tar.gz`` (or ``.zip``) fixture and upload (part of) it as a Flyte :class:`Dir`.
 
     ``member`` selects a subdirectory of the archive to upload (default: the
     whole archive). Runs in the calling test's pod; the archive download
@@ -196,8 +197,12 @@ async def fixture_dir(rel_path: str, member: str = "") -> Dir:
     archive = await fixture(rel_path)
     local = await archive.download()
     root = Path(tempfile.mkdtemp())
-    with tarfile.open(local) as tar:
-        tar.extractall(root, filter="data")
+    if str(local).endswith(".zip"):
+        with zipfile.ZipFile(local) as zf:
+            zf.extractall(root)
+    else:
+        with tarfile.open(local) as tar:
+            tar.extractall(root, filter="data")
     return await Dir.from_local(root / member)
 
 

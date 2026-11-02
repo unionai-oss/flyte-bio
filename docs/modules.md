@@ -50,31 +50,38 @@ Pipeline columns show which pipelines use each module.
 
 | Module | What it does | Functions | Used by |
 |---|---|---|---|
+| `anndata` | Keep an h5ad's cells with listed barcodes | `anndata_barcodes` | scrnaseq |
+| `anndatar` | h5ad to Seurat and SingleCellExperiment RDS | `anndatar_convert` | scrnaseq |
 | `bbmap` | BBSplit: bin reads by the reference they map to best | `bbsplit_index`, `bbsplit` | rnaseq |
 | `bcftools` | VCF statistics | `bcftools_stats` | variant_calling |
 | `bedtools` | Genome arithmetic | `bedtools_intersect`, `bedtools_sort`, `bedtools_merge`, `bedtools_genomecov` | rnaseq |
 | `bwa` | BWA short-read alignment | `bwa_index`, `bwa_mem` | variant_calling |
 | `cat` | Concatenate a sample's FASTQs | `cat_fastq` | rnaseq |
 | `catadditionalfasta` | Append extra sequences (e.g. spike-ins) to a genome and GTF | `cat_additional_fasta` | rnaseq |
+| `cellbender` | Remove ambient RNA and empty droplets (CPU or GPU) | `cellbender_removebackground` | scrnaseq |
 | `deseq2_qc` | Sample-level QC of a count matrix with DESeq2 (PCA, distances) | `deseq2_qc` | rnaseq |
 | `dupradar` | Duplication rate vs. expression for RNA-seq BAMs | `dupradar` | rnaseq |
-| `fastqc` | Read quality reports | `fastqc` | rnaseq, variant_calling |
+| `fastqc` | Read quality reports | `fastqc`, `fastqc_reads` | rnaseq, scrnaseq, variant_calling |
 | `fq` | FASTQ subsampling and validation | `fq_subsample`, `fq_lint` | rnaseq |
 | `gatk4` | GATK: sequence dictionary, interval lists, MarkDuplicates, base-quality recalibration, HaplotypeCaller, VCF merging, CNN scoring and tranche filtering | `gatk4_createsequencedictionary`, `gatk4_intervallisttobed`, `gatk4_markduplicates`, `gatk4_baserecalibrator`, `gatk4_gatherbqsrreports`, `gatk4_applybqsr`, `gatk4_haplotypecaller`, `gatk4_mergevcfs`, `gatk4_cnnscorevariants`, `gatk4_filtervarianttranches` | variant_calling |
 | `gffread` | Convert GFF to GTF; extract transcript sequences | `gffread_gff_to_gtf`, `gffread_transcripts_fasta` | rnaseq |
 | `gtf2bed` | BED12 gene models from a GTF | `gtf2bed` | rnaseq |
 | `gtffilter` | Restrict a GTF to a genome's sequences | `gtf_filter` | rnaseq |
-| `gunzip` | Decompress a gzipped file | `gunzip` | rnaseq |
+| `gtfgenefilter` | Keep the GTF lines on a genome's sequences (single-cell) | `gtf_gene_filter` | scrnaseq |
+| `gunzip` | Decompress a gzipped file | `gunzip` | rnaseq, scrnaseq |
 | `htslib` | bgzip and tabix | `htslib_bgziptabix` | variant_calling |
 | `intervals` | Build genomic intervals and split them for scatter-gather | `build_intervals`, `create_intervals_bed` | variant_calling |
 | `mosdepth` | Read-depth summaries of BAM/CRAM files | `mosdepth` | variant_calling |
-| `multiqc` | Aggregate QC reports into one HTML report | `multiqc` | rnaseq, variant_calling |
+| `multiqc` | Aggregate QC reports into one HTML report | `multiqc` | rnaseq, scrnaseq, variant_calling |
 | `multiqccustombiotype` | featureCounts biotype counts as MultiQC content | `multiqc_custom_biotype` | rnaseq |
 | `picard` | Picard MarkDuplicates | `picard_markduplicates` | rnaseq |
+| `qcatch` | Cell calling and cell-level QC of a simpleaf quantification | `qcatch` | scrnaseq |
 | `qualimap` | RNA-seq alignment QC | `qualimap_rnaseq` | rnaseq |
 | `rseqc` | RNA-seq BAM QC (RSeQC) | `bam_stat`, `infer_experiment`, `inner_distance`, `junction_annotation`, `junction_saturation`, `read_distribution`, `read_duplication`, `rseqc` | rnaseq |
 | `salmon` | Transcript quantification | `salmon_index`, `salmon_quant_reads`, `salmon_quant_bam` | rnaseq |
 | `samtools` | Index, sort, view, merge and summarise alignments | `samtools_faidx`, `samtools_sort`, `samtools_view`, `samtools_merge`, `samtools_index`, `samtools_stats`, `samtools_flagstat`, `samtools_idxstats` | rnaseq, variant_calling |
+| `scanpy` | simpleaf counts to h5ad; concatenate h5ads | `mtx_to_h5ad_simpleaf`, `concat_h5ad` | scrnaseq |
+| `simpleaf` | Single-cell quantification with alevin-fry (index, quant) | `simpleaf_index`, `simpleaf_quant` | scrnaseq |
 | `star` | Spliced RNA-seq alignment | `star_genome_generate`, `star_align` | rnaseq |
 | `stringtie` | Transcript assembly and quantification | `stringtie` | rnaseq |
 | `subread` | featureCounts read summarisation | `featurecounts` | rnaseq |
