@@ -208,6 +208,7 @@ async def test_rnaseq_star_salmon() -> None:
     for s in samples:
         assert s.id in general, f"{s.id} missing from MultiQC general stats"
     assert any("strand_check" in name for name in data_files), sorted(data_files)
+    assert any(["_plots/" in f.path async for f in result.multiqc.results.walk()]), "no exported MultiQC plots"
     # Every tool's outputs were found and parsed (MultiQC writes one table per module).
     for module in ("fastqc", "cutadapt", "bbmap", "star", "samtools", "salmon", "qualimap", "rseqc", "dupradar"):
         assert any(name.lower().startswith(f"multiqc_{module}") or module in name.lower() for name in data_files), (

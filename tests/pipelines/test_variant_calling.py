@@ -315,6 +315,7 @@ async def test_fastq_to_report() -> None:
     data = [f.path.rsplit("/", 1)[-1].lower() async for f in report.results.walk() if "_data/" in f.path]
     for module in ("fastqc", "picard", "samtools", "mosdepth", "gatk", "bcftools", "vcftools"):
         assert any(module in n for n in data), f"MultiQC parsed no {module} outputs: {sorted(data)}"
+    assert any(["_plots/" in f.path async for f in report.results.walk()]), "no exported MultiQC plots"
 
 
 async def published(tree: Dir) -> set[str]:

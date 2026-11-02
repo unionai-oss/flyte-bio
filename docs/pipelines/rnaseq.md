@@ -168,7 +168,7 @@ multiqc/star_salmon/
 - **MultiQC:** the Nextflow-specific report sections (run parameters,
   software versions, methods) are left out. The report includes samtools
   stats for both the sorted and the duplicate-marked BAM, where upstream
-  includes one set. Plot export is off for now ([known issues](../known-issues.md)).
+  includes one set.
 - **Sample IDs** can't contain whitespace.
 
 ## Tests
