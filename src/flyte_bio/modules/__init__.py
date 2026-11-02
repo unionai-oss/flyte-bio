@@ -3,6 +3,8 @@
 Each submodule wraps one tool family, sharing a single biocontainer image
 across its tasks:
 
+- :mod:`flyte_bio.modules.anndata` — subset an h5ad to listed barcodes.
+- :mod:`flyte_bio.modules.anndatar` — h5ad to Seurat / SingleCellExperiment RDS.
 - :mod:`flyte_bio.modules.bbmap` — BBSplit (index build + read binning).
 - :mod:`flyte_bio.modules.bcftools` — VCF statistics.
 - :mod:`flyte_bio.modules.bedtools` — genome arithmetic (intersect, sort,
@@ -13,11 +15,13 @@ across its tasks:
 - :mod:`flyte_bio.modules.dupradar` — duplication rate vs expression QC.
 - :mod:`flyte_bio.modules.fastqc` — read quality-control reports.
 - :mod:`flyte_bio.modules.catadditionalfasta` — append an extra FASTA + GTF.
+- :mod:`flyte_bio.modules.cellbender` — ambient RNA and empty droplet removal (CPU or GPU).
 - :mod:`flyte_bio.modules.fq` — FASTQ subsampling and linting.
 - :mod:`flyte_bio.modules.gatk4` — GATK tools (sequence dictionary, interval lists).
 - :mod:`flyte_bio.modules.gffread` — GFF/GTF conversion + transcript FASTA.
 - :mod:`flyte_bio.modules.gtf2bed` — derive a BED12 gene model from a GTF.
 - :mod:`flyte_bio.modules.gtffilter` — restrict a GTF to a genome's sequences.
+- :mod:`flyte_bio.modules.gtfgenefilter` — keep GTF lines on a genome's sequences (scRNA-seq).
 - :mod:`flyte_bio.modules.gunzip` — single-file gzip decompression.
 - :mod:`flyte_bio.modules.htslib` — bgzip + tabix.
 - :mod:`flyte_bio.modules.intervals` — scatter-gather genomic intervals.
@@ -25,9 +29,12 @@ across its tasks:
 - :mod:`flyte_bio.modules.multiqc` — aggregate QC report.
 - :mod:`flyte_bio.modules.multiqccustombiotype` — biotype counts for MultiQC.
 - :mod:`flyte_bio.modules.picard` — Picard MarkDuplicates.
+- :mod:`flyte_bio.modules.qcatch` — cell-level QC of a simpleaf quantification.
 - :mod:`flyte_bio.modules.qualimap` — RNA-seq alignment QC.
 - :mod:`flyte_bio.modules.rseqc` — RSeQC BAM QC (7 scripts).
 - :mod:`flyte_bio.modules.salmon` — transcript quantification (index, quant).
+- :mod:`flyte_bio.modules.scanpy` — AnnData conversions (simpleaf to h5ad, concatenation).
+- :mod:`flyte_bio.modules.simpleaf` — single-cell quantification with alevin-fry (index, quant).
 - :mod:`flyte_bio.modules.samtools` — alignment sort/index/stats/faidx.
 - :mod:`flyte_bio.modules.star` — spliced RNA-seq aligner (index, align).
 - :mod:`flyte_bio.modules.stringtie` — transcript assembly / quantification.
@@ -52,6 +59,8 @@ Pipelines depend on it once to gain access to every wrapped tool::
 
 import flyte
 
+from .anndata import env as anndata_env
+from .anndatar import env as anndatar_env
 from .bbmap import env as bbmap_env
 from .bcftools import env as bcftools_env
 from .bedtools import env as bedtools_env
@@ -59,6 +68,7 @@ from .bedtools import genomecov_env
 from .bwa import env as bwa_env
 from .cat import env as cat_env
 from .catadditionalfasta import env as catadditionalfasta_env
+from .cellbender import env as cellbender_env
 from .deseq2_qc import env as deseq2_qc_env
 from .dupradar import env as dupradar_env
 from .fastqc import env as fastqc_env
@@ -67,6 +77,7 @@ from .gatk4 import env as gatk4_env
 from .gffread import env as gffread_env
 from .gtf2bed import env as gtf2bed_env
 from .gtffilter import env as gtffilter_env
+from .gtfgenefilter import env as gtfgenefilter_env
 from .gunzip import env as gunzip_env
 from .htslib import env as htslib_env
 from .intervals import env as intervals_env
@@ -74,10 +85,13 @@ from .mosdepth import env as mosdepth_env
 from .multiqc import env as multiqc_env
 from .multiqccustombiotype import env as multiqccustombiotype_env
 from .picard import env as picard_env
+from .qcatch import env as qcatch_env
 from .qualimap import env as qualimap_env
 from .rseqc import env as rseqc_env
 from .salmon import env as salmon_env
 from .samtools import env as samtools_env
+from .scanpy import env as scanpy_env
+from .simpleaf import env as simpleaf_env
 from .star import env as star_env
 from .stringtie import env as stringtie_env
 from .subread import env as subread_env
@@ -93,6 +107,8 @@ from .vcftools import env as vcftools_env
 env = flyte.TaskEnvironment(
     name="flyte_bio_modules",
     depends_on=[
+        anndata_env,
+        anndatar_env,
         bbmap_env,
         bcftools_env,
         bedtools_env,
@@ -101,6 +117,7 @@ env = flyte.TaskEnvironment(
         genomecov_env,
         cat_env,
         catadditionalfasta_env,
+        cellbender_env,
         deseq2_qc_env,
         dupradar_env,
         fastqc_env,
@@ -108,6 +125,7 @@ env = flyte.TaskEnvironment(
         gffread_env,
         gtf2bed_env,
         gtffilter_env,
+        gtfgenefilter_env,
         gunzip_env,
         htslib_env,
         intervals_env,
@@ -115,10 +133,13 @@ env = flyte.TaskEnvironment(
         multiqc_env,
         multiqccustombiotype_env,
         picard_env,
+        qcatch_env,
         qualimap_env,
         rseqc_env,
         salmon_env,
         samtools_env,
+        scanpy_env,
+        simpleaf_env,
         star_env,
         stringtie_env,
         subread_env,
@@ -134,12 +155,15 @@ env = flyte.TaskEnvironment(
 )
 
 __all__ = [
+    "anndata_env",
+    "anndatar_env",
     "bbmap_env",
     "bcftools_env",
     "bedtools_env",
     "bwa_env",
     "cat_env",
     "catadditionalfasta_env",
+    "cellbender_env",
     "deseq2_qc_env",
     "dupradar_env",
     "env",
@@ -150,6 +174,7 @@ __all__ = [
     "gffread_env",
     "gtf2bed_env",
     "gtffilter_env",
+    "gtfgenefilter_env",
     "gunzip_env",
     "htslib_env",
     "intervals_env",
@@ -157,10 +182,13 @@ __all__ = [
     "multiqc_env",
     "multiqccustombiotype_env",
     "picard_env",
+    "qcatch_env",
     "qualimap_env",
     "rseqc_env",
     "salmon_env",
     "samtools_env",
+    "scanpy_env",
+    "simpleaf_env",
     "star_env",
     "stringtie_env",
     "subread_env",

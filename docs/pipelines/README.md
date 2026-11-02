@@ -7,6 +7,7 @@ tests against that pipeline's own test profile.
 | Pipeline | What it does | Ported from |
 |---|---|---|
 | [rnaseq](rnaseq.md) | RNA-seq: STAR alignment, salmon quantification, and alignment and expression QC | rnaseq 3.26.0, `star_salmon` route |
+| [scrnaseq](scrnaseq.md) | Droplet single-cell RNA-seq: simpleaf (alevin-fry) quantification, cell QC, CellBender, h5ad/RDS matrices | scrnaseq 4.2.0, `simpleaf` route |
 | [variant_calling](variant_calling.md) | Germline short variants: BWA-MEM, GATK preprocessing and HaplotypeCaller | sarek 3.10.0, germline HaplotypeCaller route |
 
 ## How pipelines run
@@ -33,7 +34,7 @@ run and collects results. The default `cpu=2, memory="4Gi"` is plenty. Each
 tool runs as its own task, in parallel across samples, with Flyte's caching:
 re-running with the same inputs reuses every step that hasn't changed.
 
-Each pipeline's main function (`rnaseq()`, `variant_calling()`) runs the whole
+Each pipeline's main function (`rnaseq()`, `scrnaseq()`, `variant_calling()`) runs the whole
 route. Its steps are public too, e.g. `prepare_reference`, `map_reads` and
 `call_variants`, for when you need only part of it.
 
@@ -57,7 +58,7 @@ Reference inputs (FASTA, GTF, known sites) are task inputs like any other
 ## Outputs
 
 A pipeline returns a result object holding every output as Flyte `File`s and
-`Dir`s, e.g. `RnaseqResult` or `VariantCallingResult`. Everything stays in
+`Dir`s, e.g. `RnaseqResult`, `ScrnaseqResult` or `VariantCallingResult`. Everything stays in
 Flyte's storage.
 
 Like the Nextflow pipelines' `--outdir`, a pipeline can also lay its results
