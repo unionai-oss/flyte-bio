@@ -91,6 +91,8 @@ S1,s3://my-bucket/S1_L002_R1.fastq.gz,s3://my-bucket/S1_L002_R2.fastq.gz,5000,Br
 
 ## Options
 
+These can also come from a config file: [`conf/scrnaseq/scrnaseq.yaml`](../../src/flyte_bio/conf/scrnaseq/scrnaseq.yaml) lists them all (see [configuring a run](README.md#configuring-a-run-with-a-file)).
+
 | Option | Default | Meaning |
 |---|---|---|
 | `protocol` | required | `10XV1`, `10XV2`, `10XV3`, `10XV4` or `dropseq`. Any other value goes to simpleaf as its chemistry, e.g. a custom read geometry |

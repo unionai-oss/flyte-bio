@@ -72,6 +72,86 @@ Either way, `result.outdir` is that tree as a `Dir`, which a downstream task
 can take as an input. Copies within one object store are server-side. As
 upstream does by default, intermediates aren't published.
 
+## Configuring a run with a file
+
+Instead of passing options as arguments, you can keep them in a YAML file,
+like a Nextflow `-params-file`. `flyte_bio.config` turns a config into a
+pipeline's keyword arguments. It needs `flyte-bio[config]` in your task's
+image.
+
+A config is flat: one key per option of the pipeline function, with the same
+name and default. Files and directories are URIs:
+
+```yaml
+samplesheet: s3://my-bucket/samples.csv
+protocol: 10XV3
+fasta: s3://my-bucket/ref/genome.fa
+gtf: s3://my-bucket/ref/genes.gtf
+skip_cellbender: true
+```
+
+Your task takes the config as an OmegaConf `DictConfig` and calls
+`run_pipeline`:
+
+```python
+from flyte.io import Dir, File
+from omegaconf import DictConfig
+
+from flyte_bio.config import run_pipeline
+from flyte_bio.pipelines.scrnaseq import scrnaseq
+
+
+@env.task
+async def run(cfg: DictConfig, samplesheet: File | None = None) -> Dir:
+    result = await run_pipeline(scrnaseq, cfg, samplesheet=samplesheet, publish_results=True)
+    return result.outdir
+```
+
+The config is checked against the function's signature before anything runs.
+A misspelled option, a value of the wrong type or a missing required option
+fails with an error naming it. Keyword arguments to `run_pipeline` take
+precedence over the config; `None` ones are ignored. That's how a local file
+reaches the pipeline: `flyte run` uploads a task's `File` arguments, but a
+local path in a config is just a string, so the cluster can't read it.
+
+### With Hydra
+
+[`src/flyte_bio/conf/`](../../src/flyte_bio/conf/) has a
+[Hydra](https://hydra.cc) config per pipeline. `<pipeline>/<pipeline>.yaml`
+lists every option with its default, with `???` for the required ones, and
+`profile=test` adds upstream's test data. `flyte hydra run` composes a config
+and passes it to your task. It needs `flyte-bio[hydra]` where you launch the
+run:
+
+```bash
+flyte hydra run --config-path src/flyte_bio/conf/scrnaseq --config-name scrnaseq \
+    examples/scrnaseq.py scrnaseq_from_config \
+    --samplesheet samplesheet.csv --cfg profile=test --cfg skip_fastqc=true
+```
+
+`--cfg key=value` sets any option. With `--multirun`, comma-separated values
+launch one run per value (`--cfg simpleaf_umi_resolution=cr-like,parsimony`).
+
+Your own config can build on flyte-bio's, so it only lists what differs. Put
+this in `conf/my_scrnaseq.yaml` and pass `--config-path conf --config-name
+my_scrnaseq`:
+
+```yaml
+hydra:
+  searchpath:
+    - pkg://flyte_bio.conf
+defaults:
+  - scrnaseq/scrnaseq@_here_
+  - _self_
+protocol: 10XV3
+fasta: s3://my-bucket/ref/genome.fa
+gtf: s3://my-bucket/ref/genes.gtf
+```
+
+Options that aren't arguments of the pipeline function aren't configurable
+yet. In particular, per-tool CPU and memory aren't, because the module
+functions don't take resources.
+
 ## Shared utilities
 
 Two generic helpers are available for writing new pipelines:

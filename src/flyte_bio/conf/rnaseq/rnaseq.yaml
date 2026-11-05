@@ -1,0 +1,59 @@
+# rnaseq options: one key per keyword argument of flyte_bio.pipelines.rnaseq.rnaseq,
+# with its default (??? is required). See docs/pipelines/rnaseq.md#options.
+# Files and directories are URIs (s3://, gs://, https://). A local
+# samplesheet goes in as a task argument instead: --samplesheet my.csv
+defaults:
+  - _self_
+  - profile: null  # profile=test: upstream's test profile data
+
+samplesheet: ???
+fasta: ???
+gtf: null
+gff: null
+transcript_fasta: null
+additional_fasta: null
+salmon_index_dir: null
+bbsplit_fasta_list: null
+bbsplit_index_dir: null
+skip_bbsplit: true
+skip_linting: false
+extra_fqlint_args: --disable-validator P001
+skip_markduplicates: false
+skip_dupradar: false
+skip_qualimap: false
+skip_rseqc: false
+rseqc_modules:
+- bam_stat
+- inner_distance
+- infer_experiment
+- junction_annotation
+- junction_saturation
+- read_distribution
+- read_duplication
+skip_biotype_qc: false
+featurecounts_group_type: gene_biotype
+featurecounts_feature_type: exon
+skip_stringtie: false
+skip_bigwig: false
+skip_deseq2_qc: false
+min_mapped_reads: 5.0
+skip_multiqc: false
+seq_platform: ''
+seq_center: ''
+skip_fastqc: false
+skip_trimming: false
+min_trimmed_reads: 10000
+stranded_threshold: 0.8
+unstranded_threshold: 0.1
+with_umi: false
+skip_umi_extract: false
+umitools_extract_method: string
+umitools_bc_pattern: ''
+umitools_bc_pattern2: ''
+umitools_umi_separator: ''
+umi_discard_read: 0
+umitools_grouping_method: directional
+umitools_dedup_stats: false
+umitools_dedup_primary_only: false
+outdir: null
+publish_results: false

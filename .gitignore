@@ -225,3 +225,7 @@ __marimo__/
 tests/**/_fixtures/
 .DS_Store
 AGENTS.md
+
+# Hydra writes each launch's composed config here (flyte hydra run)
+outputs/
+multirun/

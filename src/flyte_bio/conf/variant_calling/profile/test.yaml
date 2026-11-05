@@ -1,0 +1,11 @@
+# @package _global_
+# Upstream's test profile data: one sample, two lanes, a 40 kb slice of
+# chr22. Its samplesheet is https://, which a task can't read, so download
+# it and pass it locally:
+#   curl -sO https://raw.githubusercontent.com/nf-core/sarek/3.10.0/tests/csv/3.0/fastq_single.csv
+#   ... --samplesheet fastq_single.csv
+fasta: https://raw.githubusercontent.com/nf-core/test-datasets/modules/data/genomics/homo_sapiens/genome/genome.fasta
+dbsnp: https://raw.githubusercontent.com/nf-core/test-datasets/modules/data/genomics/homo_sapiens/genome/vcf/dbsnp_146.hg38.vcf.gz
+known_indels:
+  - https://raw.githubusercontent.com/nf-core/test-datasets/modules/data/genomics/homo_sapiens/genome/vcf/mills_and_1000G.indels.vcf.gz
+intervals: https://raw.githubusercontent.com/nf-core/test-datasets/modules/data/genomics/homo_sapiens/genome/genome.interval_list
