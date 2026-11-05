@@ -1,0 +1,29 @@
+# scrnaseq options: one key per keyword argument of flyte_bio.pipelines.scrnaseq.scrnaseq,
+# with its default (??? is required). See docs/pipelines/scrnaseq.md#options.
+# Files and directories are URIs (s3://, gs://, https://). A local
+# samplesheet goes in as a task argument instead: --samplesheet my.csv
+defaults:
+  - _self_
+  - profile: null  # profile=test: upstream's test profile data
+
+samplesheet: ???
+fasta: ???
+gtf: ???
+protocol: ???
+barcode_whitelist: null
+simpleaf_index: null
+txp2gene: null
+transcript_fasta: null
+simpleaf_umi_resolution: cr-like
+skip_fastqc: false
+skip_qcatch: false
+remove_doublets: false
+qcatch_n_partitions: null
+skip_cellbender: false
+cellbender_gpu: false
+cellbender_args: ''
+skip_multiqc: false
+save_reference: false
+save_align_intermeds: true
+outdir: null
+publish_results: false

@@ -1,0 +1,8 @@
+# @package _global_
+# Upstream's test profile data: 5 small yeast samples. Its samplesheet is
+# https://, which a task can't read, so download it and pass it locally:
+#   curl -sO https://raw.githubusercontent.com/nf-core/test-datasets/626c8fab639062eade4b10747e919341cbf9b41a/samplesheet/v3.10/samplesheet_test.csv
+#   ... --samplesheet samplesheet_test.csv
+fasta: https://raw.githubusercontent.com/nf-core/test-datasets/626c8fab639062eade4b10747e919341cbf9b41a/reference/genome.fasta
+gtf: https://raw.githubusercontent.com/nf-core/test-datasets/626c8fab639062eade4b10747e919341cbf9b41a/reference/genes_with_empty_tid.gtf.gz
+transcript_fasta: https://raw.githubusercontent.com/nf-core/test-datasets/626c8fab639062eade4b10747e919341cbf9b41a/reference/transcriptome.fasta

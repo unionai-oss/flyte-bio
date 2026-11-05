@@ -24,7 +24,10 @@ flyte-bio isn't on PyPI yet. Install it from GitHub:
 uv add "flyte-bio @ https://github.com/unionai-oss/flyte-bio/archive/refs/heads/main.zip"
 ```
 
-It needs `flyte>=2.12.5`.
+It needs `flyte>=2.12.5`. Two extras configure pipelines from YAML files
+([configuring a run](docs/pipelines/README.md#configuring-a-run-with-a-file)):
+`flyte-bio[config]` in your task's image, and `flyte-bio[hydra]` where you
+launch runs with `flyte hydra run`.
 
 ## Usage
 
