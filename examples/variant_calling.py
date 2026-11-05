@@ -21,18 +21,31 @@ slice of chr22)::
 yield no calls after base-quality recalibration; real data does.) For your
 own data, give FASTQ paths the cluster can read (``s3://…``, ``gs://…``) and
 add ``--outdir s3://my-bucket/variant-calling`` to publish the results there.
+
+Or configure the run with a file: ``variant_calling_from_config`` takes every option
+from ``src/flyte_bio/conf/variant_calling/variant_calling.yaml``, and ``profile=test`` fills in the
+test data above (this needs ``flyte-bio[hydra]`` where you launch it)::
+
+    flyte hydra run --config-path src/flyte_bio/conf/variant_calling --config-name variant_calling \\
+        examples/variant_calling.py variant_calling_from_config \\
+        --samplesheet fastq_single.csv --cfg profile=test
+
+Other ``--cfg key=value`` arguments set any option, and comma-separated
+values (with ``--multirun``) launch one run per value.
 """
 
 import flyte
 from flyte.io import Dir, File
+from omegaconf import DictConfig
 
 from flyte_bio import env as bio_env
+from flyte_bio.config import run_pipeline
 from flyte_bio.pipelines.variant_calling import variant_calling
 
 # flyte-bio isn't on PyPI yet: install it from GitHub. To run your local
 # checkout instead, use `.with_uv_project("pyproject.toml",
 # project_install_mode="install_project")` from the repo root.
-FLYTE_BIO = "flyte-bio @ https://github.com/unionai-oss/flyte-bio/archive/refs/heads/main.zip"
+FLYTE_BIO = "flyte-bio[config] @ https://github.com/unionai-oss/flyte-bio/archive/refs/heads/main.zip"
 
 env = flyte.TaskEnvironment(
     name="variant_calling_example",
@@ -63,5 +76,16 @@ async def variant_calling_example(
         # Any other upstream option is a keyword argument, e.g. wes=True for exome data,
         # skip_baserecalibrator=True, skip_haplotypecaller_filter=True or nucleotides_per_second=...
     )
+    assert result.outdir is not None
+    return result.outdir
+
+
+@env.task
+async def variant_calling_from_config(cfg: DictConfig, samplesheet: File | None = None) -> Dir:
+    """Run variant_calling with the options in ``cfg``; return the published results.
+
+    ``samplesheet``, when given, takes precedence over ``cfg.samplesheet``, so a local file can be uploaded.
+    """
+    result = await run_pipeline(variant_calling, cfg, samplesheet=samplesheet, publish_results=True)
     assert result.outdir is not None
     return result.outdir

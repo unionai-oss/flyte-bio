@@ -1,0 +1,13 @@
+# @package _global_
+# Upstream's test profile data: two 10x v2 samples against mouse chr19. Its
+# samplesheet is https://, which a task can't read, so download it and pass
+# it locally:
+#   curl -sLO https://github.com/nf-core/test-datasets/raw/scrnaseq/samplesheet-2-0.csv
+#   ... --samplesheet samplesheet-2-0.csv
+# QCatch and CellBender need a realistic number of cells, so upstream's test
+# profile skips them.
+fasta: https://github.com/nf-core/test-datasets/raw/scrnaseq/reference/GRCm38.p6.genome.chr19.fa
+gtf: https://github.com/nf-core/test-datasets/raw/scrnaseq/reference/gencode.vM19.annotation.chr19.gtf
+protocol: 10XV2
+skip_qcatch: true
+skip_cellbender: true

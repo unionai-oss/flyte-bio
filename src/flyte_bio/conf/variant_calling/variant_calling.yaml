@@ -1,0 +1,33 @@
+# variant_calling options: one key per keyword argument of flyte_bio.pipelines.variant_calling.variant_calling,
+# with its default (??? is required). See docs/pipelines/variant_calling.md#options.
+# Files and directories are URIs (s3://, gs://, https://). A local
+# samplesheet goes in as a task argument instead: --samplesheet my.csv
+defaults:
+  - _self_
+  - profile: null  # profile=test: upstream's test profile data
+
+samplesheet: ???
+fasta: ???
+fai: null
+sequence_dict: null
+bwa_index: null
+dbsnp: null
+dbsnp_tbi: null
+known_indels: null
+known_indels_tbi: null
+intervals: null
+no_intervals: false
+nucleotides_per_second: 200000
+wes: false
+seq_platform: ILLUMINA
+seq_center: ''
+skip_fastqc: false
+skip_markduplicates: false
+skip_baserecalibrator: false
+skip_haplotypecaller_filter: false
+haplotypecaller_filter_args: --info-key CNN_1D
+gatk_pcr_indel_model: CONSERVATIVE
+skip_vcf_qc: false
+skip_multiqc: false
+outdir: null
+publish_results: false

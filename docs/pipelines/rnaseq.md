@@ -91,6 +91,8 @@ TREATED_REP1,s3://my-bucket/reads/treat1_R1.fastq.gz,,reverse
 
 ## Options
 
+These can also come from a config file: [`conf/rnaseq/rnaseq.yaml`](../../src/flyte_bio/conf/rnaseq/rnaseq.yaml) lists them all (see [configuring a run](README.md#configuring-a-run-with-a-file)).
+
 `rnaseq()` takes the upstream parameters as keyword arguments:
 
 | Option | Default | Meaning |

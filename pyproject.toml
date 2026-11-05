@@ -9,6 +9,12 @@ dependencies = [
     "flyte>=2.12.5",
 ]
 
+[project.optional-dependencies]
+# flyte_bio.config: OmegaConf configs as task inputs. Hydra (`flyte hydra
+# run`) is only needed where runs are launched, not in the task image.
+config = ["flyteplugins-omegaconf>=2.12.5"]
+hydra = ["flyteplugins-hydra>=2.12.5"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -25,9 +31,12 @@ include = ["src/flyte_bio", "README.md", "LICENSE"]
 # group into the test image, so these land in the pod. Once fixtures move
 # to S3 (obstore-native), neither is needed and both can be dropped.
 # anndata (with scipy) lets the scRNA-seq tests check h5ad contents.
+# The config plugins let the config tests load Hydra configs.
 dev = [
     "aiohttp",
     "anndata>=0.13.4",
+    "flyteplugins-hydra>=2.12.5",
+    "flyteplugins-omegaconf>=2.12.5",
     "requests",
 ]
 

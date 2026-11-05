@@ -98,6 +98,8 @@ P1,XX,0,P1_N,L002,s3://my-bucket/P1_N_L002_R1.fastq.gz,s3://my-bucket/P1_N_L002_
 
 ## Options
 
+These can also come from a config file: [`conf/variant_calling/variant_calling.yaml`](../../src/flyte_bio/conf/variant_calling/variant_calling.yaml) lists them all (see [configuring a run](README.md#configuring-a-run-with-a-file)).
+
 | Option | Default | Meaning |
 |---|---|---|
 | `fai`, `sequence_dict`, `bwa_index` | built | Prebuilt reference indexes |

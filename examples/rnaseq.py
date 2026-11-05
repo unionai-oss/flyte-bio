@@ -20,18 +20,31 @@ the task reads it itself, and reading ``https://`` files inside a task isn't
 reliable; the FASTQ and reference URLs only go to the tool tasks, which
 fetch ``https://`` fine. For your own data, use a samplesheet whose FASTQ
 paths are URIs the cluster can read (``s3://…``, ``gs://…``).
+
+Or configure the run with a file: ``rnaseq_from_config`` takes every option
+from ``src/flyte_bio/conf/rnaseq/rnaseq.yaml``, and ``profile=test`` fills in the
+test data above (this needs ``flyte-bio[hydra]`` where you launch it)::
+
+    flyte hydra run --config-path src/flyte_bio/conf/rnaseq --config-name rnaseq \\
+        examples/rnaseq.py rnaseq_from_config \\
+        --samplesheet samplesheet_test.csv --cfg profile=test
+
+Other ``--cfg key=value`` arguments set any option, and comma-separated
+values (with ``--multirun``) launch one run per value.
 """
 
 import flyte
 from flyte.io import Dir, File
+from omegaconf import DictConfig
 
 from flyte_bio import env as bio_env
+from flyte_bio.config import run_pipeline
 from flyte_bio.pipelines.rnaseq import rnaseq
 
 # flyte-bio isn't on PyPI yet: install it from GitHub. To run your local
 # checkout instead, use `.with_uv_project("pyproject.toml",
 # project_install_mode="install_project")` from the repo root.
-FLYTE_BIO = "flyte-bio @ https://github.com/unionai-oss/flyte-bio/archive/refs/heads/main.zip"
+FLYTE_BIO = "flyte-bio[config] @ https://github.com/unionai-oss/flyte-bio/archive/refs/heads/main.zip"
 
 env = flyte.TaskEnvironment(
     name="rnaseq_example",
@@ -65,5 +78,16 @@ async def rnaseq_example(
         # skip_bbsplit=False with bbsplit_fasta_list={...}, with_umi=True with
         # umitools_bc_pattern="NNNNNN", or skip_qualimap=True.
     )
+    assert result.outdir is not None
+    return result.outdir
+
+
+@env.task
+async def rnaseq_from_config(cfg: DictConfig, samplesheet: File | None = None) -> Dir:
+    """Run rnaseq with the options in ``cfg``; return the published results.
+
+    ``samplesheet``, when given, takes precedence over ``cfg.samplesheet``, so a local file can be uploaded.
+    """
+    result = await run_pipeline(rnaseq, cfg, samplesheet=samplesheet, publish_results=True)
     assert result.outdir is not None
     return result.outdir
