@@ -35,7 +35,9 @@ Conventions shared by every module:
   `ext.args` does. It's split on whitespace, so a single option value can't
   contain spaces.
 - **Resources are sized for typical inputs.** Each module sets its tasks'
-  CPU and memory near the top of its file, e.g. `bwa.MEM_RESOURCES`.
+  CPU and memory near the top of its file, e.g. `bwa.MEM_RESOURCES`. A
+  tool's task can be overridden (`bwa.bwa_mem_cmd.as_task().override(resources=...)`),
+  but the module functions don't take resources yet.
 - **Helper scripts are vendored unchanged.** Python, R and Perl helpers that a
   container doesn't include live in `flyte_bio.scripts` and are passed to the
   task as files.

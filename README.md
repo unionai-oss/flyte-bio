@@ -24,7 +24,7 @@ flyte-bio isn't on PyPI yet. Install it from GitHub:
 uv add "flyte-bio @ https://github.com/unionai-oss/flyte-bio/archive/refs/heads/main.zip"
 ```
 
-It needs `flyte>=2.12.1`.
+It needs `flyte>=2.12.5`.
 
 ## Usage
 
