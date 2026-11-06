@@ -5,6 +5,8 @@ Exposes:
 - :func:`gatk4_createsequencedictionary` — the ``.dict`` sequence dictionary
   of a FASTA.
 - :func:`gatk4_intervallisttobed` — convert a Picard interval list to BED.
+- :func:`gatk4_bedtointervallist` — convert a BED to a Picard interval list
+  against a sequence dictionary.
 - :func:`gatk4_markduplicates` — mark duplicates across one or more BAMs
   (e.g. a sample's lanes), writing BAM or, as upstream does, CRAM via
   samtools.
@@ -38,6 +40,8 @@ GATK4_IMAGE = "community.wave.seqera.io/library/gatk4_gcnvkernel:edb12e4f0bf02cd
 GATK4_SAMTOOLS_IMAGE = "community.wave.seqera.io/library/gatk4_gcnvkernel_htslib_samtools:d3becb6465454c35"
 # CNNScoreVariants needs GATK's python/CNN stack, which upstream gets from this image.
 GATK4_CNN_IMAGE = "quay.io/nf-core/gatk:4.5.0.0"
+# BedToIntervalList is pinned upstream to the newer, lighter GATK image.
+GATK4_LITE_IMAGE = "community.wave.seqera.io/library/gatk4-lite:4.7.0.0--79918b8b2632f4b1"
 
 DEFAULT_MEMORY_MB = 6144
 DEFAULT_RESOURCES = flyte.Resources(cpu=1, memory=f"{DEFAULT_MEMORY_MB}Mi")
@@ -84,6 +88,25 @@ gatk4_intervallisttobed_cmd = shell.create(
         W=$(mktemp -d); cd "$W"
         gatk --java-options "$JAVA_OPTIONS" IntervalListToBed \
             --INPUT "${{IN[0]}}" --OUTPUT {{outputs.results}}/{{inputs.prefix}}.bed --TMP_DIR . $ARGS
+    """,
+)
+
+gatk4_bedtointervallist_cmd = shell.create(
+    name="gatk4_bedtointervallist",
+    image=GATK4_LITE_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"bed": File, "dict": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
+        BED=({{inputs.bed}}); D=({{inputs.dict}})
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        gatk --java-options "$JAVA_OPTIONS" BedToIntervalList \
+            --INPUT "${{BED[0]}}" --OUTPUT {{outputs.results}}/{{inputs.prefix}}.interval_list \
+            --SEQUENCE_DICTIONARY "${{D[0]}}" --TMP_DIR . $ARGS
     """,
 )
 
@@ -368,7 +391,7 @@ gatk4_filtervarianttranches_cmd = shell.create(
 )
 
 
-# One image per environment: MarkDuplicates' and CNNScoreVariants' differ, so `env` aggregates three.
+# One image per environment: MarkDuplicates', CNNScoreVariants' and BedToIntervalList's differ, so `env` has four.
 gatk4_env = flyte.TaskEnvironment.from_task(
     "gatk4_tools",
     gatk4_createsequencedictionary_cmd.as_task(),
@@ -382,7 +405,8 @@ gatk4_env = flyte.TaskEnvironment.from_task(
 )
 gatk4_samtools_env = flyte.TaskEnvironment.from_task("gatk4_samtools", gatk4_markduplicates_cmd.as_task())
 gatk4_cnn_env = flyte.TaskEnvironment.from_task("gatk4_cnn", gatk4_cnnscorevariants_cmd.as_task())
-env = flyte.TaskEnvironment(name="gatk4", depends_on=[gatk4_env, gatk4_samtools_env, gatk4_cnn_env])
+gatk4_lite_env = flyte.TaskEnvironment.from_task("gatk4_lite", gatk4_bedtointervallist_cmd.as_task())
+env = flyte.TaskEnvironment(name="gatk4", depends_on=[gatk4_env, gatk4_samtools_env, gatk4_cnn_env, gatk4_lite_env])
 
 
 async def only_file(results: Dir, suffix: str, tool: str) -> File:
@@ -402,6 +426,12 @@ async def gatk4_intervallisttobed(intervals: File, prefix: str, args: str = "") 
     """``intervals`` (a Picard ``.interval_list``) as ``<prefix>.bed``."""
     results = await gatk4_intervallisttobed_cmd(intervals=intervals, prefix=prefix, args=args)
     return await only_file(results, f"{prefix}.bed", "IntervalListToBed")
+
+
+async def gatk4_bedtointervallist(bed: File, dict: File, prefix: str, args: str = "") -> File:
+    """``bed`` as a Picard interval list, ``<prefix>.interval_list``, headed by ``dict``."""
+    results = await gatk4_bedtointervallist_cmd(bed=bed, dict=dict, prefix=prefix, args=args)
+    return await only_file(results, f"{prefix}.interval_list", "BedToIntervalList")
 
 
 @dataclass

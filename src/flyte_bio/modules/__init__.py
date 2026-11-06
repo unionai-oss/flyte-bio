@@ -6,19 +6,21 @@ across its tasks:
 - :mod:`flyte_bio.modules.anndata` — subset an h5ad to listed barcodes.
 - :mod:`flyte_bio.modules.anndatar` — h5ad to Seurat / SingleCellExperiment RDS.
 - :mod:`flyte_bio.modules.bbmap` — BBSplit (index build + read binning).
-- :mod:`flyte_bio.modules.bcftools` — VCF statistics.
+- :mod:`flyte_bio.modules.bcftools` — VCF/BCF utilities (stats, sort, norm, view, filter, annotate, merge, mpileup).
 - :mod:`flyte_bio.modules.bedtools` — genome arithmetic (intersect, sort,
   merge, genomecov).
 - :mod:`flyte_bio.modules.bowtie2` — Bowtie 2 short-read alignment (build, align).
 - :mod:`flyte_bio.modules.bwa` — BWA short-read alignment (index).
 - :mod:`flyte_bio.modules.bwamem2` — BWA-MEM2 short-read alignment (index, mem).
-- :mod:`flyte_bio.modules.cat` — file concatenation (``cat_fastq``, ``cat_cat``).
+- :mod:`flyte_bio.modules.cat` — file concatenation (``cat_fastq``, ``cat_cat``, ``concatenate``).
 - :mod:`flyte_bio.modules.deseq2_qc` — DESeq2 PCA / sample-distance QC.
 - :mod:`flyte_bio.modules.dupradar` — duplication rate vs expression QC.
 - :mod:`flyte_bio.modules.fastp` — read trimming with QC reports.
 - :mod:`flyte_bio.modules.fastqc` — read quality-control reports.
 - :mod:`flyte_bio.modules.catadditionalfasta` — append an extra FASTA + GTF.
 - :mod:`flyte_bio.modules.cellbender` — ambient RNA and empty droplet removal (CPU or GPU).
+- :mod:`flyte_bio.modules.chromsizes` — chromosome sizes and FASTA index.
+- :mod:`flyte_bio.modules.cutadapt` — adapter, primer and quality trimming.
 - :mod:`flyte_bio.modules.fq` — FASTQ subsampling and linting.
 - :mod:`flyte_bio.modules.gatk4` — GATK tools (sequence dictionary, interval lists).
 - :mod:`flyte_bio.modules.gawk` — run an awk program over files.
@@ -34,7 +36,10 @@ across its tasks:
 - :mod:`flyte_bio.modules.mosdepth` — read-depth summaries.
 - :mod:`flyte_bio.modules.multiqc` — aggregate QC report.
 - :mod:`flyte_bio.modules.multiqccustombiotype` — biotype counts for MultiQC.
+- :mod:`flyte_bio.modules.nanoplot` — long-read QC plots and statistics.
 - :mod:`flyte_bio.modules.picard` — Picard MarkDuplicates.
+- :mod:`flyte_bio.modules.pigz` — parallel gzip compression and decompression.
+- :mod:`flyte_bio.modules.preseq` — library complexity extrapolation.
 - :mod:`flyte_bio.modules.qcatch` — cell-level QC of a simpleaf quantification.
 - :mod:`flyte_bio.modules.qualimap` — RNA-seq alignment QC.
 - :mod:`flyte_bio.modules.rseqc` — RSeQC BAM QC (7 scripts).
@@ -42,6 +47,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.scanpy` — AnnData conversions (simpleaf to h5ad, concatenation).
 - :mod:`flyte_bio.modules.simpleaf` — single-cell quantification with alevin-fry (index, quant).
 - :mod:`flyte_bio.modules.samtools` — alignment sort/index/stats/faidx.
+- :mod:`flyte_bio.modules.seqkit` — FASTA/FASTQ statistics and pattern replacement.
 - :mod:`flyte_bio.modules.star` — spliced RNA-seq aligner (index, align).
 - :mod:`flyte_bio.modules.stringtie` — transcript assembly / quantification.
 - :mod:`flyte_bio.modules.subread` — featureCounts.
@@ -52,6 +58,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.ucsc` — bedClip / bedGraphToBigWig.
 - :mod:`flyte_bio.modules.umitools` — UMI extraction and deduplication.
 - :mod:`flyte_bio.modules.untar` — tar archive extraction.
+- :mod:`flyte_bio.modules.unzip` — zip archive extraction.
 - :mod:`flyte_bio.modules.vcftools` — VCF summaries (Ts/Tv, filters).
 
 The module-level :data:`env` here is an aggregate
@@ -77,6 +84,8 @@ from .bwamem2 import env as bwamem2_env
 from .cat import env as cat_env
 from .catadditionalfasta import env as catadditionalfasta_env
 from .cellbender import env as cellbender_env
+from .chromsizes import env as chromsizes_env
+from .cutadapt import env as cutadapt_env
 from .deseq2_qc import env as deseq2_qc_env
 from .dupradar import env as dupradar_env
 from .fastp import env as fastp_env
@@ -96,13 +105,17 @@ from .minimap2 import env as minimap2_env
 from .mosdepth import env as mosdepth_env
 from .multiqc import env as multiqc_env
 from .multiqccustombiotype import env as multiqccustombiotype_env
+from .nanoplot import env as nanoplot_env
 from .picard import env as picard_env
+from .pigz import env as pigz_env
+from .preseq import env as preseq_env
 from .qcatch import env as qcatch_env
 from .qualimap import env as qualimap_env
 from .rseqc import env as rseqc_env
 from .salmon import env as salmon_env
 from .samtools import env as samtools_env
 from .scanpy import env as scanpy_env
+from .seqkit import env as seqkit_env
 from .simpleaf import env as simpleaf_env
 from .star import env as star_env
 from .stringtie import env as stringtie_env
@@ -114,6 +127,7 @@ from .tximport import env as tximport_env
 from .ucsc import env as ucsc_env
 from .umitools import env as umitools_env
 from .untar import env as untar_env
+from .unzip import env as unzip_env
 from .vcftools import env as vcftools_env
 
 env = flyte.TaskEnvironment(
@@ -130,6 +144,8 @@ env = flyte.TaskEnvironment(
         cat_env,
         catadditionalfasta_env,
         cellbender_env,
+        chromsizes_env,
+        cutadapt_env,
         deseq2_qc_env,
         dupradar_env,
         fastp_env,
@@ -150,13 +166,17 @@ env = flyte.TaskEnvironment(
         mosdepth_env,
         multiqc_env,
         multiqccustombiotype_env,
+        nanoplot_env,
         picard_env,
+        pigz_env,
+        preseq_env,
         qcatch_env,
         qualimap_env,
         rseqc_env,
         salmon_env,
         samtools_env,
         scanpy_env,
+        seqkit_env,
         simpleaf_env,
         star_env,
         stringtie_env,
@@ -168,6 +188,7 @@ env = flyte.TaskEnvironment(
         ucsc_env,
         umitools_env,
         untar_env,
+        unzip_env,
         vcftools_env,
     ],
 )
@@ -184,6 +205,8 @@ __all__ = [
     "cat_env",
     "catadditionalfasta_env",
     "cellbender_env",
+    "chromsizes_env",
+    "cutadapt_env",
     "deseq2_qc_env",
     "dupradar_env",
     "env",
@@ -205,13 +228,17 @@ __all__ = [
     "mosdepth_env",
     "multiqc_env",
     "multiqccustombiotype_env",
+    "nanoplot_env",
     "picard_env",
+    "pigz_env",
+    "preseq_env",
     "qcatch_env",
     "qualimap_env",
     "rseqc_env",
     "salmon_env",
     "samtools_env",
     "scanpy_env",
+    "seqkit_env",
     "simpleaf_env",
     "star_env",
     "stringtie_env",
@@ -223,5 +250,6 @@ __all__ = [
     "ucsc_env",
     "umitools_env",
     "untar_env",
+    "unzip_env",
     "vcftools_env",
 ]

@@ -1,9 +1,15 @@
-"""bbmap — BBSplit: bin reads by which reference they map to best.
+"""bbmap — BBTools: BBSplit binning and BBDuk trimming/filtering.
 
 Exposes :func:`bbsplit_index`, which builds a BBSplit index from a primary
 FASTA plus other references (e.g. contaminant genomes), and
 :func:`bbsplit`, which splits one sample's reads against that index and
 returns the reads assigned to the primary reference.
+
+It also exposes :func:`bbduk`, which trims or filters one sample's reads
+(quality trimming, adapter or contaminant k-mer matching against an optional
+reference FASTA, as ``args`` choose). As upstream, it writes
+``<prefix>.fastq.gz`` (single-end) or ``<prefix>_1.fastq.gz`` /
+``<prefix>_2.fastq.gz``, and BBDuk's output in ``<prefix>.bbduk.log``.
 
 The index-reuse handling is upstream's: BBSplit records each reference's
 source path and modification time in ``ref/genome/*/summary.txt`` and
@@ -28,6 +34,8 @@ BBMAP_IMAGE = "community.wave.seqera.io/library/bbmap_pigz:07416fe99b090fa9"
 BBSPLIT_CPUS = 8
 BBSPLIT_MEMORY_MB = 16384
 DEFAULT_RESOURCES = flyte.Resources(cpu=BBSPLIT_CPUS, memory=f"{BBSPLIT_MEMORY_MB}Mi")
+# Upstream's process_medium is 6 CPUs.
+BBDUK_RESOURCES = flyte.Resources(cpu=6, memory="16Gi")
 
 # Other references are passed as explicit `name=filename` pairs: a list[File]
 # is staged under original basenames and globbed alphabetically, so file
@@ -116,11 +124,44 @@ bbsplit_cmd = shell.create(
     """,
 )
 
+bbduk_cmd = shell.create(
+    name="bbduk",
+    image=BBMAP_IMAGE,
+    resources=BBDUK_RESOURCES,
+    inputs={"reads_1": File, "reads_2": File | None, "contaminants": File | None, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        R1=({{inputs.reads_1}})
+        shopt -s nullglob; R2=({{inputs.reads_2}}); CONTAMINANTS=({{inputs.contaminants}}); shopt -u nullglob
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        if [ ${{#R2[@]}} -eq 0 ]; then
+            RAW=(in="${{R1[0]}}"); TRIMMED=(out="$OUT/$P.fastq.gz")
+        else
+            RAW=(in1="${{R1[0]}}" in2="${{R2[0]}}"); TRIMMED=(out1="$OUT/${{P}}_1.fastq.gz" out2="$OUT/${{P}}_2.fastq.gz")
+        fi
+        REF=(); [ ${{#CONTAMINANTS[@]}} -gt 0 ] && REF=(ref="${{CONTAMINANTS[0]}}")
+        W=$(mktemp -d); cd "$W"
+        bbduk.sh \
+            -Xmx{JAVA_HEAP_MB}M \
+            "${{RAW[@]}}" \
+            "${{TRIMMED[@]}}" \
+            threads=$TASK_CPUS \
+            $ARGS \
+            "${{REF[@]}}" \
+            &> "$OUT/$P.bbduk.log"
+    """,
+)
+
 
 env = flyte.TaskEnvironment.from_task(
     "bbmap",
     bbsplit_index_cmd.as_task(),
     bbsplit_cmd.as_task(),
+    bbduk_cmd.as_task(),
 )
 
 
@@ -179,3 +220,31 @@ async def bbsplit(
     return BBSplitResult(
         await pick(f"{prefix}_primary_1.fastq.gz"), await pick(f"{prefix}_primary_2.fastq.gz"), stats, log, results
     )
+
+
+@dataclass
+class BBDukResult:
+    reads: list[File]  # <prefix>.fastq.gz, or <prefix>_1.fastq.gz and <prefix>_2.fastq.gz
+    log: File  # <prefix>.bbduk.log
+
+
+async def bbduk(
+    reads_1: File, reads_2: File | None = None, contaminants: File | None = None, prefix: str = "bbduk", args: str = ""
+) -> BBDukResult:
+    """Trim or filter one sample's reads with BBDuk; ``reads_2`` is None for single-end."""
+    results = await bbduk_cmd(
+        reads_1=reads_1,
+        reads_2=reads_2,
+        contaminants=contaminants,
+        prefix=prefix,
+        args=args,
+    )
+
+    async def pick(name: str) -> File:
+        found = await results.get_file(name)
+        if found is None:
+            raise FileNotFoundError(f"bbduk wrote no {name}")
+        return found
+
+    names = [f"{prefix}.fastq.gz"] if reads_2 is None else [f"{prefix}_1.fastq.gz", f"{prefix}_2.fastq.gz"]
+    return BBDukResult(reads=[await pick(name) for name in names], log=await pick(f"{prefix}.bbduk.log"))

@@ -8,6 +8,7 @@ from flyte.io import File
 from flyte_bio.modules.gatk4 import (
     gatk4_applybqsr,
     gatk4_baserecalibrator,
+    gatk4_bedtointervallist,
     gatk4_cnnscorevariants,
     gatk4_createsequencedictionary,
     gatk4_filtervarianttranches,
@@ -61,6 +62,16 @@ async def test_intervallisttobed() -> None:
     intervals = await fixture("genomics/homo_sapiens/genome/chr21/sequence/genome.interval_list")
     bed = await gatk4_intervallisttobed(intervals, prefix="test")
     await assert_md5(bed, "9046675d01199fbbee79f2bc1c5dce52", label="test.bed")
+
+
+@env.task
+async def test_gatk4_bedtointervallist() -> None:
+    # upstream case: gatk4/bedtointervallist "test_gatk4_bedtointervallist" (GATK 4.7.0.0)
+    bed = await fixture(SC2 + "genome/bed/test.bed")
+    dict_ = await fixture(SC2 + "genome/genome.dict")
+    interval_list = await gatk4_bedtointervallist(bed, dict_, prefix="test")
+    assert interval_list.path.endswith("/test.interval_list"), interval_list.path
+    await assert_md5(interval_list, "e51101c9357fb2d59fd30e370eefa39c", label="test.interval_list")
 
 
 @env.task
@@ -218,6 +229,7 @@ async def test_filtervarianttranches() -> None:
 tests = [
     test_createsequencedictionary,
     test_intervallisttobed,
+    test_gatk4_bedtointervallist,
     test_markduplicates_multiple,
     test_baserecalibrator,
     test_gatherbqsrreports,

@@ -10,24 +10,44 @@ Exposes the subset of the samtools suite the RNA-seq pipeline leans on:
 - :data:`samtools_stats` — full alignment statistics.
 - :data:`samtools_flagstat` — FLAG-field tallies.
 - :data:`samtools_idxstats` — per-reference mapped/unmapped counts.
+- :func:`samtools_fastq` — convert an alignment's reads back to FASTQ.
+- :func:`samtools_collatefastq` — group an alignment's reads by name, then
+  convert them to FASTQ (for coordinate-sorted inputs).
 
-All tasks share one htslib+samtools biocontainer, so they live in a single
-:class:`flyte.TaskEnvironment`.
+The FASTQ conversions write upstream's names: ``<prefix>_1`` and
+``<prefix>_2`` for paired reads (``<prefix>_1`` alone for single-end), or
+``<prefix>_interleaved`` with ``interleave`` (paired-end only, uncompressed);
+``<prefix>_singleton`` for reads whose mate is missing (not written when
+interleaving); and ``<prefix>_other`` for reads flagged neither or both
+READ1 and READ2. :func:`samtools_fastq` uses ``.fastq.gz`` (``.fastq`` when
+interleaved), :func:`samtools_collatefastq` ``.fq.gz`` (``.fq``). As
+upstream, ``samtools fastq`` gets ``--threads`` of the task's CPUs minus 1,
+and ``collate`` and its ``fastq`` the task's CPUs each.
+
+Each upstream module pins its own samtools build, so the FASTQ conversions
+have their own environments; :data:`env` aggregates them.
 """
 
-
+from dataclasses import dataclass
 
 import flyte
 from flyte.extras import shell
 from flyte.io import Dir, File
 
+from flyte_bio.limits import TASK_LIMITS
+
 # Pinned biocontainer URI (matches the version the RNA-seq pipeline pins).
 SAMTOOLS_IMAGE = "community.wave.seqera.io/library/htslib_samtools:1.23.1--5b6bb4ede7e612e5"
+# The images the upstream fastq and collatefastq modules pin.
+SAMTOOLS_FASTQ_IMAGE = "community.wave.seqera.io/library/htslib_samtools:1.25--704fb80d75745bd4"
+SAMTOOLS_COLLATEFASTQ_IMAGE = "community.wave.seqera.io/library/htslib_samtools_xz:ca51bc8a00d53523"
 
 # Most of these are single-threaded I/O over modest inputs; sort is the one
 # memory/throughput-sensitive step.
 DEFAULT_RESOURCES = flyte.Resources(cpu=1, memory="6Gi")
 SORT_RESOURCES = flyte.Resources(cpu=4, memory="12Gi")
+# Upstream's process_low for the FASTQ conversions.
+FASTQ_RESOURCES = flyte.Resources(cpu=2, memory="4Gi")
 
 
 # `faidx` writes the index next to its input, so symlink the FASTA into the
@@ -189,8 +209,88 @@ samtools_idxstats = shell.create(
 )
 
 
-env = flyte.TaskEnvironment.from_task(
-    "samtools",
+samtools_fastq_cmd = shell.create(
+    name="samtools_fastq",
+    image=SAMTOOLS_FASTQ_IMAGE,
+    resources=FASTQ_RESOURCES,
+    inputs={"alignment": File, "prefix": str, "interleave": bool, "single_end": bool, "args": str},
+    defaults={"interleave": False, "single_end": False, "args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        IN=({{inputs.alignment}})
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        THREADS=$(( TASK_CPUS - 1 ))
+        if [ {{inputs.interleave}} = true ] && [ {{inputs.single_end}} = false ]; then
+            samtools fastq $ARGS --threads $THREADS -0 "$OUT/${{P}}_other.fastq.gz" "${{IN[0]}}" \
+                > "$OUT/${{P}}_interleaved.fastq"
+        elif [ {{inputs.single_end}} = true ]; then
+            samtools fastq $ARGS --threads $THREADS -0 "$OUT/${{P}}_other.fastq.gz" "${{IN[0]}}" \
+                -1 "$OUT/${{P}}_1.fastq.gz" -s "$OUT/${{P}}_singleton.fastq.gz"
+        else
+            samtools fastq $ARGS --threads $THREADS -0 "$OUT/${{P}}_other.fastq.gz" "${{IN[0]}}" \
+                -1 "$OUT/${{P}}_1.fastq.gz" -2 "$OUT/${{P}}_2.fastq.gz" -s "$OUT/${{P}}_singleton.fastq.gz"
+        fi
+    """,
+)
+
+
+# `collate -O` streams name-grouped records into `fastq`; its `.` is the
+# prefix for temporary files, so run in a writable work dir. A CRAM needs
+# the reference, linked with its .fai into the work dir (htslib may index it).
+# `args` goes to collate, `args2` to fastq.
+samtools_collatefastq_cmd = shell.create(
+    name="samtools_collatefastq",
+    image=SAMTOOLS_COLLATEFASTQ_IMAGE,
+    resources=FASTQ_RESOURCES,
+    inputs={
+        "alignment": File,
+        "fasta": File | None,
+        "fai": File | None,
+        "prefix": str,
+        "interleave": bool,
+        "single_end": bool,
+        "args": str,
+        "args2": str,
+    },
+    defaults={"interleave": False, "single_end": False, "args": "", "args2": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        IN=({{inputs.alignment}})
+        shopt -s nullglob; FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); shopt -u nullglob
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        ARGS2={{inputs.args2}}
+        OUT={{outputs.results}}
+        set -o pipefail
+        W=$(mktemp -d); cd "$W"
+        REF=()
+        if [ ${{#FA[@]}} -gt 0 ]; then
+            NAME=$(basename "${{FA[0]}}")
+            ln -s "${{FA[0]}}" "$NAME"
+            if [ ${{#FAI[@]}} -gt 0 ]; then ln -s "${{FAI[0]}}" "$NAME.fai"; fi
+            REF=(--reference "$NAME")
+        fi
+        if [ {{inputs.interleave}} = true ] && [ {{inputs.single_end}} = false ]; then
+            OUTPUT=()
+        elif [ {{inputs.single_end}} = true ]; then
+            OUTPUT=(-1 "$OUT/${{P}}_1.fq.gz" -s "$OUT/${{P}}_singleton.fq.gz")
+        else
+            OUTPUT=(-1 "$OUT/${{P}}_1.fq.gz" -2 "$OUT/${{P}}_2.fq.gz" -s "$OUT/${{P}}_singleton.fq.gz")
+        fi
+        samtools collate $ARGS --threads $TASK_CPUS "${{REF[@]}}" -O "${{IN[0]}}" . \
+            | samtools fastq $ARGS2 --threads $TASK_CPUS "${{REF[@]}}" -0 "$OUT/${{P}}_other.fq.gz" \
+                "${{OUTPUT[@]}}" > fastq.out
+        if [ ${{#OUTPUT[@]}} -eq 0 ]; then mv fastq.out "$OUT/${{P}}_interleaved.fq"; fi
+    """,
+)
+
+
+samtools_tools_env = flyte.TaskEnvironment.from_task(
+    "samtools_tools",
     samtools_faidx.as_task(),
     samtools_sort.as_task(),
     samtools_view.as_task(),
@@ -199,6 +299,13 @@ env = flyte.TaskEnvironment.from_task(
     samtools_stats.as_task(),
     samtools_flagstat.as_task(),
     samtools_idxstats.as_task(),
+)
+samtools_fastq_env = flyte.TaskEnvironment.from_task("samtools_fastq", samtools_fastq_cmd.as_task())
+samtools_collatefastq_env = flyte.TaskEnvironment.from_task(
+    "samtools_collatefastq", samtools_collatefastq_cmd.as_task()
+)
+env = flyte.TaskEnvironment(
+    name="samtools", depends_on=[samtools_tools_env, samtools_fastq_env, samtools_collatefastq_env]
 )
 
 
@@ -218,3 +325,77 @@ async def samtools_merge(
     if len(merged) != 1:
         raise FileNotFoundError(f"samtools merge wrote {len(merged)} {prefix}.* files, expected one")
     return merged[0]
+
+
+@dataclass
+class SamtoolsFastqResult:
+    fastq: list[File]  # <prefix>_1 (and <prefix>_2 for paired reads); empty when interleaved
+    interleaved: File | None  # with interleave (paired-end only)
+    singleton: File | None  # reads whose mate is missing; None when interleaved
+    other: File  # reads flagged neither or both READ1 and READ2
+    results: Dir  # everything samtools wrote
+
+
+async def pick_fastq(results: Dir, prefix: str, ext: str, interleaved: bool, single_end: bool) -> SamtoolsFastqResult:
+    async def pick(name: str) -> File:
+        found = await results.get_file(name)
+        if found is None:
+            raise FileNotFoundError(f"samtools fastq wrote no {name}")
+        return found
+
+    if interleaved:
+        fastq, singleton = [], None
+        interleaved_file = await pick(f"{prefix}_interleaved.{ext}")
+    else:
+        mates = ["1"] if single_end else ["1", "2"]
+        fastq = [await pick(f"{prefix}_{mate}.{ext}.gz") for mate in mates]
+        singleton = await pick(f"{prefix}_singleton.{ext}.gz")
+        interleaved_file = None
+    return SamtoolsFastqResult(
+        fastq=fastq,
+        interleaved=interleaved_file,
+        singleton=singleton,
+        other=await pick(f"{prefix}_other.{ext}.gz"),
+        results=results,
+    )
+
+
+async def samtools_fastq(
+    alignment: File,
+    prefix: str,
+    interleave: bool = False,
+    single_end: bool = False,
+    args: str = "",
+) -> SamtoolsFastqResult:
+    """The reads of a name-grouped ``alignment`` (SAM/BAM/CRAM) as FASTQ, under upstream's names."""
+    results = await samtools_fastq_cmd(
+        alignment=alignment, prefix=prefix, interleave=interleave, single_end=single_end, args=args
+    )
+    return await pick_fastq(results, prefix, "fastq", interleave and not single_end, single_end)
+
+
+async def samtools_collatefastq(
+    alignment: File,
+    prefix: str,
+    fasta: File | None = None,
+    fai: File | None = None,
+    interleave: bool = False,
+    single_end: bool = False,
+    args: str = "",
+    args2: str = "",
+) -> SamtoolsFastqResult:
+    """The reads of ``alignment`` grouped by name and written as FASTQ; a CRAM needs ``fasta``.
+
+    ``args`` goes to ``samtools collate``, ``args2`` to ``samtools fastq``.
+    """
+    results = await samtools_collatefastq_cmd(
+        alignment=alignment,
+        fasta=fasta,
+        fai=fai,
+        prefix=prefix,
+        interleave=interleave,
+        single_end=single_end,
+        args=args,
+        args2=args2,
+    )
+    return await pick_fastq(results, prefix, "fq", interleave and not single_end, single_end)

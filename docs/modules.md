@@ -58,41 +58,47 @@ Pipeline columns show which pipelines use each module.
 |---|---|---|---|
 | `anndata` | Keep an h5ad's cells with listed barcodes | `anndata_barcodes` | scrnaseq |
 | `anndatar` | h5ad to Seurat and SingleCellExperiment RDS | `anndatar_convert` | scrnaseq |
-| `bbmap` | BBSplit: bin reads by the reference they map to best | `bbsplit_index`, `bbsplit` | rnaseq |
-| `bcftools` | VCF statistics | `bcftools_stats` | variant_calling |
+| `bbmap` | BBTools: BBSplit binning of reads by the reference they map to best; BBDuk quality, adapter and contaminant trimming | `bbsplit_index`, `bbsplit`, `bbduk` | rnaseq |
+| `bcftools` | VCF/BCF utilities: statistics, sort, normalise, view, filter, annotate, merge, mpileup calling | `bcftools_stats`, `bcftools_sort`, `bcftools_norm`, `bcftools_view`, `bcftools_filter`, `bcftools_annotate`, `bcftools_merge`, `bcftools_mpileup` | variant_calling |
 | `bedtools` | Genome arithmetic | `bedtools_intersect`, `bedtools_sort`, `bedtools_merge`, `bedtools_genomecov` | rnaseq |
 | `bowtie2` | Bowtie 2 short-read alignment: build an index, align reads through samtools to BAM/SAM/CRAM, with the log and optional unaligned reads | `bowtie2_build`, `bowtie2_align` | — |
 | `bwa` | BWA short-read alignment | `bwa_index`, `bwa_mem` | variant_calling |
 | `bwamem2` | BWA-MEM2 index and short-read alignment, piped through samtools sort or view | `bwamem2_index`, `bwamem2_mem` | — |
-| `cat` | Concatenate a sample's FASTQs; concatenate any files, (de)compressing by extension | `cat_fastq`, `cat_cat` | rnaseq |
+| `cat` | Concatenate a sample's FASTQs; concatenate any files, (de)compressing by extension | `cat_fastq`, `cat_cat`, `concatenate` | rnaseq |
 | `catadditionalfasta` | Append extra sequences (e.g. spike-ins) to a genome and GTF | `cat_additional_fasta` | rnaseq |
 | `cellbender` | Remove ambient RNA and empty droplets (CPU or GPU) | `cellbender_removebackground` | scrnaseq |
+| `chromsizes` | Chromosome sizes and FASTA index (`.fai`, `.gzi` if bgzipped) | `chrom_sizes` | — |
+| `cutadapt` | Adapter, primer and quality trimming of FASTQ reads (single- or paired-end) | `cutadapt` | — |
 | `deseq2_qc` | Sample-level QC of a count matrix with DESeq2 (PCA, distances) | `deseq2_qc` | rnaseq |
 | `dupradar` | Duplication rate vs. expression for RNA-seq BAMs | `dupradar` | rnaseq |
 | `fastp` | Adapter and quality trimming with QC reports (single-end, paired-end, interleaved) | `fastp` | — |
 | `fastqc` | Read quality reports | `fastqc`, `fastqc_reads` | rnaseq, scrnaseq, variant_calling |
 | `fq` | FASTQ subsampling and validation | `fq_subsample`, `fq_lint` | rnaseq |
-| `gatk4` | GATK: sequence dictionary, interval lists, MarkDuplicates, base-quality recalibration, HaplotypeCaller, VCF merging, CNN scoring and tranche filtering | `gatk4_createsequencedictionary`, `gatk4_intervallisttobed`, `gatk4_markduplicates`, `gatk4_baserecalibrator`, `gatk4_gatherbqsrreports`, `gatk4_applybqsr`, `gatk4_haplotypecaller`, `gatk4_mergevcfs`, `gatk4_cnnscorevariants`, `gatk4_filtervarianttranches` | variant_calling |
+| `gatk4` | GATK: sequence dictionary, interval list and BED conversion, MarkDuplicates, base-quality recalibration, HaplotypeCaller, VCF merging, CNN scoring and tranche filtering | `gatk4_createsequencedictionary`, `gatk4_intervallisttobed`, `gatk4_bedtointervallist`, `gatk4_markduplicates`, `gatk4_baserecalibrator`, `gatk4_gatherbqsrreports`, `gatk4_applybqsr`, `gatk4_haplotypecaller`, `gatk4_mergevcfs`, `gatk4_cnnscorevariants`, `gatk4_filtervarianttranches` | variant_calling |
 | `gawk` | Run an awk program (text or file) over files, decompressing `.gz` inputs and optionally gzipping the output | `gawk` | — |
 | `gffread` | Convert GFF to GTF; extract transcript sequences | `gffread_gff_to_gtf`, `gffread_transcripts_fasta` | rnaseq |
 | `gtf2bed` | BED12 gene models from a GTF | `gtf2bed` | rnaseq |
 | `gtffilter` | Restrict a GTF to a genome's sequences | `gtf_filter` | rnaseq |
 | `gtfgenefilter` | Keep the GTF lines on a genome's sequences (single-cell) | `gtf_gene_filter` | scrnaseq |
 | `gunzip` | Decompress a gzipped file | `gunzip` | rnaseq, scrnaseq |
-| `htslib` | bgzip and tabix | `htslib_bgziptabix` | variant_calling |
+| `htslib` | bgzip and tabix | `htslib_bgziptabix`, `tabix_tabix`, `tabix_bgzip` | variant_calling |
 | `intervals` | Build genomic intervals and split them for scatter-gather | `build_intervals`, `create_intervals_bed` | variant_calling |
 | `kraken2` | Classify reads taxonomically against a Kraken2 database | `kraken2` | — |
 | `minimap2` | Align long or short reads (FASTQ or SAM/BAM/CRAM) to a FASTA or `.mmi` index, writing sorted BAM or PAF; build `.mmi` indexes | `minimap2_index`, `minimap2_align` | — |
 | `mosdepth` | Read-depth summaries of BAM/CRAM files | `mosdepth` | variant_calling |
 | `multiqc` | Aggregate QC reports into one HTML report | `multiqc` | rnaseq, scrnaseq, variant_calling |
 | `multiqccustombiotype` | featureCounts biotype counts as MultiQC content | `multiqc_custom_biotype` | rnaseq |
-| `picard` | Picard MarkDuplicates | `picard_markduplicates` | rnaseq |
+| `nanoplot` | Long-read QC plots and summary statistics from a FASTQ or sequencing summary | `nanoplot` | — |
+| `picard` | Picard MarkDuplicates and CollectMultipleMetrics | `picard_markduplicates`, `picard_collectmultiplemetrics` | rnaseq |
+| `pigz` | Parallel gzip compression and decompression | `pigz_compress`, `pigz_uncompress` | — |
+| `preseq` | Library complexity extrapolation (`preseq lc_extrap`) from mapped reads | `preseq_lcextrap` | — |
 | `qcatch` | Cell calling and cell-level QC of a simpleaf quantification | `qcatch` | scrnaseq |
 | `qualimap` | RNA-seq alignment QC | `qualimap_rnaseq` | rnaseq |
 | `rseqc` | RNA-seq BAM QC (RSeQC) | `bam_stat`, `infer_experiment`, `inner_distance`, `junction_annotation`, `junction_saturation`, `read_distribution`, `read_duplication`, `rseqc` | rnaseq |
 | `salmon` | Transcript quantification | `salmon_index`, `salmon_quant_reads`, `salmon_quant_bam` | rnaseq |
-| `samtools` | Index, sort, view, merge and summarise alignments | `samtools_faidx`, `samtools_sort`, `samtools_view`, `samtools_merge`, `samtools_index`, `samtools_stats`, `samtools_flagstat`, `samtools_idxstats` | rnaseq, variant_calling |
+| `samtools` | Index, sort, view, merge and summarise alignments; convert them back to FASTQ | `samtools_faidx`, `samtools_sort`, `samtools_view`, `samtools_merge`, `samtools_index`, `samtools_stats`, `samtools_flagstat`, `samtools_idxstats`, `samtools_fastq`, `samtools_collatefastq` | rnaseq, variant_calling |
 | `scanpy` | simpleaf counts to h5ad; concatenate h5ads | `mtx_to_h5ad_simpleaf`, `concat_h5ad` | scrnaseq |
+| `seqkit` | FASTA/FASTQ statistics tables; pattern replacement in names or sequences | `seqkit_stats`, `seqkit_replace` | — |
 | `simpleaf` | Single-cell quantification with alevin-fry (index, quant) | `simpleaf_index`, `simpleaf_quant` | scrnaseq |
 | `star` | Spliced RNA-seq alignment | `star_genome_generate`, `star_align` | rnaseq |
 | `stringtie` | Transcript assembly and quantification | `stringtie` | rnaseq |
@@ -104,6 +110,7 @@ Pipeline columns show which pipelines use each module.
 | `ucsc` | UCSC utilities: clip bedGraphs, convert to bigWig | `bedclip`, `bedgraphtobigwig` | rnaseq |
 | `umitools` | UMI extraction and deduplication | `umitools_extract`, `umitools_dedup`, `umitools_prepareforrsem` | rnaseq |
 | `untar` | Extract a tar archive | `untar` | rnaseq |
+| `unzip` | Extract a zip (or other 7-Zip-readable) archive into a Dir | `unzip` | — |
 | `vcftools` | VCF summaries (Ts/Tv, FILTER, frequencies) | `vcftools` | variant_calling |
 
 Each module's docstring describes its tools' inputs, outputs and naming in
