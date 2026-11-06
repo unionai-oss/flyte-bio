@@ -1,9 +1,8 @@
 """Tests for flyte_bio.modules.fastp.
 
-The cases and expected md5s are upstream's fastp tests (modules commit 9a1cc9f,
-fastp 1.4.0). nf-test computes the
-md5s over the decompressed reads. The module's 4 CPUs match the 4 that
-upstream's thread-checking cases set.
+The cases and expected md5s are upstream's fastp tests (modules commit
+9a1cc9f, fastp 1.4.0). nf-test computes the md5s over the decompressed reads.
+The module's 4 CPUs match the 4 that upstream's thread-checking cases set.
 """
 
 from flyte.io import File
