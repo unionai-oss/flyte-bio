@@ -13,6 +13,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.cat` — file concatenation (``cat_fastq``).
 - :mod:`flyte_bio.modules.deseq2_qc` — DESeq2 PCA / sample-distance QC.
 - :mod:`flyte_bio.modules.dupradar` — duplication rate vs expression QC.
+- :mod:`flyte_bio.modules.fastp` — read trimming with QC reports.
 - :mod:`flyte_bio.modules.fastqc` — read quality-control reports.
 - :mod:`flyte_bio.modules.catadditionalfasta` — append an extra FASTA + GTF.
 - :mod:`flyte_bio.modules.cellbender` — ambient RNA and empty droplet removal (CPU or GPU).
@@ -71,6 +72,7 @@ from .catadditionalfasta import env as catadditionalfasta_env
 from .cellbender import env as cellbender_env
 from .deseq2_qc import env as deseq2_qc_env
 from .dupradar import env as dupradar_env
+from .fastp import env as fastp_env
 from .fastqc import env as fastqc_env
 from .fq import env as fq_env
 from .gatk4 import env as gatk4_env
@@ -120,6 +122,7 @@ env = flyte.TaskEnvironment(
         cellbender_env,
         deseq2_qc_env,
         dupradar_env,
+        fastp_env,
         fastqc_env,
         fq_env,
         gffread_env,
@@ -167,6 +170,7 @@ __all__ = [
     "deseq2_qc_env",
     "dupradar_env",
     "env",
+    "fastp_env",
     "fastqc_env",
     "fq_env",
     "gatk4_env",

@@ -11,7 +11,9 @@ nf-core pipeline index (`https://nf-co.re/pipelines.json`), taken on
 Pipelines written before shared modules existed aren't counted.
 
 [`module-popularity.csv`](module-popularity.csv) has every used module with its
-count, tranche, whether it's ported, and the pipelines that use it.
+count, tranche, whether it's ported, and the pipelines that use it. Its
+`ported` column is kept current as modules land; the counts below are from
+the ranking.
 
 Not ranked:
 
