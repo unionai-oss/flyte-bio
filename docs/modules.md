@@ -61,8 +61,10 @@ Pipeline columns show which pipelines use each module.
 | `bbmap` | BBSplit: bin reads by the reference they map to best | `bbsplit_index`, `bbsplit` | rnaseq |
 | `bcftools` | VCF statistics | `bcftools_stats` | variant_calling |
 | `bedtools` | Genome arithmetic | `bedtools_intersect`, `bedtools_sort`, `bedtools_merge`, `bedtools_genomecov` | rnaseq |
+| `bowtie2` | Bowtie 2 short-read alignment: build an index, align reads through samtools to BAM/SAM/CRAM, with the log and optional unaligned reads | `bowtie2_build`, `bowtie2_align` | — |
 | `bwa` | BWA short-read alignment | `bwa_index`, `bwa_mem` | variant_calling |
-| `cat` | Concatenate a sample's FASTQs | `cat_fastq` | rnaseq |
+| `bwamem2` | BWA-MEM2 index and short-read alignment, piped through samtools sort or view | `bwamem2_index`, `bwamem2_mem` | — |
+| `cat` | Concatenate a sample's FASTQs; concatenate any files, (de)compressing by extension | `cat_fastq`, `cat_cat` | rnaseq |
 | `catadditionalfasta` | Append extra sequences (e.g. spike-ins) to a genome and GTF | `cat_additional_fasta` | rnaseq |
 | `cellbender` | Remove ambient RNA and empty droplets (CPU or GPU) | `cellbender_removebackground` | scrnaseq |
 | `deseq2_qc` | Sample-level QC of a count matrix with DESeq2 (PCA, distances) | `deseq2_qc` | rnaseq |
@@ -71,6 +73,7 @@ Pipeline columns show which pipelines use each module.
 | `fastqc` | Read quality reports | `fastqc`, `fastqc_reads` | rnaseq, scrnaseq, variant_calling |
 | `fq` | FASTQ subsampling and validation | `fq_subsample`, `fq_lint` | rnaseq |
 | `gatk4` | GATK: sequence dictionary, interval lists, MarkDuplicates, base-quality recalibration, HaplotypeCaller, VCF merging, CNN scoring and tranche filtering | `gatk4_createsequencedictionary`, `gatk4_intervallisttobed`, `gatk4_markduplicates`, `gatk4_baserecalibrator`, `gatk4_gatherbqsrreports`, `gatk4_applybqsr`, `gatk4_haplotypecaller`, `gatk4_mergevcfs`, `gatk4_cnnscorevariants`, `gatk4_filtervarianttranches` | variant_calling |
+| `gawk` | Run an awk program (text or file) over files, decompressing `.gz` inputs and optionally gzipping the output | `gawk` | — |
 | `gffread` | Convert GFF to GTF; extract transcript sequences | `gffread_gff_to_gtf`, `gffread_transcripts_fasta` | rnaseq |
 | `gtf2bed` | BED12 gene models from a GTF | `gtf2bed` | rnaseq |
 | `gtffilter` | Restrict a GTF to a genome's sequences | `gtf_filter` | rnaseq |
@@ -78,6 +81,8 @@ Pipeline columns show which pipelines use each module.
 | `gunzip` | Decompress a gzipped file | `gunzip` | rnaseq, scrnaseq |
 | `htslib` | bgzip and tabix | `htslib_bgziptabix` | variant_calling |
 | `intervals` | Build genomic intervals and split them for scatter-gather | `build_intervals`, `create_intervals_bed` | variant_calling |
+| `kraken2` | Classify reads taxonomically against a Kraken2 database | `kraken2` | — |
+| `minimap2` | Align long or short reads (FASTQ or SAM/BAM/CRAM) to a FASTA or `.mmi` index, writing sorted BAM or PAF; build `.mmi` indexes | `minimap2_index`, `minimap2_align` | — |
 | `mosdepth` | Read-depth summaries of BAM/CRAM files | `mosdepth` | variant_calling |
 | `multiqc` | Aggregate QC reports into one HTML report | `multiqc` | rnaseq, scrnaseq, variant_calling |
 | `multiqccustombiotype` | featureCounts biotype counts as MultiQC content | `multiqc_custom_biotype` | rnaseq |

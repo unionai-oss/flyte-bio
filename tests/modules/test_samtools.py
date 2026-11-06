@@ -64,7 +64,7 @@ async def test_merge_bams() -> None:
 
 
 @env.task
-async def test_index() -> None:
+async def test_samtools_index() -> None:
     bam = await fixture(SORTED_BAM)
     out = await samtools_index(bam=bam)
     await assert_nonempty(out, label="samtools index")
@@ -114,7 +114,7 @@ tests = [
     test_sort,
     test_view_primary_bam,
     test_merge_bams,
-    test_index,
+    test_samtools_index,
     test_stats,
     test_stats_cram,
     test_flagstat,

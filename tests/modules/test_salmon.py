@@ -13,7 +13,7 @@ from tests.framework import assert_dir_nonempty, env, fixture
 
 
 @env.task
-async def test_index() -> None:
+async def test_salmon_index() -> None:
     # upstream case: salmon/index "sarscov2" (decoy-aware: genome + transcriptome)
     genome = await fixture("genomics/homo_sapiens/genome/genome.fasta")
     transcripts = await fixture("genomics/sarscov2/genome/transcriptome.fasta")
@@ -40,4 +40,4 @@ async def test_quant_reads() -> None:
     await assert_dir_nonempty(results, label="salmon quant results")
 
 
-tests = [test_index, test_quant_reads]
+tests = [test_salmon_index, test_quant_reads]

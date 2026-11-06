@@ -9,8 +9,10 @@ across its tasks:
 - :mod:`flyte_bio.modules.bcftools` — VCF statistics.
 - :mod:`flyte_bio.modules.bedtools` — genome arithmetic (intersect, sort,
   merge, genomecov).
+- :mod:`flyte_bio.modules.bowtie2` — Bowtie 2 short-read alignment (build, align).
 - :mod:`flyte_bio.modules.bwa` — BWA short-read alignment (index).
-- :mod:`flyte_bio.modules.cat` — file concatenation (``cat_fastq``).
+- :mod:`flyte_bio.modules.bwamem2` — BWA-MEM2 short-read alignment (index, mem).
+- :mod:`flyte_bio.modules.cat` — file concatenation (``cat_fastq``, ``cat_cat``).
 - :mod:`flyte_bio.modules.deseq2_qc` — DESeq2 PCA / sample-distance QC.
 - :mod:`flyte_bio.modules.dupradar` — duplication rate vs expression QC.
 - :mod:`flyte_bio.modules.fastp` — read trimming with QC reports.
@@ -19,6 +21,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.cellbender` — ambient RNA and empty droplet removal (CPU or GPU).
 - :mod:`flyte_bio.modules.fq` — FASTQ subsampling and linting.
 - :mod:`flyte_bio.modules.gatk4` — GATK tools (sequence dictionary, interval lists).
+- :mod:`flyte_bio.modules.gawk` — run an awk program over files.
 - :mod:`flyte_bio.modules.gffread` — GFF/GTF conversion + transcript FASTA.
 - :mod:`flyte_bio.modules.gtf2bed` — derive a BED12 gene model from a GTF.
 - :mod:`flyte_bio.modules.gtffilter` — restrict a GTF to a genome's sequences.
@@ -26,6 +29,8 @@ across its tasks:
 - :mod:`flyte_bio.modules.gunzip` — single-file gzip decompression.
 - :mod:`flyte_bio.modules.htslib` — bgzip + tabix.
 - :mod:`flyte_bio.modules.intervals` — scatter-gather genomic intervals.
+- :mod:`flyte_bio.modules.kraken2` — taxonomic classification of reads.
+- :mod:`flyte_bio.modules.minimap2` — long- and short-read alignment (index, align).
 - :mod:`flyte_bio.modules.mosdepth` — read-depth summaries.
 - :mod:`flyte_bio.modules.multiqc` — aggregate QC report.
 - :mod:`flyte_bio.modules.multiqccustombiotype` — biotype counts for MultiQC.
@@ -66,7 +71,9 @@ from .bbmap import env as bbmap_env
 from .bcftools import env as bcftools_env
 from .bedtools import env as bedtools_env
 from .bedtools import genomecov_env
+from .bowtie2 import env as bowtie2_env
 from .bwa import env as bwa_env
+from .bwamem2 import env as bwamem2_env
 from .cat import env as cat_env
 from .catadditionalfasta import env as catadditionalfasta_env
 from .cellbender import env as cellbender_env
@@ -76,6 +83,7 @@ from .fastp import env as fastp_env
 from .fastqc import env as fastqc_env
 from .fq import env as fq_env
 from .gatk4 import env as gatk4_env
+from .gawk import env as gawk_env
 from .gffread import env as gffread_env
 from .gtf2bed import env as gtf2bed_env
 from .gtffilter import env as gtffilter_env
@@ -83,6 +91,8 @@ from .gtfgenefilter import env as gtfgenefilter_env
 from .gunzip import env as gunzip_env
 from .htslib import env as htslib_env
 from .intervals import env as intervals_env
+from .kraken2 import env as kraken2_env
+from .minimap2 import env as minimap2_env
 from .mosdepth import env as mosdepth_env
 from .multiqc import env as multiqc_env
 from .multiqccustombiotype import env as multiqccustombiotype_env
@@ -114,9 +124,9 @@ env = flyte.TaskEnvironment(
         bbmap_env,
         bcftools_env,
         bedtools_env,
+        bowtie2_env,
         bwa_env,
-        gatk4_env,
-        genomecov_env,
+        bwamem2_env,
         cat_env,
         catadditionalfasta_env,
         cellbender_env,
@@ -125,6 +135,9 @@ env = flyte.TaskEnvironment(
         fastp_env,
         fastqc_env,
         fq_env,
+        gatk4_env,
+        gawk_env,
+        genomecov_env,
         gffread_env,
         gtf2bed_env,
         gtffilter_env,
@@ -132,6 +145,8 @@ env = flyte.TaskEnvironment(
         gunzip_env,
         htslib_env,
         intervals_env,
+        kraken2_env,
+        minimap2_env,
         mosdepth_env,
         multiqc_env,
         multiqccustombiotype_env,
@@ -163,7 +178,9 @@ __all__ = [
     "bbmap_env",
     "bcftools_env",
     "bedtools_env",
+    "bowtie2_env",
     "bwa_env",
+    "bwamem2_env",
     "cat_env",
     "catadditionalfasta_env",
     "cellbender_env",
@@ -174,6 +191,7 @@ __all__ = [
     "fastqc_env",
     "fq_env",
     "gatk4_env",
+    "gawk_env",
     "genomecov_env",
     "gffread_env",
     "gtf2bed_env",
@@ -182,6 +200,8 @@ __all__ = [
     "gunzip_env",
     "htslib_env",
     "intervals_env",
+    "kraken2_env",
+    "minimap2_env",
     "mosdepth_env",
     "multiqc_env",
     "multiqccustombiotype_env",
