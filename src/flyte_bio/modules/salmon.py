@@ -18,6 +18,8 @@ import flyte
 from flyte.extras import shell
 from flyte.io import Dir, File
 
+from flyte_bio.limits import TASK_LIMITS
+
 # Pinned biocontainer URI. Upstream's main.nf names the bare
 # `biocontainers/salmon:...` (Docker Hub, not anonymously pullable) — use the
 # quay.io biocontainers mirror.
@@ -36,14 +38,16 @@ salmon_index = shell.create(
     resources=INDEX_RESOURCES,
     inputs={"transcript_fasta": File, "genome_fasta": File | None},
     outputs={"index": Dir},
-    script=r"""
+    script=f"""
+        {TASK_LIMITS}
+""" + r"""
         shopt -s nullglob; GENOME=({inputs.genome_fasta}); shopt -u nullglob
         if [ ${#GENOME[@]} -gt 0 ]; then
             grep '^>' "${GENOME[0]}" | cut -d ' ' -f 1 | sed 's/>//g' > decoys.txt
             cat {inputs.transcript_fasta} "${GENOME[0]}" > gentrome.fa
-            salmon index --threads 2 -t gentrome.fa -d decoys.txt -i {outputs.index}
+            salmon index --threads $TASK_CPUS -t gentrome.fa -d decoys.txt -i {outputs.index}
         else
-            salmon index --threads 2 -t {inputs.transcript_fasta} -i {outputs.index}
+            salmon index --threads $TASK_CPUS -t {inputs.transcript_fasta} -i {outputs.index}
         fi
     """,
 )
@@ -66,7 +70,9 @@ salmon_quant_reads = shell.create(
     inputs={"reads_1": File, "reads_2": File | None, "index": Dir, "gtf": File, "lib_type": str, "args": str},
     defaults={"lib_type": "", "args": ""},
     outputs={"results": Dir},
-    script=r"""
+    script=f"""
+        {TASK_LIMITS}
+""" + r"""
         LT={inputs.lib_type}
         [ -z "$LT" ] && LT="A"
         shopt -s nullglob; R2=({inputs.reads_2}); shopt -u nullglob
@@ -78,7 +84,7 @@ salmon_quant_reads = shell.create(
         ARGS={inputs.args}
         salmon quant \
             --geneMap {inputs.gtf} \
-            --threads 2 \
+            --threads $TASK_CPUS \
             --libType=$LT \
             --index {inputs.index} \
             $RR \
@@ -97,12 +103,14 @@ salmon_quant_bam = shell.create(
     inputs={"bam": File, "transcript_fasta": File, "gtf": File, "lib_type": str},
     defaults={"lib_type": ""},
     outputs={"results": Dir},
-    script=r"""
+    script=f"""
+        {TASK_LIMITS}
+""" + r"""
         LT={inputs.lib_type}
         [ -z "$LT" ] && LT="A"
         salmon quant \
             --geneMap {inputs.gtf} \
-            --threads 2 \
+            --threads $TASK_CPUS \
             --libType=$LT \
             -t {inputs.transcript_fasta} \
             -a {inputs.bam} \

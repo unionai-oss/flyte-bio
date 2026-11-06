@@ -19,6 +19,8 @@ import flyte
 from flyte.extras import shell
 from flyte.io import Dir, File
 
+from flyte_bio.limits import TASK_LIMITS
+
 # Pinned biocontainer URI (STAR + samtools + gawk).
 STAR_IMAGE = "community.wave.seqera.io/library/htslib_samtools_star_gawk:ae438e9a604351a4"
 
@@ -39,7 +41,9 @@ star_genome_generate = shell.create(
     inputs={"fasta": File, "gtf": File, "args": str},
     defaults={"args": ""},
     outputs={"index": Dir},
-    script=r"""
+    script=f"""
+        {TASK_LIMITS}
+""" + r"""
         ln -s {inputs.fasta} genome.fa
         ARGS={inputs.args}
         if [[ "$ARGS" == *"--genomeSAindexNbases"* ]]; then
@@ -48,8 +52,8 @@ star_genome_generate = shell.create(
                 --genomeDir {outputs.index} \
                 --genomeFastaFiles genome.fa \
                 --sjdbGTFfile {inputs.gtf} \
-                --runThreadN 4 \
-                --limitGenomeGenerateRAM 16000000000 \
+                --runThreadN $TASK_CPUS \
+                --limitGenomeGenerateRAM $(( TASK_MEMORY_MB * 1048576 - 100000000 )) \
                 $ARGS
         else
             samtools faidx genome.fa
@@ -65,9 +69,9 @@ star_genome_generate = shell.create(
                 --genomeDir {outputs.index} \
                 --genomeFastaFiles genome.fa \
                 --sjdbGTFfile {inputs.gtf} \
-                --runThreadN 4 \
+                --runThreadN $TASK_CPUS \
                 --genomeSAindexNbases $NUM_BASES \
-                --limitGenomeGenerateRAM 16000000000 \
+                --limitGenomeGenerateRAM $(( TASK_MEMORY_MB * 1048576 - 100000000 )) \
                 $ARGS
         fi
     """,
@@ -90,14 +94,16 @@ star_align = shell.create(
     inputs={"reads_1": File, "reads_2": File | None, "index": Dir, "gtf": File, "args": str},
     defaults={"args": ""},
     outputs={"output": Dir},
-    script=r"""
+    script=f"""
+        {TASK_LIMITS}
+""" + r"""
         shopt -s nullglob; R2=({inputs.reads_2}); shopt -u nullglob
         ARGS={inputs.args}
         STAR \
             --genomeDir {inputs.index} \
             --readFilesIn {inputs.reads_1} "${R2[@]}" \
             --sjdbGTFfile {inputs.gtf} \
-            --runThreadN 4 \
+            --runThreadN $TASK_CPUS \
             --outFileNamePrefix {outputs.output}/ \
             $ARGS
     """,

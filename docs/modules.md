@@ -36,8 +36,12 @@ Conventions shared by every module:
   contain spaces.
 - **Resources are sized for typical inputs.** Each module sets its tasks'
   CPU and memory near the top of its file, e.g. `bwa.MEM_RESOURCES`. A
-  tool's task can be overridden (`bwa.bwa_mem_cmd.as_task().override(resources=...)`),
-  but the module functions don't take resources yet.
+  tool's thread count and memory options (`-t`, `-Xmx`, sort buffers) are
+  read from the container's limits when it runs (`flyte_bio.limits`), as
+  upstream's are from `task.cpus` and `task.memory`. So a tool that runs with
+  overridden resources uses them. A tool's task can be overridden
+  (`bwa.bwa_mem_cmd.as_task().override(resources=...)`), but the module
+  functions don't take resources yet.
 - **Helper scripts are vendored unchanged.** Python, R and Perl helpers that a
   container doesn't include live in `flyte_bio.scripts` and are passed to the
   task as files.

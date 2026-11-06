@@ -11,6 +11,8 @@ import flyte
 from flyte.extras import shell
 from flyte.io import Dir, File
 
+from flyte_bio.limits import TASK_LIMITS
+
 MOSDEPTH_IMAGE = "community.wave.seqera.io/library/htslib_mosdepth_gzip:4108dd38be84e40a"
 
 MOSDEPTH_CPUS = 4
@@ -24,6 +26,7 @@ mosdepth_cmd = shell.create(
     defaults={"args": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
         BAM=({{inputs.bam}}); IDX=({{inputs.index}})
         shopt -s nullglob; BED=({{inputs.bed}}); FA=({{inputs.fasta}}); shopt -u nullglob
         ARGS={{inputs.args}}
@@ -35,7 +38,7 @@ mosdepth_cmd = shell.create(
         # htslib indexes the FASTA beside it if needed, so give it a writable home.
         REF=()
         if [ ${{#FA[@]}} -gt 0 ]; then ln -s "${{FA[0]}}" "$W/genome.fa"; REF=(--fasta "$W/genome.fa"); fi
-        mosdepth --threads {MOSDEPTH_CPUS} "${{BY[@]}}" "${{REF[@]}}" $ARGS \
+        mosdepth --threads $TASK_CPUS "${{BY[@]}}" "${{REF[@]}}" $ARGS \
             {{outputs.results}}/{{inputs.prefix}} "$W/$NAME"
     """,
 )

@@ -14,13 +14,13 @@ import flyte
 from flyte.extras import shell
 from flyte.io import Dir, File
 
+from flyte_bio.limits import JAVA_HEAP_MB, TASK_LIMITS
+
 # Pinned biocontainer URI. Upstream's main.nf names the bare
 # `biocontainers/qualimap:...` (Docker Hub) — use the quay.io mirror.
 QUALIMAP_IMAGE = "quay.io/biocontainers/qualimap:2.3--hdfd78af_0"
 
 QUALIMAP_MEMORY_MB = 8192
-# As upstream: give the JVM 80% of the task's memory.
-QUALIMAP_JAVA_MB = int(QUALIMAP_MEMORY_MB * 0.8)
 DEFAULT_RESOURCES = flyte.Resources(cpu=2, memory=f"{QUALIMAP_MEMORY_MB}Mi")
 
 # Upstream maps the sample's strandedness to Qualimap's protocol names.
@@ -40,6 +40,7 @@ qualimap_rnaseq_cmd = shell.create(
     defaults={"bam_name": "", "args": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
         BAM=({{inputs.bam}}); GTF=({{inputs.gtf}})
         P={{inputs.prefix}}
         ARGS={{inputs.args}}
@@ -59,7 +60,7 @@ qualimap_rnaseq_cmd = shell.create(
         mkdir -p tmp
         export _JAVA_OPTIONS=-Djava.io.tmpdir=./tmp
         qualimap \
-            --java-mem-size={QUALIMAP_JAVA_MB}M \
+            --java-mem-size={JAVA_HEAP_MB}M \
             rnaseq \
             $ARGS \
             -bam "$BAM_NAME" \

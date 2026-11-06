@@ -13,6 +13,8 @@ import flyte
 from flyte.extras import shell
 from flyte.io import Dir, File
 
+from flyte_bio.limits import TASK_LIMITS
+
 BWA_IMAGE = "community.wave.seqera.io/library/bwa_htslib_samtools:83b50ff84ead50d0"
 
 # Indexing needs ~5.4x the genome size in memory (BWA's own figure): ~17 GB
@@ -58,6 +60,7 @@ bwa_mem_cmd = shell.create(
     defaults={"read_group": "", "sort": True, "args": "", "args2": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
         shopt -s nullglob; R2=({{inputs.reads_2}}); shopt -u nullglob
         R1=({{inputs.reads_1}})
         ARGS={{inputs.args}}
@@ -66,8 +69,8 @@ bwa_mem_cmd = shell.create(
         RGARG=(); [ -n "${{RG[0]}}" ] && RGARG=(-R "${{RG[0]}}")
         INDEX=$(find -L {{inputs.index}} -name "*.amb" | sed 's/\.amb$//')
         SAMTOOLS=view; [ {{inputs.sort}} = true ] && SAMTOOLS=sort
-        bwa mem $ARGS "${{RGARG[@]}}" -t {BWA_MEM_CPUS} "$INDEX" "${{R1[0]}}" "${{R2[@]}}" \
-            | samtools $SAMTOOLS $ARGS2 --threads {BWA_MEM_CPUS} -o {{outputs.results}}/{{inputs.prefix}}.bam -
+        bwa mem $ARGS "${{RGARG[@]}}" -t $TASK_CPUS "$INDEX" "${{R1[0]}}" "${{R2[@]}}" \
+            | samtools $SAMTOOLS $ARGS2 --threads $TASK_CPUS -o {{outputs.results}}/{{inputs.prefix}}.bam -
     """,
 )
 

@@ -21,12 +21,12 @@ import flyte
 from flyte.extras import shell
 from flyte.io import Dir, File
 
+from flyte_bio.limits import JAVA_HEAP_MB, TASK_LIMITS
+
 BBMAP_IMAGE = "community.wave.seqera.io/library/bbmap_pigz:07416fe99b090fa9"
 
 BBSPLIT_CPUS = 8
 BBSPLIT_MEMORY_MB = 16384
-# As upstream: give the JVM 80% of the task's memory.
-BBSPLIT_XMX_MB = int(BBSPLIT_MEMORY_MB * 0.8)
 DEFAULT_RESOURCES = flyte.Resources(cpu=BBSPLIT_CPUS, memory=f"{BBSPLIT_MEMORY_MB}Mi")
 
 # Other references are passed as explicit `name=filename` pairs: a list[File]
@@ -40,6 +40,7 @@ bbsplit_index_cmd = shell.create(
     defaults={"args": ""},
     outputs={"index": Dir},
     script=rf"""
+        {TASK_LIMITS}
         PRIMARY=({{inputs.primary_ref}})
         O=({{inputs.other_refs}})
         ODIR=$(dirname "${{O[0]}}")
@@ -49,9 +50,9 @@ bbsplit_index_cmd = shell.create(
         ARGS={{inputs.args}}
         W=$(mktemp -d); cd "$W"
         bbsplit.sh \
-            -Xmx{BBSPLIT_XMX_MB}M \
+            -Xmx{JAVA_HEAP_MB}M \
             ref_primary="${{PRIMARY[0]}}" "${{REFS[@]}}" path=bbsplit_build \
-            threads={BBSPLIT_CPUS} \
+            threads=$TASK_CPUS \
             $ARGS
 
         # Summary files will have an absolute path that will make the index
@@ -75,6 +76,7 @@ bbsplit_cmd = shell.create(
     defaults={"args": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
         R1=({{inputs.reads_1}})
         shopt -s nullglob; R2=({{inputs.reads_2}}); shopt -u nullglob
         P={{inputs.prefix}}
@@ -102,9 +104,9 @@ bbsplit_cmd = shell.create(
             IN=(in="${{R1[0]}}" in2="${{R2[0]}}"); OUT="basename=${{P}}_%_#.fastq.gz"
         fi
         bbsplit.sh \
-            -Xmx{BBSPLIT_XMX_MB}M \
+            -Xmx{JAVA_HEAP_MB}M \
             path=index_writable \
-            threads={BBSPLIT_CPUS} \
+            threads=$TASK_CPUS \
             "${{IN[@]}}" \
             "$OUT" \
             refstats="$P.stats.txt" \

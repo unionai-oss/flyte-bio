@@ -9,6 +9,8 @@ import flyte
 from flyte.extras import shell
 from flyte.io import Dir, File
 
+from flyte_bio.limits import TASK_LIMITS
+
 HTSLIB_IMAGE = "community.wave.seqera.io/library/htslib_xz:32f2772a564b3cd2"
 
 HTSLIB_CPUS = 2
@@ -24,20 +26,21 @@ htslib_bgziptabix_cmd = shell.create(
     defaults={"out_ext": "", "make_index": True, "args": "", "args2": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
         IN=({{inputs.infile}})
         EXT={{inputs.out_ext}}
         ARGS={{inputs.args}}
         ARGS2={{inputs.args2}}
         OUT={{outputs.results}}/{{inputs.prefix}}${{EXT:+.$EXT}}.gz
-        BGZIP="bgzip -c $ARGS -@ {HTSLIB_CPUS}"
+        BGZIP="bgzip -c $ARGS -@ $TASK_CPUS"
         case "$(htsfile "${{IN[0]}}")" in
             *BGZF-compressed*) cp "${{IN[0]}}" "$OUT" ;;
-            *gzip-compressed*) bgzip -d -c -@ {HTSLIB_CPUS} "${{IN[0]}}" | $BGZIP > "$OUT" ;;
+            *gzip-compressed*) bgzip -d -c -@ $TASK_CPUS "${{IN[0]}}" | $BGZIP > "$OUT" ;;
             *bzip2-compressed*) bzcat "${{IN[0]}}" | $BGZIP > "$OUT" ;;
             *XZ-compressed*) xzcat "${{IN[0]}}" | $BGZIP > "$OUT" ;;
             *) $BGZIP "${{IN[0]}}" > "$OUT" ;;
         esac
-        if [ {{inputs.make_index}} = true ]; then tabix -@ {HTSLIB_CPUS} $ARGS2 -f "$OUT"; fi
+        if [ {{inputs.make_index}} = true ]; then tabix -@ $TASK_CPUS $ARGS2 -f "$OUT"; fi
     """,
 )
 

@@ -17,6 +17,7 @@ import flyte
 from flyte.extras import shell
 from flyte.io import Dir, File
 
+from flyte_bio.limits import TASK_LIMITS
 from flyte_bio.scripts import path
 
 DUPRADAR_IMAGE = "community.wave.seqera.io/library/bioconductor-dupradar:1.38.0--831da16eb40a64ab"
@@ -40,6 +41,7 @@ dupradar_cmd = shell.create(
     defaults={"args": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
         BAM=({{inputs.bam}}); GTF=({{inputs.gtf}}); SCRIPT=({{inputs.script}})
         ARGS={{inputs.args}}
         cd {{outputs.results}}
@@ -47,7 +49,7 @@ dupradar_cmd = shell.create(
             --bam "${{BAM[0]}}" \
             --gtf "${{GTF[0]}}" \
             --prefix {{inputs.prefix}} \
-            --threads {DUPRADAR_THREADS} \
+            --threads $TASK_CPUS \
             --strandedness {{inputs.strandedness}} \
             --single_end {{inputs.single_end}} \
             $ARGS
