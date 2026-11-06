@@ -17,11 +17,11 @@ import flyte
 from flyte.extras import shell
 from flyte.io import Dir, File
 
+from flyte_bio.limits import JAVA_HEAP_MB, TASK_LIMITS
+
 PICARD_IMAGE = "community.wave.seqera.io/library/picard:3.4.0--e9963040df0a9bf6"
 
 PICARD_MEMORY_MB = 8192
-# As upstream: give the JVM 80% of the task's memory.
-PICARD_XMX_MB = int(PICARD_MEMORY_MB * 0.8)
 DEFAULT_RESOURCES = flyte.Resources(cpu=2, memory=f"{PICARD_MEMORY_MB}Mi")
 
 picard_markduplicates_cmd = shell.create(
@@ -32,6 +32,7 @@ picard_markduplicates_cmd = shell.create(
     defaults={"args": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
         BAM=({{inputs.bam}})
         shopt -s nullglob; FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); shopt -u nullglob
         P={{inputs.prefix}}
@@ -44,7 +45,7 @@ picard_markduplicates_cmd = shell.create(
             REF=(--REFERENCE_SEQUENCE genome.fa)
         fi
         picard \
-            -Xmx{PICARD_XMX_MB}M \
+            -Xmx{JAVA_HEAP_MB}M \
             MarkDuplicates \
             $ARGS \
             --INPUT "${{BAM[0]}}" \

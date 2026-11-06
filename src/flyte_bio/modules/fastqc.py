@@ -14,13 +14,13 @@ import flyte
 from flyte.extras import shell
 from flyte.io import Dir, File
 
+from flyte_bio.limits import TASK_LIMITS
+
 # Pinned biocontainer URI. Upstream's main.nf names the bare
 # `biocontainers/fastqc:...` (Docker Hub) — use the quay.io mirror.
 FASTQC_IMAGE = "quay.io/biocontainers/fastqc:0.12.1--hdfd78af_0"
 
-# FastQC allocates --memory per thread; keep threads x memory within the pod.
 FASTQC_THREADS = 2
-FASTQC_MEMORY_MB = 2048
 DEFAULT_RESOURCES = flyte.Resources(cpu=FASTQC_THREADS, memory="6Gi")
 
 fastqc = shell.create(
@@ -31,6 +31,10 @@ fastqc = shell.create(
     defaults={"args": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
+        # FastQC allocates --memory per thread: two thirds of each CPU's share, at most 10000.
+        FASTQC_MEMORY_MB=$(( TASK_MEMORY_MB * 2 / 3 / TASK_CPUS ))
+        if [ $FASTQC_MEMORY_MB -gt 10000 ]; then FASTQC_MEMORY_MB=10000; fi
         shopt -s nullglob; R2=({{inputs.reads_2}}); shopt -u nullglob
         P={{inputs.prefix}}
         ARGS={{inputs.args}}
@@ -43,7 +47,7 @@ fastqc = shell.create(
             ln -s "${{R2[0]}}" "${{P}}_2.gz"
             FILES=("${{P}}_1.gz" "${{P}}_2.gz")
         fi
-        fastqc $ARGS --threads {FASTQC_THREADS} --memory {FASTQC_MEMORY_MB} -o {{outputs.results}} "${{FILES[@]}}"
+        fastqc $ARGS --threads $TASK_CPUS --memory $FASTQC_MEMORY_MB -o {{outputs.results}} "${{FILES[@]}}"
     """,
 )
 
@@ -60,6 +64,10 @@ fastqc_reads = shell.create(
     defaults={"args": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
+        # FastQC allocates --memory per thread: two thirds of each CPU's share, at most 10000.
+        FASTQC_MEMORY_MB=$(( TASK_MEMORY_MB * 2 / 3 / TASK_CPUS ))
+        if [ $FASTQC_MEMORY_MB -gt 10000 ]; then FASTQC_MEMORY_MB=10000; fi
         READS=({{inputs.reads}})
         P={{inputs.prefix}}
         ARGS={{inputs.args}}
@@ -71,7 +79,7 @@ fastqc_reads = shell.create(
             i=1
             for r in "${{READS[@]}}"; do ln -s "$r" "${{P}}_$i.gz"; FILES+=("${{P}}_$i.gz"); i=$((i + 1)); done
         fi
-        fastqc $ARGS --threads {FASTQC_THREADS} --memory {FASTQC_MEMORY_MB} -o {{outputs.results}} "${{FILES[@]}}"
+        fastqc $ARGS --threads $TASK_CPUS --memory $FASTQC_MEMORY_MB -o {{outputs.results}} "${{FILES[@]}}"
     """,
 )
 

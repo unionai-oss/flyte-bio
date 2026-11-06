@@ -31,6 +31,8 @@ import flyte
 from flyte.extras import shell
 from flyte.io import Dir, File
 
+from flyte_bio.limits import JAVA_HEAP_MB, TASK_LIMITS
+
 GATK4_IMAGE = "community.wave.seqera.io/library/gatk4_gcnvkernel:edb12e4f0bf02cd3"
 # MarkDuplicates' image adds samtools, for the CRAM conversion.
 GATK4_SAMTOOLS_IMAGE = "community.wave.seqera.io/library/gatk4_gcnvkernel_htslib_samtools:d3becb6465454c35"
@@ -39,14 +41,11 @@ GATK4_CNN_IMAGE = "quay.io/nf-core/gatk:4.5.0.0"
 
 DEFAULT_MEMORY_MB = 6144
 DEFAULT_RESOURCES = flyte.Resources(cpu=1, memory=f"{DEFAULT_MEMORY_MB}Mi")
-JAVA_OPTIONS = f"-Xmx{int(DEFAULT_MEMORY_MB * 0.8)}M -XX:-UsePerfData"
 MARKDUPLICATES_MEMORY_MB = 16384
 MARKDUPLICATES_RESOURCES = flyte.Resources(cpu=2, memory=f"{MARKDUPLICATES_MEMORY_MB}Mi")
-MARKDUPLICATES_JAVA_OPTIONS = f"-Xmx{int(MARKDUPLICATES_MEMORY_MB * 0.8)}M -XX:-UsePerfData"
 HAPLOTYPECALLER_CPUS = 2
 HAPLOTYPECALLER_MEMORY_MB = 12288
 HAPLOTYPECALLER_RESOURCES = flyte.Resources(cpu=HAPLOTYPECALLER_CPUS, memory=f"{HAPLOTYPECALLER_MEMORY_MB}Mi")
-HAPLOTYPECALLER_JAVA_OPTIONS = f"-Xmx{int(HAPLOTYPECALLER_MEMORY_MB * 0.8)}M -XX:-UsePerfData"
 
 # GATK writes the dictionary next to the reference, named after it.
 gatk4_createsequencedictionary_cmd = shell.create(
@@ -57,12 +56,14 @@ gatk4_createsequencedictionary_cmd = shell.create(
     defaults={"args": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
         FA=({{inputs.fasta}})
         NAME=$(basename "${{FA[0]}}")
         ARGS={{inputs.args}}
         W=$(mktemp -d); cd "$W"
         ln -s "${{FA[0]}}" "$NAME"
-        gatk --java-options "{JAVA_OPTIONS}" CreateSequenceDictionary \
+        gatk --java-options "$JAVA_OPTIONS" CreateSequenceDictionary \
             --REFERENCE "$NAME" --URI "$NAME" --TMP_DIR . $ARGS
         mv ./*.dict {{outputs.results}}/
     """,
@@ -76,10 +77,12 @@ gatk4_intervallisttobed_cmd = shell.create(
     defaults={"args": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
         IN=({{inputs.intervals}})
         ARGS={{inputs.args}}
         W=$(mktemp -d); cd "$W"
-        gatk --java-options "{JAVA_OPTIONS}" IntervalListToBed \
+        gatk --java-options "$JAVA_OPTIONS" IntervalListToBed \
             --INPUT "${{IN[0]}}" --OUTPUT {{outputs.results}}/{{inputs.prefix}}.bed --TMP_DIR . $ARGS
     """,
 )
@@ -96,6 +99,8 @@ gatk4_markduplicates_cmd = shell.create(
     defaults={"args": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
         BAMS=({{inputs.bams}})
         shopt -s nullglob; FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); shopt -u nullglob
         P={{inputs.prefix}}
@@ -110,7 +115,7 @@ gatk4_markduplicates_cmd = shell.create(
             REF=(--REFERENCE_SEQUENCE genome.fa)
         fi
         if [[ "$P" == *.cram ]]; then PBAM="${{P%.cram}}.bam"; else PBAM="$OUT/$P"; fi
-        gatk --java-options "{MARKDUPLICATES_JAVA_OPTIONS}" MarkDuplicates \
+        gatk --java-options "$JAVA_OPTIONS" MarkDuplicates \
             "${{INPUTS[@]}}" --OUTPUT "$PBAM" --METRICS_FILE "$OUT/$P.metrics" \
             --TMP_DIR . "${{REF[@]}}" $ARGS
         if [[ "$P" == *.cram ]]; then
@@ -153,6 +158,8 @@ gatk4_baserecalibrator_cmd = shell.create(
     defaults={"args": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
         A=({{inputs.alignment}}); I=({{inputs.index}}); FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); D=({{inputs.dict}})
         shopt -s nullglob
         BED=({{inputs.intervals}}); SITES=({{inputs.known_sites}}); SITES_TBI=({{inputs.known_sites_tbi}})
@@ -162,7 +169,7 @@ gatk4_baserecalibrator_cmd = shell.create(
         W=$(mktemp -d); cd "$W"
         {LINK_INPUTS}
         INTERVALS=(); [ ${{#BED[@]}} -gt 0 ] && INTERVALS=(--intervals "${{BED[0]}}")
-        gatk --java-options "{JAVA_OPTIONS}" BaseRecalibrator \
+        gatk --java-options "$JAVA_OPTIONS" BaseRecalibrator \
             --input "$ALN_LINK" --output {{outputs.results}}/{{inputs.prefix}}.table --reference genome.fa \
             "${{INTERVALS[@]}}" "${{KNOWN_SITES[@]}}" --tmp-dir . $ARGS
     """,
@@ -176,11 +183,13 @@ gatk4_gatherbqsrreports_cmd = shell.create(
     defaults={"args": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
         TABLES=({{inputs.tables}})
         ARGS={{inputs.args}}
         INPUTS=(); for t in "${{TABLES[@]}}"; do INPUTS+=(--input "$t"); done
         W=$(mktemp -d); cd "$W"
-        gatk --java-options "{JAVA_OPTIONS}" GatherBQSRReports \
+        gatk --java-options "$JAVA_OPTIONS" GatherBQSRReports \
             "${{INPUTS[@]}}" --output {{outputs.results}}/{{inputs.prefix}}.table --tmp-dir . $ARGS
     """,
 )
@@ -204,6 +213,8 @@ gatk4_applybqsr_cmd = shell.create(
     defaults={"suffix": "cram", "args": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
         A=({{inputs.alignment}}); I=({{inputs.index}}); T=({{inputs.table}})
         FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); D=({{inputs.dict}})
         shopt -s nullglob; BED=({{inputs.intervals}}); shopt -u nullglob
@@ -213,7 +224,7 @@ gatk4_applybqsr_cmd = shell.create(
         W=$(mktemp -d); cd "$W"
         {LINK_INPUTS}
         INTERVALS=(); [ ${{#BED[@]}} -gt 0 ] && INTERVALS=(--intervals "${{BED[0]}}")
-        gatk --java-options "{JAVA_OPTIONS}" ApplyBQSR \
+        gatk --java-options "$JAVA_OPTIONS" ApplyBQSR \
             --input "$ALN_LINK" --output {{outputs.results}}/{{inputs.prefix}}.{{inputs.suffix}} --reference genome.fa \
             --bqsr-recal-file "${{T[0]}}" "${{INTERVALS[@]}}" --tmp-dir . $ARGS
     """,
@@ -241,6 +252,8 @@ gatk4_haplotypecaller_cmd = shell.create(
     defaults={"args": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
         A=({{inputs.alignment}}); I=({{inputs.index}}); FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); D=({{inputs.dict}})
         shopt -s nullglob
         BED=({{inputs.intervals}}); SITES=({{inputs.dbsnp}}); SITES_TBI=({{inputs.dbsnp_tbi}})
@@ -251,9 +264,9 @@ gatk4_haplotypecaller_cmd = shell.create(
         {LINK_INPUTS}
         DBSNP=(); [ ${{#SITES[@]}} -gt 0 ] && DBSNP=(--dbsnp "$(basename "${{SITES[0]}}")")
         INTERVALS=(); [ ${{#BED[@]}} -gt 0 ] && INTERVALS=(--intervals "${{BED[0]}}")
-        gatk --java-options "{HAPLOTYPECALLER_JAVA_OPTIONS}" HaplotypeCaller \
+        gatk --java-options "$JAVA_OPTIONS" HaplotypeCaller \
             --input "$ALN_LINK" --output {{outputs.results}}/{{inputs.prefix}}.vcf.gz --reference genome.fa \
-            --native-pair-hmm-threads {HAPLOTYPECALLER_CPUS} "${{DBSNP[@]}}" "${{INTERVALS[@]}}" --tmp-dir . $ARGS
+            --native-pair-hmm-threads $TASK_CPUS "${{DBSNP[@]}}" "${{INTERVALS[@]}}" --tmp-dir . $ARGS
     """,
 )
 
@@ -265,13 +278,15 @@ gatk4_mergevcfs_cmd = shell.create(
     defaults={"args": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
         VCFS=({{inputs.vcfs}})
         shopt -s nullglob; D=({{inputs.dict}}); shopt -u nullglob
         ARGS={{inputs.args}}
         INPUTS=(); for v in "${{VCFS[@]}}"; do INPUTS+=(--INPUT "$v"); done
         DICT=(); [ ${{#D[@]}} -gt 0 ] && DICT=(--SEQUENCE_DICTIONARY "${{D[0]}}")
         W=$(mktemp -d); cd "$W"
-        gatk --java-options "{JAVA_OPTIONS}" MergeVcfs \
+        gatk --java-options "$JAVA_OPTIONS" MergeVcfs \
             "${{INPUTS[@]}}" --OUTPUT {{outputs.results}}/{{inputs.prefix}}.vcf.gz "${{DICT[@]}}" --TMP_DIR . $ARGS
     """,
 )
@@ -300,6 +315,8 @@ gatk4_cnnscorevariants_cmd = shell.create(
     defaults={"args": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
         V=({{inputs.vcf}}); T=({{inputs.tbi}}); FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); D=({{inputs.dict}})
         shopt -s nullglob; BED=({{inputs.intervals}}); shopt -u nullglob
         REF_FA="${{FA[0]}}"; REF_FAI="${{FAI[0]}}"; REF_DICT="${{D[0]}}"; VCF="${{V[0]}}"; VCF_TBI="${{T[0]}}"
@@ -308,7 +325,7 @@ gatk4_cnnscorevariants_cmd = shell.create(
         {LINK_VCF}
         INTERVALS=(); [ ${{#BED[@]}} -gt 0 ] && INTERVALS=(--intervals "${{BED[0]}}")
         export THEANO_FLAGS="base_compiledir=$PWD"
-        gatk --java-options "{JAVA_OPTIONS}" CNNScoreVariants \
+        gatk --java-options "$JAVA_OPTIONS" CNNScoreVariants \
             --variant "$VCF_LINK" --output {{outputs.results}}/{{inputs.prefix}}.cnn.vcf.gz --reference genome.fa \
             "${{INTERVALS[@]}}" --tmp-dir . $ARGS
     """,
@@ -333,6 +350,8 @@ gatk4_filtervarianttranches_cmd = shell.create(
     defaults={"args": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
         V=({{inputs.vcf}}); T=({{inputs.tbi}}); FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); D=({{inputs.dict}})
         RES=({{inputs.resources}}); RES_TBI=({{inputs.resources_tbi}})
         REF_FA="${{FA[0]}}"; REF_FAI="${{FAI[0]}}"; REF_DICT="${{D[0]}}"; VCF="${{V[0]}}"; VCF_TBI="${{T[0]}}"
@@ -342,7 +361,7 @@ gatk4_filtervarianttranches_cmd = shell.create(
         RESOURCES=()
         for r in "${{RES[@]}}"; do ln -s "$r" "$(basename "$r")"; RESOURCES+=(--resource "$(basename "$r")"); done
         for t in "${{RES_TBI[@]}}"; do ln -s "$t" "$(basename "$t")"; done
-        gatk --java-options "{JAVA_OPTIONS}" FilterVariantTranches \
+        gatk --java-options "$JAVA_OPTIONS" FilterVariantTranches \
             --variant "$VCF_LINK" "${{RESOURCES[@]}}" --output {{outputs.results}}/{{inputs.prefix}}.filtered.vcf.gz \
             --tmp-dir . $ARGS
     """,

@@ -19,9 +19,11 @@ import flyte
 from flyte.extras import shell
 from flyte.io import Dir, File
 
+from flyte_bio.limits import TASK_LIMITS
+
 TRIMGALORE_IMAGE = "community.wave.seqera.io/library/trim-galore:2.1.0--27e6376b8f6c1872"
 
-# Upstream runs Trim Galore with 8 CPUs; --cores is derived from it below.
+# Upstream runs Trim Galore with 8 CPUs.
 TRIMGALORE_CPUS = 8
 DEFAULT_RESOURCES = flyte.Resources(cpu=TRIMGALORE_CPUS, memory="8Gi")
 
@@ -37,20 +39,22 @@ trimgalore_cmd = shell.create(
     defaults={"fastqc": False, "args": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
+        cores() {{ C=$(( TASK_CPUS - $1 )); [ $C -lt 1 ] && C=1; [ $C -gt 8 ] && C=8; echo $C; }}
         shopt -s nullglob; R2=({{inputs.reads_2}}); shopt -u nullglob
         P={{inputs.prefix}}
         ARGS={{inputs.args}}
         FQ=()
-        if [ {{inputs.fastqc}} = true ]; then FQ=(--fastqc_args "-t {TRIMGALORE_CPUS}"); fi
+        if [ {{inputs.fastqc}} = true ]; then FQ=(--fastqc_args "-t $TASK_CPUS"); fi
         W=$(mktemp -d); cd "$W"
         if [ ${{#R2[@]}} -eq 0 ]; then
             ln -s {{inputs.reads_1}} "$P.fastq.gz"
-            trim_galore "${{FQ[@]}}" $ARGS --cores {max(1, min(8, TRIMGALORE_CPUS - 3))} --gzip \
+            trim_galore "${{FQ[@]}}" $ARGS --cores $(cores 3) --gzip \
                 -o {{outputs.results}} "$P.fastq.gz"
         else
             ln -s {{inputs.reads_1}} "${{P}}_1.fastq.gz"
             ln -s "${{R2[0]}}" "${{P}}_2.fastq.gz"
-            trim_galore "${{FQ[@]}}" $ARGS --cores {max(1, min(8, TRIMGALORE_CPUS - 4))} --paired --gzip \
+            trim_galore "${{FQ[@]}}" $ARGS --cores $(cores 4) --paired --gzip \
                 -o {{outputs.results}} "${{P}}_1.fastq.gz" "${{P}}_2.fastq.gz"
         fi
     """,

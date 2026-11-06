@@ -31,6 +31,8 @@ import flyte
 from flyte.extras import shell
 from flyte.io import Dir, File
 
+from flyte_bio.limits import TASK_LIMITS
+
 # Pinned biocontainer URI. Update when bumping bedtools version.
 BEDTOOLS_IMAGE = "quay.io/biocontainers/bedtools:2.31.1--hf5e1c6e_0"
 
@@ -183,12 +185,13 @@ bedtools_genomecov_cmd = shell.create(
     defaults={"args": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
         BAM=({{inputs.bam}})
         ARGS={{inputs.args}}
         OUT={{outputs.results}}/{{inputs.prefix}}.{{inputs.extension}}
         if [ {{inputs.sort}} = true ]; then
             bedtools genomecov -ibam "${{BAM[0]}}" $ARGS \
-                | LC_ALL=C sort --parallel={GENOMECOV_CPUS} --buffer-size={GENOMECOV_MEMORY_GB // 2}G -k1,1 -k2,2n \
+                | LC_ALL=C sort --parallel=$TASK_CPUS --buffer-size=$(( TASK_MEMORY_MB / 2 ))M -k1,1 -k2,2n \
                 > "$OUT"
         else
             bedtools genomecov -ibam "${{BAM[0]}}" $ARGS > "$OUT"

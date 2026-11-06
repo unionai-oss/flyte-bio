@@ -18,6 +18,8 @@ import flyte
 from flyte.extras import shell
 from flyte.io import Dir, File
 
+from flyte_bio.limits import TASK_LIMITS
+
 CELLBENDER_IMAGE = "community.wave.seqera.io/library/cellbender_webcolors:156d413fdfc16cdb"
 CELLBENDER_GPU_IMAGE = "us.gcr.io/broad-dsde-methods/cellbender:0.3.2"
 
@@ -26,11 +28,13 @@ GPU_RESOURCES = flyte.Resources(cpu=4, memory="16Gi", gpu=1)
 
 # CellBender writes its checkpoint to the working directory and its temporary
 # files under TMPDIR, so run in a scratch directory and move the outputs.
-SCRIPT = r"""
+SCRIPT = f"""
+    {TASK_LIMITS}
+""" + r"""
     H=({inputs.h5ad})
     ARGS={inputs.args}
     W=$(mktemp -d); cd "$W"
-    TMPDIR=. cellbender remove-background $ARGS --cpu-threads "$(nproc)" --estimator-multiple-cpu \
+    TMPDIR=. cellbender remove-background $ARGS --cpu-threads $TASK_CPUS --estimator-multiple-cpu \
         CUDA_FLAG --input "${H[0]}" --output {inputs.prefix}.h5
     mv {inputs.prefix}.h5 {inputs.prefix}_filtered.h5 {inputs.prefix}_posterior.h5 \
         {inputs.prefix}_cell_barcodes.csv {inputs.prefix}_metrics.csv {inputs.prefix}.pdf \

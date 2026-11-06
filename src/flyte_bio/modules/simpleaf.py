@@ -24,6 +24,8 @@ import flyte
 from flyte.extras import shell
 from flyte.io import Dir, File
 
+from flyte_bio.limits import TASK_LIMITS
+
 SIMPLEAF_IMAGE = "quay.io/biocontainers/simpleaf:0.19.5--ha6fb395_0"
 
 SIMPLEAF_CPUS = 4
@@ -47,6 +49,7 @@ simpleaf_index_cmd = shell.create(
     defaults={"args": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
         shopt -s nullglob
         FA=({{inputs.genome_fasta}}); GTF=({{inputs.gtf}}); TX=({{inputs.transcript_fasta}})
         shopt -u nullglob
@@ -57,7 +60,7 @@ simpleaf_index_cmd = shell.create(
         export ALEVIN_FRY_HOME=.
         ulimit -n 2048
         simpleaf set-paths
-        simpleaf index --threads {SIMPLEAF_CPUS} "${{SEQ[@]}}" $ARGS -o out
+        simpleaf index --threads $TASK_CPUS "${{SEQ[@]}}" $ARGS -o out
         mkdir -p {{outputs.results}}/{{inputs.prefix}}
         for d in index ref; do if [ -d out/$d ]; then mv out/$d {{outputs.results}}/{{inputs.prefix}}/; fi; done
     """,
@@ -86,6 +89,7 @@ simpleaf_quant_cmd = shell.create(
     defaults={"args": ""},
     outputs={"results": Dir},
     script=rf"""
+        {TASK_LIMITS}
         R1=({{inputs.reads_1}}); R2=({{inputs.reads_2}})
         shopt -s nullglob; T2G=({{inputs.t2g}}); PL=({{inputs.permit_list}}); shopt -u nullglob
         DIR1=$(dirname "${{R1[0]}}"); DIR2=$(dirname "${{R2[0]}}")
@@ -101,7 +105,7 @@ simpleaf_quant_cmd = shell.create(
         simpleaf set-paths
         simpleaf quant "${{T2G_ARG[@]}}" --chemistry {{inputs.chemistry}} --index "$INDEX" \
             --reads1 "$READS1" --reads2 "$READS2" --resolution {{inputs.resolution}} \
-            --output {{outputs.results}}/{{inputs.prefix}} --threads {SIMPLEAF_CPUS} --anndata-out \
+            --output {{outputs.results}}/{{inputs.prefix}} --threads $TASK_CPUS --anndata-out \
             ${{FILTER[@]}} $ARGS
     """,
 )
