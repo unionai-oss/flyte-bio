@@ -29,25 +29,38 @@ mates, which upstream doesn't: with no names the reads pass unchanged.
 The bbmap/repair cases are upstream's at the same commit, with their test
 config's ``qin=33``. Upstream snapshots the repaired reads' md5s
 (decompressed) and the singleton file's and log's names.
+
+The bbmap/index, bbmap/align, bbmap/pileup and bbmap/clumpify cases are
+upstream's at the same commit. bbmap/index snapshots the index's file names
+and one stable file's md5. bbmap/align snapshots BAMs by their reads' md5,
+and reads outputs by name, line count and the md5 of their sorted lines
+(joined by newlines); its "pigz" case runs with ``unpigz=t``. bbmap/clumpify
+snapshots the decompressed reads' md5s and the log's name.
 """
 
 import gzip
+import hashlib
 
 from flyte.io import File
 
 from flyte_bio.modules.bbmap import (
     BBDukResult,
+    BBMapAlignResult,
     BBNormResult,
     FilterByNameResult,
     RepairResult,
     bbduk,
+    bbmap_align,
+    bbmap_clumpify,
     bbmap_filterbyname,
+    bbmap_index,
+    bbmap_pileup,
     bbmap_repair,
     bbnorm,
     bbsplit,
     bbsplit_index,
 )
-from tests.framework import assert_gunzipped_md5, assert_md5, assert_nonempty, env, fixture
+from tests.framework import assert_gunzipped_md5, assert_md5, assert_nonempty, assert_reads_md5, env, fixture
 
 FASTQ = "genomics/sarscov2/illumina/fastq/"
 BBDUK_ARGS = "trimq=10 qtrim=r"
@@ -298,6 +311,187 @@ async def test_bbmap_repair_interleaved() -> None:
     await check_repair(result, {"test_repaired.fastq.gz": "efe40fe3df38b5a1c469890e5ad19874"})
 
 
+HUMAN_GENOME = "genomics/homo_sapiens/genome/genome.fasta"
+TRANSCRIPTOME = "genomics/sarscov2/genome/transcriptome.fasta"
+
+
+@env.task
+async def test_bbmap_index_human() -> None:
+    # upstream case: bbmap/index "test-bbmap-index"
+    index = await bbmap_index(await fixture(HUMAN_GENOME))
+    files = [f async for f in index.walk()]
+    names = sorted(f.name for f in files)
+    assert names == [
+        "chr1.chrom.gz",
+        "chr1_index_k13_c15_b1.block",
+        "chr1_index_k13_c15_b1.block2.gz",
+        "info.txt",
+        "scaffolds.txt.gz",
+        "summary.txt",
+    ], names
+    block = next(f for f in files if f.name == "chr1_index_k13_c15_b1.block")
+    await assert_md5(block, "9f0d9a7413c1d2c16cc24555b2381163", label=block.name)
+
+
+async def check_align_bam(result: BBMapAlignResult, name: str, reads_md5: str) -> None:
+    assert result.bam is not None and result.reads == [], "expected a BAM and no reads"
+    assert result.bam.name == name, f"BAM named {result.bam.name}, expected {name}"
+    assert result.log.name == "test.bbmap.log", result.log.name
+    await assert_reads_md5(result.bam, reads_md5, label=name)
+
+
+async def check_align_reads(result: BBMapAlignResult, expected: list[tuple[str, int, str]]) -> None:
+    assert result.bam is None, "expected no BAM"
+    assert [f.name for f in result.reads] == [name for name, _, _ in expected], [f.name for f in result.reads]
+    assert result.log.name == "test.bbmap.log", result.log.name
+    for file, (name, count, md5) in zip(result.reads, expected, strict=True):
+        lines = await gunzipped_lines(file)
+        actual = hashlib.md5("\n".join(sorted(lines)).encode()).hexdigest()
+        assert (len(lines), actual) == (count, md5), f"{name}: {len(lines)} lines, sorted md5 {actual}"
+
+
+PAIRED_BAM_READS_MD5 = "88d78879c34214288644aec7ec3cb270"
+
+
+@env.task
+async def test_bbmap_align_paired_fasta() -> None:
+    # upstream case: bbmap/align "paired_end - fasta"
+    result = await bbmap_align(*await bbduk_reads(), await fixture(HUMAN_GENOME), prefix="test")
+    await check_align_bam(result, "test.bam", PAIRED_BAM_READS_MD5)
+
+
+@env.task
+async def test_bbmap_align_paired_index() -> None:
+    # upstream case: bbmap/align "paired_end - index"
+    index = await bbmap_index(await fixture(HUMAN_GENOME))
+    result = await bbmap_align(*await bbduk_reads(), index, output_format="bam", output_reads="all", prefix="test")
+    await check_align_bam(result, "test.bam", PAIRED_BAM_READS_MD5)
+
+
+@env.task
+async def test_bbmap_align_single_index() -> None:
+    # upstream case: bbmap/align "single_end - index"
+    index = await bbmap_index(await fixture(HUMAN_GENOME))
+    reads_1, _ = await bbduk_reads()
+    result = await bbmap_align(reads_1, None, index, output_format="bam", output_reads="all", prefix="test")
+    await check_align_bam(result, "test.bam", "c17efa4ccc4e9018090792c71af92660")
+
+
+@env.task
+async def test_bbmap_align_paired_index_pigz() -> None:
+    # upstream case: bbmap/align "paired_end - index - pigz"
+    index = await bbmap_index(await fixture(HUMAN_GENOME))
+    result = await bbmap_align(*await bbduk_reads(), index, prefix="test", args="unpigz=t")
+    await check_align_bam(result, "test.bam", PAIRED_BAM_READS_MD5)
+
+
+UNMAPPED_PAIR = [
+    ("test.unmapped_1.fastq.gz", 4, "316e3bf71159aab93c75c735ab71c6ca"),
+    ("test.unmapped_2.fastq.gz", 4, "e2c49ca4ab6f381c8f55c7a157e67e6a"),
+]
+
+
+@env.task
+async def test_bbmap_align_transcriptome_all_fastq() -> None:
+    # upstream case: bbmap/align "sarscov2 - [fastq1, fastq2] - transcriptome - all - fastq.gz"
+    reads = await bbduk_reads()
+    result = await bbmap_align(
+        *reads, await fixture(TRANSCRIPTOME), output_format="fastq.gz", output_reads="all", prefix="test"
+    )
+    await check_align_reads(
+        result,
+        [
+            ("test.all_1.fastq.gz", 400, "4de5088852e098ec6bd5dfb05425fe16"),
+            ("test.all_2.fastq.gz", 400, "e79e5570171ab63573c2c704aa1c0c6b"),
+        ],
+    )
+
+
+@env.task
+async def test_bbmap_align_transcriptome_unmapped_fastq() -> None:
+    # upstream case: bbmap/align "sarscov2 - [fastq1, fastq2] - transcriptome - unmapped - fastq.gz"
+    reads = await bbduk_reads()
+    result = await bbmap_align(
+        *reads, await fixture(TRANSCRIPTOME), output_format="fastq.gz", output_reads="unmapped", prefix="test"
+    )
+    await check_align_reads(result, UNMAPPED_PAIR)
+
+
+@env.task
+async def test_bbmap_align_transcriptome_mapped_interleaved_output() -> None:
+    # upstream case: bbmap/align "sarscov2 - [fastq1, fastq2] - transcriptome - mapped - fastq.gz - interleaved_output"
+    reads = await bbduk_reads()
+    result = await bbmap_align(
+        *reads,
+        await fixture(TRANSCRIPTOME),
+        output_format="fastq.gz",
+        output_reads="mapped",
+        interleaved_output=True,
+        prefix="test",
+    )
+    await check_align_reads(result, [("test.mapped.fastq.gz", 792, "48ab9757d7325cfa66b97e62b3d93073")])
+
+
+@env.task
+async def test_bbmap_align_interleaved_unmapped_fastq() -> None:
+    # upstream case: bbmap/align "sarscov2 - interleaved fastq - transcriptome - unmapped - fastq.gz"
+    reads = await fixture(FASTQ + "test_interleaved.fastq.gz")
+    result = await bbmap_align(
+        reads,
+        None,
+        await fixture(TRANSCRIPTOME),
+        single_end=False,
+        output_format="fastq.gz",
+        output_reads="unmapped",
+        prefix="test",
+    )
+    await check_align_reads(result, UNMAPPED_PAIR)
+
+
+@env.task
+async def test_bbmap_align_transcriptome_mapped_bam() -> None:
+    # upstream case: bbmap/align "sarscov2 - fastq - transcriptome - mapped - bam"
+    reads_1, _ = await bbduk_reads()
+    result = await bbmap_align(
+        reads_1, None, await fixture(TRANSCRIPTOME), output_format="bam", output_reads="mapped", prefix="test"
+    )
+    await check_align_bam(result, "test.mapped.bam", "946280c22bbf653e797187227a239974")
+
+
+@env.task
+async def test_bbmap_pileup_paired_bam() -> None:
+    # upstream case: bbmap/pileup "test-bbmap-pileup"
+    result = await bbmap_pileup(await fixture("genomics/sarscov2/illumina/bam/test.paired_end.bam"), prefix="test")
+    assert result.covstats.name == "test.coverage.stats.txt", result.covstats.name
+    assert result.hist.name == "test.coverage.hist.txt", result.hist.name
+    await assert_md5(result.covstats, "c3fc9d0681589b69e3301ca3cb27b7a4", label=result.covstats.name)
+    await assert_md5(result.hist, "96915920ef42ddc9483457dd4585a088", label=result.hist.name)
+
+
+CLUMPED_1_MD5 = "27e51643262c1ef3905c4be184c3814c"
+
+
+@env.task
+async def test_bbmap_clumpify_single_end() -> None:
+    # upstream case: bbmap/clumpify "test-bbmap-clumpify-single-end"
+    reads_1, _ = await bbduk_reads()
+    result = await bbmap_clumpify(reads_1, prefix="test")
+    assert [f.name for f in result.reads] == ["test.clumped.fastq.gz"], [f.name for f in result.reads]
+    assert result.log.name == "test.clumpify.log", result.log.name
+    await assert_gunzipped_md5(result.reads[0], CLUMPED_1_MD5, label="test.clumped.fastq.gz")
+
+
+@env.task
+async def test_bbmap_clumpify_paired_end() -> None:
+    # upstream case: bbmap/clumpify "test-bbmap-clumpify-paired-end"
+    result = await bbmap_clumpify(*await bbduk_reads(), prefix="test")
+    names = [f.name for f in result.reads]
+    assert names == ["test_1.clumped.fastq.gz", "test_2.clumped.fastq.gz"], names
+    assert result.log.name == "test.clumpify.log", result.log.name
+    await assert_gunzipped_md5(result.reads[0], CLUMPED_1_MD5, label=names[0])
+    await assert_gunzipped_md5(result.reads[1], "c70ab7bbd44d6b6fadd6a1a79ef1648f", label=names[1])
+
+
 tests = [
     test_bbsplit_prebuilt_index,
     test_bbduk_single_end,
@@ -314,4 +508,17 @@ tests = [
     test_bbmap_filterbyname_interleaved_output,
     test_bbmap_repair_paired,
     test_bbmap_repair_interleaved,
+    test_bbmap_index_human,
+    test_bbmap_align_paired_fasta,
+    test_bbmap_align_paired_index,
+    test_bbmap_align_single_index,
+    test_bbmap_align_paired_index_pigz,
+    test_bbmap_align_transcriptome_all_fastq,
+    test_bbmap_align_transcriptome_unmapped_fastq,
+    test_bbmap_align_transcriptome_mapped_interleaved_output,
+    test_bbmap_align_interleaved_unmapped_fastq,
+    test_bbmap_align_transcriptome_mapped_bam,
+    test_bbmap_pileup_paired_bam,
+    test_bbmap_clumpify_single_end,
+    test_bbmap_clumpify_paired_end,
 ]

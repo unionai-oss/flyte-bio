@@ -9,12 +9,17 @@ single file as the single-end case, so it is kept as it is. nf-test hashes
 The seqtk_trim cases are upstream's seqtk/trim tests (same commit and
 container): single- and paired-end, with the default prefix (the sample id,
 ``test``) and no ``args``.
+
+The seqtk_seq cases are upstream's seqtk/seq tests (same commit and
+container), with their config's ``ext.args = '-A'`` (FASTA output); the
+seqtk_cutn case is upstream's seqtk/cutn test. nf-test hashes ``.gz``
+outputs decompressed.
 """
 
 from flyte.io import File
 
-from flyte_bio.modules.seqtk import seqtk_sample, seqtk_trim
-from tests.framework import assert_gunzipped_md5, env, fixture
+from flyte_bio.modules.seqtk import seqtk_cutn, seqtk_sample, seqtk_seq, seqtk_trim
+from tests.framework import assert_gunzipped_md5, assert_md5, env, fixture
 
 READS = "genomics/sarscov2/illumina/fastq/test_1.fastq.gz"
 READS_2 = "genomics/sarscov2/illumina/fastq/test_2.fastq.gz"
@@ -61,10 +66,34 @@ async def test_seqtk_trim_paired_end() -> None:
     await assert_gunzipped_md5(outs[1], "2ebae722295ea66d84075a3b042e2b42", label=names[1])
 
 
+@env.task
+async def test_seqtk_seq_fasta() -> None:
+    out = await seqtk_seq(await fixture("genomics/sarscov2/genome/genome.fasta"), prefix="test", args="-A")
+    assert name_of(out) == "test.seqtk-seq.fasta.gz", name_of(out)
+    await assert_gunzipped_md5(out, "e73599798195a519ba2565c3f0275b93", label="test.seqtk-seq.fasta.gz")
+
+
+@env.task
+async def test_seqtk_seq_fastq() -> None:
+    out = await seqtk_seq(await fixture(READS), prefix="test", args="-A")
+    assert name_of(out) == "test.seqtk-seq.fasta.gz", name_of(out)
+    await assert_gunzipped_md5(out, "f0c5c9110ce19e9ebbc9a6b6baf9e105", label="test.seqtk-seq.fasta.gz")
+
+
+@env.task
+async def test_seqtk_cutn_chr21() -> None:
+    out = await seqtk_cutn(await fixture("genomics/homo_sapiens/genome/chr21/sequence/genome.fasta"), prefix="test")
+    assert name_of(out) == "test.bed", name_of(out)
+    await assert_md5(out, "16cbba84e3a4bdbb52217afb5051f948", label="test.bed")
+
+
 tests = [
     test_seqtk_sample_single_end,
     test_seqtk_sample_paired_end,
     test_seqtk_sample_single_end_fraction,
     test_seqtk_trim_single_end,
     test_seqtk_trim_paired_end,
+    test_seqtk_seq_fasta,
+    test_seqtk_seq_fastq,
+    test_seqtk_cutn_chr21,
 ]

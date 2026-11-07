@@ -17,6 +17,12 @@ follows upstream's: ``<prefix>.<ext>.gz`` (gzipped with ``gzip -n``), where
   the input sequences.
 
 Options such as ``--id 0.8`` go in ``args``.
+
+It also exposes :func:`vsearch_sort`, which sorts the sequences in ``fasta``
+(FASTA or FASTQ, may be gzipped) by abundance (``--sortbysize``) or length
+(``--sortbylength``) and writes them as FASTA to ``<prefix>.fasta``; a prefix
+that would overwrite the input is an error. It runs in upstream's
+VSEARCH-only image.
 """
 
 from dataclasses import dataclass
@@ -86,7 +92,34 @@ vsearch_cluster_cmd = shell.create(
     """,
 )
 
-env = flyte.TaskEnvironment.from_task("vsearch", vsearch_cluster_cmd.as_task())
+VSEARCH_SORT_IMAGE = "community.wave.seqera.io/library/vsearch:2.31.0--80e3b2da3ae2f3d8"
+SORTS = ("--sortbysize", "--sortbylength")
+
+vsearch_sort_cmd = shell.create(
+    name="vsearch_sort",
+    image=VSEARCH_SORT_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"fasta": File, "sort": str, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        FA=({{inputs.fasta}})
+        SORT={{inputs.sort}}
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        vsearch \
+            $SORT "${{FA[0]}}" \
+            --threads $TASK_CPUS \
+            --output "$OUT/$P.fasta" \
+            $ARGS || exit 1
+    """,
+)
+
+vsearch_cluster_env = flyte.TaskEnvironment.from_task("vsearch_samtools", vsearch_cluster_cmd.as_task())
+vsearch_sort_env = flyte.TaskEnvironment.from_task("vsearch_only", vsearch_sort_cmd.as_task())
+env = flyte.TaskEnvironment(name="vsearch", depends_on=[vsearch_cluster_env, vsearch_sort_env])
 
 
 @dataclass
@@ -118,3 +151,17 @@ async def vsearch_cluster(
     if single is None:
         raise FileNotFoundError(f"vsearch wrote no {name}")
     return VsearchClusterResult(output=single, clusters=[], results=results)
+
+
+async def vsearch_sort(fasta: File, sort: str, prefix: str = "sample", args: str = "") -> File:
+    """``fasta``'s sequences sorted by ``sort`` (``--sortbysize`` or ``--sortbylength``): ``<prefix>.fasta``."""
+    if sort not in SORTS:
+        raise ValueError(f"Unknown sort option provided ({sort}); expected one of {SORTS}")
+    filename = f"{prefix}.fasta"
+    if fasta.path.rstrip("/").rsplit("/", 1)[-1] == filename:
+        raise ValueError("Input and output names are the same, set prefix in module configuration to disambiguate!")
+    results = await vsearch_sort_cmd(fasta=fasta, sort=sort, prefix=prefix, args=args)
+    found = await results.get_file(filename)
+    if found is None:
+        raise FileNotFoundError(f"vsearch wrote no {filename}")
+    return found

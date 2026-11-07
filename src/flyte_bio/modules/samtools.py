@@ -22,8 +22,10 @@ Exposes the subset of the samtools suite the RNA-seq pipeline leans on:
   name-grouped alignment, as ``<prefix>.<ext>``.
 - :func:`samtools_markdup` — mark duplicates in a coordinate-sorted
   alignment, as ``<prefix>.<ext>``.
+- :func:`samtools_import` — FASTQ reads (single-end, a pair, or one
+  interleaved file) as an unaligned ``<prefix>.<ext>``.
 
-fixmate and markdup write SAM, BAM or CRAM following ``--output-fmt`` in
+fixmate, markdup and import write SAM, BAM or CRAM following ``--output-fmt`` in
 ``args`` (BAM by default). As upstream, calmd and markdup get ``-@`` of the
 task's CPUs, fixmate ``--threads`` of its CPUs minus 1.
 
@@ -38,8 +40,8 @@ upstream, ``samtools fastq`` gets ``--threads`` of the task's CPUs minus 1,
 and ``collate`` and its ``fastq`` the task's CPUs each.
 
 Each upstream module pins its own samtools build, so the FASTQ conversions
-have their own environments (convert, dict, calmd, fixmate and markdup share
-fastq's samtools 1.25);
+have their own environments (convert, dict, calmd, fixmate, markdup and
+import share fastq's samtools 1.25);
 :data:`env` aggregates them.
 """
 
@@ -448,6 +450,43 @@ samtools_markdup_cmd = shell.create(
     """,
 )
 
+# As upstream: the output format follows `--output-fmt` in args (default BAM),
+# and the reads' flags follow their layout: two single-end files' first is
+# passed bare and the rest with -0, a pair as -1/-2, one single-end file as
+# -0, and one paired-end file as interleaved (-s). `read_names` ("/"-separated)
+# keeps the caller's order, since a list[File] is globbed alphabetically.
+samtools_import_cmd = shell.create(
+    name="samtools_import",
+    image=SAMTOOLS_FASTQ_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"reads": list[File], "read_names": str, "single_end": bool, "prefix": str, "args": str},
+    defaults={"single_end": False, "args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        R=({{inputs.reads}})
+        NAMES={{inputs.read_names}}
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        {alignment_extension_script()}
+        DIR=$(dirname "${{R[0]}}")
+        IFS=/ read -ra ORDERED <<< "$NAMES"
+        READS=()
+        for NAME in "${{ORDERED[@]}}"; do READS+=("$DIR/$NAME"); done
+        if [ ${{#READS[@]}} -gt 1 ] && [ {{inputs.single_end}} = true ]; then
+            INPUT=("${{READS[0]}}")
+            for f in "${{READS[@]:1}}"; do INPUT+=("-0$f"); done
+        elif [ ${{#READS[@]}} -gt 1 ]; then
+            INPUT=(-1 "${{READS[0]}}" -2 "${{READS[1]}}")
+        elif [ {{inputs.single_end}} = true ]; then
+            INPUT=(-0 "${{READS[0]}}")
+        else
+            INPUT=(-s "${{READS[0]}}")
+        fi
+        samtools import "${{INPUT[@]}}" $ARGS -@ $TASK_CPUS -o {{outputs.results}}/"$P.$EXT" || exit 1
+    """,
+)
+
 
 samtools_tools_env = flyte.TaskEnvironment.from_task(
     "samtools_tools",
@@ -468,6 +507,7 @@ samtools_fastq_env = flyte.TaskEnvironment.from_task(
     samtools_calmd_cmd.as_task(),
     samtools_fixmate_cmd.as_task(),
     samtools_markdup_cmd.as_task(),
+    samtools_import_cmd.as_task(),
 )
 samtools_collatefastq_env = flyte.TaskEnvironment.from_task(
     "samtools_collatefastq", samtools_collatefastq_cmd.as_task()
@@ -655,3 +695,20 @@ async def samtools_markdup(
         raise ValueError("input and output names are the same; choose another prefix")
     results = await samtools_markdup_cmd(alignment=alignment, fasta=fasta, fai=fai, prefix=prefix, args=args)
     return await pick_alignment(results, prefix, args, "markdup")
+
+
+async def samtools_import(reads: list[File], prefix: str, single_end: bool = False, args: str = "") -> File:
+    """FASTQ ``reads`` as an unaligned ``<prefix>.<ext>`` (``--output-fmt`` in ``args``, default bam).
+
+    ``reads`` is one single-end file, several single-end files, a pair (R1, R2) or, with
+    ``single_end`` false, one interleaved file. Their names must be distinct.
+    """
+    if not reads:
+        raise ValueError("samtools import needs at least one FASTQ")
+    names = [f.name for f in reads]
+    if len(set(names)) != len(names):
+        raise ValueError(f"samtools import needs distinct FASTQ names, got {names}")
+    results = await samtools_import_cmd(
+        reads=reads, read_names="/".join(names), single_end=single_end, prefix=prefix, args=args
+    )
+    return await pick_alignment(results, prefix, args, "import")

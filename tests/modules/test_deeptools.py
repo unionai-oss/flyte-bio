@@ -12,17 +12,24 @@ The multibamsummary, plotcorrelation and plotpca cases are upstream's at the
 same commit: two labelled human BAMs summarised over bins, then plotted.
 Upstream checks the npz's and plots' names, and the plotCorrelation matrix's
 md5 (the same for the default and explicit method and plot type).
+
+The plotprofile and bamcoverage cases are upstream's at the same commit:
+plotProfile of the test matrix (upstream checks only the outputs' names), and
+bamCoverage of a human BAM, and of its CRAM with the reference (with and
+without its ``.fai``), whose bigWigs share one md5.
 """
 
 from flyte.io import File
 
 from flyte_bio.modules.deeptools import (
+    deeptools_bamcoverage,
     deeptools_computematrix,
     deeptools_multibamsummary,
     deeptools_plotcorrelation,
     deeptools_plotfingerprint,
     deeptools_plotheatmap,
     deeptools_plotpca,
+    deeptools_plotprofile,
 )
 from tests.framework import assert_gunzipped_md5, assert_md5, assert_nonempty, env, fixture
 
@@ -148,6 +155,54 @@ async def test_deeptools_plotpca_bam() -> None:
     await assert_nonempty(result.table, label="plotPCA table")
 
 
+@env.task
+async def test_deeptools_plotprofile_mat() -> None:
+    # upstream case: deeptools/plotprofile "sarscov2 - mat"
+    matrix = await fixture("genomics/sarscov2/illumina/deeptools/test.computeMatrix.mat.gz")
+    result = await deeptools_plotprofile(matrix, prefix="test")
+    assert result.pdf.name == "test.plotProfile.pdf", result.pdf.name
+    assert result.table.name == "test.plotProfile.tab", result.table.name
+    assert await head(result.pdf, 4) == b"%PDF", "plotProfile pdf isn't a PDF"
+    await assert_nonempty(result.table, label="plotProfile table")
+
+
+BAMCOVERAGE_MD5 = "95fe9383a9e6c02aea6b785cf074274f"
+CRAM = "genomics/homo_sapiens/illumina/cram/test.paired_end.sorted.cram"
+HUMAN_FASTA = "genomics/homo_sapiens/genome/genome.fasta"
+
+
+@env.task
+async def test_deeptools_bamcoverage_bam() -> None:
+    # upstream case: deeptools/bamcoverage "homo_sampiens - bam"
+    bigwig = await deeptools_bamcoverage(await fixture(BAM), "test", index=await fixture(BAM + ".bai"))
+    assert bigwig.name == "test.bigWig", bigwig.name
+    await assert_md5(bigwig, BAMCOVERAGE_MD5, label="bigWig")
+
+
+@env.task
+async def test_deeptools_bamcoverage_cram_fasta_fai() -> None:
+    # upstream case: deeptools/bamcoverage "homo_sampiens - cram - fasta - fai "
+    bigwig = await deeptools_bamcoverage(
+        await fixture(CRAM),
+        "test",
+        index=await fixture(CRAM + ".crai"),
+        fasta=await fixture(HUMAN_FASTA),
+        fai=await fixture(HUMAN_FASTA + ".fai"),
+    )
+    assert bigwig.name == "test.bigWig", bigwig.name
+    await assert_md5(bigwig, BAMCOVERAGE_MD5, label="bigWig")
+
+
+@env.task
+async def test_deeptools_bamcoverage_cram_fasta() -> None:
+    # upstream case: deeptools/bamcoverage "homo_sampiens - cram - fasta"
+    bigwig = await deeptools_bamcoverage(
+        await fixture(CRAM), "test", index=await fixture(CRAM + ".crai"), fasta=await fixture(HUMAN_FASTA)
+    )
+    assert bigwig.name == "test.bigWig", bigwig.name
+    await assert_md5(bigwig, BAMCOVERAGE_MD5, label="bigWig")
+
+
 tests = [
     test_deeptools_computematrix_no_blacklist,
     test_deeptools_computematrix_blacklist,
@@ -158,4 +213,8 @@ tests = [
     test_deeptools_plotcorrelation_no_method,
     test_deeptools_plotcorrelation_no_plot_type,
     test_deeptools_plotpca_bam,
+    test_deeptools_plotprofile_mat,
+    test_deeptools_bamcoverage_bam,
+    test_deeptools_bamcoverage_cram_fasta_fai,
+    test_deeptools_bamcoverage_cram_fasta,
 ]

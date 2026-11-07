@@ -18,6 +18,8 @@ Exposes:
   ``<prefix>.CollectHsMetrics.coverage_metrics``, for a BAM over bait and
   target intervals (interval lists, or BEDs converted with the reference's
   ``.dict``, as upstream).
+- :func:`picard_mergesamfiles`, which merges BAMs into ``<prefix>.bam``,
+  passing them in name order, as upstream (a single BAM is copied as is).
 
 Upstream pins a newer Picard (3.5.0) for every tool but MarkDuplicates, so
 those share a second environment and ``env`` aggregates both.
@@ -239,6 +241,40 @@ picard_collecthsmetrics_cmd = shell.create(
 )
 
 
+# As upstream: the BAMs go to MergeSamFiles in name order (C collation, as
+# Groovy sorts paths); a single BAM is the output as is (copied, where
+# upstream links it).
+picard_mergesamfiles_cmd = shell.create(
+    name="picard_mergesamfiles",
+    image=COLLECTMULTIPLEMETRICS_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"bams": list[File], "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        BAMS=({{inputs.bams}})
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        mapfile -t SORTED < <(for f in "${{BAMS[@]}}"; do printf '%s\t%s\n' "$(basename "$f")" "$f"; done \
+            | LC_ALL=C sort -t$'\t' -k1,1 | cut -f2)
+        if [ ${{#SORTED[@]}} -gt 1 ]; then
+            INPUTS=()
+            for f in "${{SORTED[@]}}"; do INPUTS+=(--INPUT "$f"); done
+            picard \
+                -Xmx{JAVA_HEAP_MB}M \
+                MergeSamFiles \
+                $ARGS \
+                "${{INPUTS[@]}}" \
+                --OUTPUT "$OUT/$P.bam" || exit 1
+        else
+            cp "${{SORTED[0]}}" "$OUT/$P.bam"
+        fi
+    """,
+)
+
+
 # One image per environment: every tool but MarkDuplicates uses the newer Picard, so `env` aggregates two.
 picard_markduplicates_env = flyte.TaskEnvironment.from_task(
     "picard_markduplicates",
@@ -250,6 +286,7 @@ picard_collectmultiplemetrics_env = flyte.TaskEnvironment.from_task(
     picard_addorreplacereadgroups_cmd.as_task(),
     picard_createsequencedictionary_cmd.as_task(),
     picard_collecthsmetrics_cmd.as_task(),
+    picard_mergesamfiles_cmd.as_task(),
 )
 env = flyte.TaskEnvironment(name="picard", depends_on=[picard_markduplicates_env, picard_collectmultiplemetrics_env])
 
@@ -385,3 +422,19 @@ async def picard_collecthsmetrics(
         args=args,
     )
     return await pick_file(results, f"{prefix}.CollectHsMetrics.coverage_metrics", "CollectHsMetrics")
+
+
+async def picard_mergesamfiles(bams: list[File], prefix: str, args: str = "") -> File:
+    """Merge ``bams`` (in name order, as upstream) into ``<prefix>.bam``; a single BAM is returned as a copy.
+
+    The BAMs are staged under their own names, so they must be distinct.
+    """
+    names = [f.name for f in bams]
+    if not names:
+        raise ValueError("picard MergeSamFiles needs at least one BAM")
+    if len(set(names)) != len(names):
+        raise ValueError(f"picard MergeSamFiles needs distinct BAM names, got {names}")
+    if f"{prefix}.bam" in names:
+        raise ValueError("an input and the output have the same name; choose another prefix")
+    results = await picard_mergesamfiles_cmd(bams=bams, prefix=prefix, args=args)
+    return await pick_file(results, f"{prefix}.bam", "MergeSamFiles")

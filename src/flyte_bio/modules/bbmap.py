@@ -1,4 +1,4 @@
-"""bbmap — BBTools: BBSplit binning, BBDuk trimming/filtering, BBNorm normalization, FilterByName and Repair.
+"""bbmap — BBTools: BBMap alignment, BBSplit binning, BBDuk trimming, BBNorm, Clumpify, Pileup, FilterByName, Repair.
 
 Exposes :func:`bbsplit_index`, which builds a BBSplit index from a primary
 FASTA plus other references (e.g. contaminant genomes), and
@@ -33,6 +33,30 @@ FASTQ. As upstream, it writes ``<prefix>_1_repaired.fastq.gz`` /
 ``<prefix>_singleton.fastq.gz``, and Repair's output in
 ``<prefix>.repair.sh.log``. Upstream gives Repair all the task's memory as
 heap; here it gets the usual 80%.
+
+And it exposes :func:`bbmap_index`, which builds a BBMap index of a FASTA
+(``bbmap.sh ref=``): upstream's ``ref`` directory (``genome/1/…``,
+``index/1/…``) as a Dir; and :func:`bbmap_align`, which aligns one sample's
+reads (single-end, a pair of mates, or one interleaved FASTQ) with BBMap
+against such an index or a FASTA (indexed on the fly). As upstream, it
+writes ``output_reads`` (``all``, ``mapped`` or ``unmapped``: ``out=``,
+``outm=`` or ``outu=``) in ``output_format`` (``bam``, ``fastq``,
+``fastq.gz``, ``fasta``, ``fasta.gz``) to ``<prefix>.bam`` (all reads as BAM)
+or ``<prefix>.<output_reads>.<format>``, split into ``…_1.<format>`` and
+``…_2.<format>`` for paired reads in a reads format unless
+``interleaved_output``; BBMap's output goes to ``<prefix>.bbmap.log``.
+
+And it exposes :func:`bbmap_pileup`, which writes a BAM's per-scaffold
+coverage (``<prefix>.coverage.stats.txt``) and coverage histogram
+(``<prefix>.coverage.hist.txt``) with Pileup, and :func:`bbmap_clumpify`,
+which groups one sample's reads by shared k-mers with Clumpify (``dedupe``
+and the rest in ``args``), writing ``<prefix>.clumped.fastq.gz`` (single-end)
+or ``<prefix>_1.clumped.fastq.gz`` / ``<prefix>_2.clumped.fastq.gz``, and
+Clumpify's output in ``<prefix>.clumpify.log``.
+
+Upstream gives BBMap, Pileup and Clumpify all the task's memory as heap (or,
+for Clumpify, lets it size its own heap and use every core); here they get the
+usual 80% and the task's CPUs.
 
 The index-reuse handling is upstream's: BBSplit records each reference's
 source path and modification time in ``ref/genome/*/summary.txt`` and
@@ -299,6 +323,159 @@ bbmap_repair_cmd = shell.create(
     """,
 )
 
+# Upstream labels bbmap/index process_long and bbmap/align process_medium; a
+# human-sized index needs more memory than these defaults.
+INDEX_RESOURCES = flyte.Resources(cpu=4, memory="16Gi")
+ALIGN_RESOURCES = flyte.Resources(cpu=6, memory="16Gi")
+# Upstream labels Pileup process_medium; it reads the BAM through samtools and needs little.
+PILEUP_RESOURCES = flyte.Resources(cpu=2, memory="8Gi")
+# Upstream labels Clumpify process_single and process_high_memory.
+CLUMPIFY_RESOURCES = flyte.Resources(cpu=1, memory="16Gi")
+ALIGN_FORMATS = ("bam", "fastq", "fastq.gz", "fasta", "fasta.gz")
+ALIGN_OUTPUT_KEYS = {"all": "out", "mapped": "outm", "unmapped": "outu"}
+
+bbmap_index_cmd = shell.create(
+    name="bbmap_index",
+    image=BBMAP_IMAGE,
+    resources=INDEX_RESOURCES,
+    inputs={"fasta": File, "args": str},
+    defaults={"args": ""},
+    outputs={"index": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        FA=({{inputs.fasta}})
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        bbmap.sh \
+            ref="${{FA[0]}}" \
+            $ARGS \
+            threads=$TASK_CPUS \
+            -Xmx{JAVA_HEAP_MB}M || exit 1
+        cp -r ref/. {{outputs.index}}/
+    """,
+)
+
+# As upstream: a staged index is BBMap's default ./ref; a FASTA is indexed on
+# the fly (ref=). Outputs are written in the working directory, checked, then moved.
+bbmap_align_cmd = shell.create(
+    name="bbmap_align",
+    image=BBMAP_IMAGE,
+    resources=ALIGN_RESOURCES,
+    inputs={
+        "reads_1": File,
+        "reads_2": File | None,
+        "single_end": bool,
+        "reference": File | None,
+        "index": Dir | None,
+        "output_key": str,
+        "output_files": str,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        R1=({{inputs.reads_1}})
+        shopt -s nullglob; R2=({{inputs.reads_2}}); FA=({{inputs.reference}}); shopt -u nullglob
+        INDEX={{inputs.index}}
+        KEY={{inputs.output_key}}
+        read -ra FILES <<< {{inputs.output_files}}
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        if [ ${{#R2[@]}} -gt 0 ]; then
+            IN=(in="${{R1[0]}}" in2="${{R2[0]}}")
+        elif [ {{inputs.single_end}} = true ]; then
+            IN=(in="${{R1[0]}}")
+        else
+            IN=(in="${{R1[0]}}" interleaved=t)
+        fi
+        if [ ${{#FILES[@]}} -eq 2 ]; then
+            WRITE=("$KEY=${{FILES[0]}}" "${{KEY}}2=${{FILES[1]}}")
+        else
+            WRITE=("$KEY=${{FILES[0]}}")
+        fi
+        W=$(mktemp -d); cd "$W"
+        DB=()
+        if [ ${{#FA[@]}} -gt 0 ]; then
+            DB=(ref="${{FA[0]}}")
+        elif [ -d "$INDEX" ]; then
+            ln -s "$INDEX" ref
+        fi
+        bbmap.sh \
+            "${{DB[@]}}" \
+            "${{IN[@]}}" \
+            "${{WRITE[@]}}" \
+            $ARGS \
+            threads=$TASK_CPUS \
+            -Xmx{JAVA_HEAP_MB}M \
+            &> "$OUT/$P.bbmap.log" || exit 1
+        for f in "${{FILES[@]}}"; do
+            case "$f" in
+                *.bam|*.gz) test -s "$f" ;;
+                *) test -e "$f" ;;
+            esac || {{ echo "ERROR: bbmap did not write $f" >&2; exit 1; }}
+            mv "$f" "$OUT"/
+        done
+    """,
+)
+
+bbmap_pileup_cmd = shell.create(
+    name="bbmap_pileup",
+    image=BBMAP_IMAGE,
+    resources=PILEUP_RESOURCES,
+    inputs={"bam": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        BAM=({{inputs.bam}})
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        W=$(mktemp -d); cd "$W"
+        pileup.sh \
+            -Xmx{JAVA_HEAP_MB}M \
+            in="${{BAM[0]}}" \
+            out="$OUT/$P.coverage.stats.txt" \
+            hist="$OUT/$P.coverage.hist.txt" \
+            threads=$TASK_CPUS \
+            $ARGS || exit 1
+    """,
+)
+
+bbmap_clumpify_cmd = shell.create(
+    name="bbmap_clumpify",
+    image=BBMAP_IMAGE,
+    resources=CLUMPIFY_RESOURCES,
+    inputs={"reads_1": File, "reads_2": File | None, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        R1=({{inputs.reads_1}})
+        shopt -s nullglob; R2=({{inputs.reads_2}}); shopt -u nullglob
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        if [ ${{#R2[@]}} -eq 0 ]; then
+            RAW=(in="${{R1[0]}}"); CLUMPED=(out="$OUT/$P.clumped.fastq.gz")
+        else
+            RAW=(in1="${{R1[0]}}" in2="${{R2[0]}}")
+            CLUMPED=(out1="$OUT/${{P}}_1.clumped.fastq.gz" out2="$OUT/${{P}}_2.clumped.fastq.gz")
+        fi
+        W=$(mktemp -d); cd "$W"
+        clumpify.sh \
+            "${{RAW[@]}}" \
+            "${{CLUMPED[@]}}" \
+            $ARGS \
+            threads=$TASK_CPUS \
+            -Xmx{JAVA_HEAP_MB}M \
+            &> "$OUT/$P.clumpify.log" || exit 1
+    """,
+)
+
 env = flyte.TaskEnvironment.from_task(
     "bbmap",
     bbsplit_index_cmd.as_task(),
@@ -307,6 +484,10 @@ env = flyte.TaskEnvironment.from_task(
     bbnorm_cmd.as_task(),
     bbmap_filterbyname_cmd.as_task(),
     bbmap_repair_cmd.as_task(),
+    bbmap_index_cmd.as_task(),
+    bbmap_align_cmd.as_task(),
+    bbmap_pileup_cmd.as_task(),
+    bbmap_clumpify_cmd.as_task(),
 )
 
 
@@ -506,4 +687,120 @@ async def bbmap_repair(
         reads=[await pick(name) for name in names],
         singletons=await pick(f"{prefix}_singleton.fastq.gz"),
         log=await pick(f"{prefix}.repair.sh.log"),
+    )
+
+
+async def pick_file(results: Dir, name: str, tool: str) -> File:
+    found = await results.get_file(name)
+    if found is None:
+        raise FileNotFoundError(f"{tool} wrote no {name}")
+    return found
+
+
+async def bbmap_index(fasta: File, args: str = "") -> Dir:
+    """BBMap index of ``fasta``: upstream's ``ref`` directory (``genome/``, ``index/``)."""
+    return await bbmap_index_cmd(fasta=fasta, args=args)
+
+
+def bbmap_align_outputs(
+    prefix: str, output_format: str, output_reads: str, single_end: bool, interleaved_output: bool
+) -> tuple[str, list[str]]:
+    """Upstream's BBMap output option (``out``, ``outm``, ``outu``) and file names."""
+    output_format = output_format or "bam"
+    output_reads = output_reads or "all"
+    if output_format not in ALIGN_FORMATS:
+        raise ValueError(f"Invalid output_format '{output_format}'. Valid options: {', '.join(ALIGN_FORMATS)}")
+    if output_reads not in ALIGN_OUTPUT_KEYS:
+        raise ValueError(f"Invalid output_reads '{output_reads}'. Valid options: {', '.join(ALIGN_OUTPUT_KEYS)}")
+    # Unsuffixed only for all reads as bam, the module's original output.
+    out_prefix = prefix if output_format == "bam" and output_reads == "all" else f"{prefix}.{output_reads}"
+    if not single_end and not interleaved_output and output_format != "bam":
+        files = [f"{out_prefix}_1.{output_format}", f"{out_prefix}_2.{output_format}"]
+    else:
+        files = [f"{out_prefix}.{output_format}"]
+    return ALIGN_OUTPUT_KEYS[output_reads], files
+
+
+@dataclass
+class BBMapAlignResult:
+    bam: File | None  # <prefix>.bam or <prefix>.<output_reads>.bam, for output_format bam
+    reads: list[File]  # the reads files, for a reads output_format
+    log: File  # <prefix>.bbmap.log
+
+
+async def bbmap_align(
+    reads_1: File,
+    reads_2: File | None,
+    ref: File | Dir,
+    single_end: bool | None = None,
+    output_format: str = "bam",
+    output_reads: str = "all",
+    interleaved_output: bool = False,
+    prefix: str = "bbmap",
+    args: str = "",
+) -> BBMapAlignResult:
+    """Align one sample's reads with BBMap against ``ref``: a :func:`bbmap_index` Dir or a FASTA.
+
+    ``single_end`` defaults to ``reads_2`` being None; with ``single_end=False`` and no ``reads_2``,
+    ``reads_1`` holds interleaved pairs.
+    """
+    if single_end is None:
+        single_end = reads_2 is None
+    if single_end and reads_2 is not None:
+        raise ValueError("single-end bbmap_align takes no reads_2")
+    key, files = bbmap_align_outputs(prefix, output_format, output_reads, single_end, interleaved_output)
+    inputs = {basename(f) for f in (reads_1, reads_2) if f is not None}
+    if inputs & set(files):
+        raise ValueError("Input and output names are the same, set prefix in module configuration to disambiguate!")
+    results = await bbmap_align_cmd(
+        reads_1=reads_1,
+        reads_2=reads_2,
+        single_end=single_end,
+        reference=ref if isinstance(ref, File) else None,
+        index=ref if isinstance(ref, Dir) else None,
+        output_key=key,
+        output_files=" ".join(files),
+        prefix=prefix,
+        args=args,
+    )
+    written = [await pick_file(results, name, "bbmap") for name in files]
+    log = await pick_file(results, f"{prefix}.bbmap.log", "bbmap")
+    if (output_format or "bam") == "bam":
+        return BBMapAlignResult(bam=written[0], reads=[], log=log)
+    return BBMapAlignResult(bam=None, reads=written, log=log)
+
+
+@dataclass
+class PileupResult:
+    covstats: File  # <prefix>.coverage.stats.txt
+    hist: File  # <prefix>.coverage.hist.txt
+
+
+async def bbmap_pileup(bam: File, prefix: str = "pileup", args: str = "") -> PileupResult:
+    """Per-scaffold coverage and a coverage histogram of ``bam`` with Pileup."""
+    results = await bbmap_pileup_cmd(bam=bam, prefix=prefix, args=args)
+    return PileupResult(
+        covstats=await pick_file(results, f"{prefix}.coverage.stats.txt", "pileup"),
+        hist=await pick_file(results, f"{prefix}.coverage.hist.txt", "pileup"),
+    )
+
+
+@dataclass
+class ClumpifyResult:
+    reads: list[File]  # <prefix>.clumped.fastq.gz, or <prefix>_1.clumped.fastq.gz and <prefix>_2.clumped.fastq.gz
+    log: File  # <prefix>.clumpify.log
+
+
+async def bbmap_clumpify(
+    reads_1: File, reads_2: File | None = None, prefix: str = "clumpify", args: str = ""
+) -> ClumpifyResult:
+    """Group one sample's reads by shared k-mers with Clumpify; ``reads_2`` is None for single-end."""
+    results = await bbmap_clumpify_cmd(reads_1=reads_1, reads_2=reads_2, prefix=prefix, args=args)
+    if reads_2 is None:
+        names = [f"{prefix}.clumped.fastq.gz"]
+    else:
+        names = [f"{prefix}_1.clumped.fastq.gz", f"{prefix}_2.clumped.fastq.gz"]
+    return ClumpifyResult(
+        reads=[await pick_file(results, name, "clumpify") for name in names],
+        log=await pick_file(results, f"{prefix}.clumpify.log", "clumpify"),
     )

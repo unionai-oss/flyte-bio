@@ -13,6 +13,16 @@ and :func:`seqtk_trim`, which quality-trims each FASTQ file with ``seqtk
 trimfq`` (its default: Phred error-probability trimming at 0.05; ``args``
 passes ``-q``, ``-b``, ``-e`` and the rest). As upstream, each input
 ``<name>`` gives ``<prefix>_<name>``, gzipped (``gzip --no-name``).
+
+:func:`seqtk_seq` converts or transforms one FASTA/FASTQ file with ``seqtk
+seq`` (``args``: ``-A`` for FASTA output, ``-l``, ``-q`` and the rest). As
+upstream, the output is ``<prefix>.seqtk-seq.<ext>.gz`` (``gzip -c``), where
+``ext`` is ``fasta`` for a FASTA-named input or when ``args`` is exactly
+``-a`` or ``-A``, and ``fastq`` otherwise.
+
+:func:`seqtk_cutn` writes the runs of N (gaps) in a FASTA as a BED,
+``seqtk cutN -g`` (``-n`` sets the shortest gap, in ``args``), to
+``<prefix>.bed``.
 """
 
 import re
@@ -77,7 +87,49 @@ seqtk_trim_cmd = shell.create(
     """,
 )
 
-env = flyte.TaskEnvironment.from_task("seqtk", seqtk_sample_cmd.as_task(), seqtk_trim_cmd.as_task())
+# Upstream's test for a FASTA input (or FASTA output) to name seqtk seq's output.
+SEQ_FASTA_NAME = re.compile(r".+\.fasta|.+\.fasta.gz|.+\.fa|.+\.fa.gz|.+\.fas|.+\.fas.gz|.+\.fna|.+\.fna.gz")
+SEQ_FASTA_ARGS = re.compile(r"\-[aA]")
+
+seqtk_seq_cmd = shell.create(
+    name="seqtk_seq",
+    image=SEQTK_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"fastx": File, "filename": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        set -o pipefail
+        IN=({inputs.fastx})
+        NAME={inputs.filename}
+        ARGS={inputs.args}
+        OUT={outputs.results}
+        set -f
+        seqtk seq $ARGS "${IN[0]}" | gzip -c > "$OUT/$NAME" || exit 1
+    """,
+)
+
+# Upstream labels cutN process_low; it is single-threaded and streams.
+seqtk_cutn_cmd = shell.create(
+    name="seqtk_cutn",
+    image=SEQTK_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"fasta": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        IN=({inputs.fasta})
+        P={inputs.prefix}
+        ARGS={inputs.args}
+        OUT={outputs.results}
+        set -f
+        seqtk cutN $ARGS -g "${IN[0]}" > "$OUT/$P.bed" || exit 1
+    """,
+)
+
+env = flyte.TaskEnvironment.from_task(
+    "seqtk", seqtk_sample_cmd.as_task(), seqtk_trim_cmd.as_task(), seqtk_seq_cmd.as_task(), seqtk_cutn_cmd.as_task()
+)
 
 
 def file_name(file: File) -> str:
@@ -129,3 +181,24 @@ async def seqtk_trim(reads: list[File], prefix: str = "sample", args: str = "") 
             raise FileNotFoundError(f"seqtk trimfq wrote no {prefix}_{name}")
         outputs.append(found)
     return outputs
+
+
+async def pick(results: Dir, name: str, tool: str) -> File:
+    found = await results.get_file(name)
+    if found is None:
+        raise FileNotFoundError(f"{tool} wrote no {name}")
+    return found
+
+
+async def seqtk_seq(fastx: File, prefix: str = "sample", args: str = "") -> File:
+    """``seqtk seq`` over ``fastx``: ``<prefix>.seqtk-seq.fasta.gz`` or ``<prefix>.seqtk-seq.fastq.gz``."""
+    fasta = SEQ_FASTA_NAME.fullmatch(file_name(fastx)) or SEQ_FASTA_ARGS.fullmatch(args)
+    filename = f"{prefix}.seqtk-seq.{'fasta' if fasta else 'fastq'}.gz"
+    results = await seqtk_seq_cmd(fastx=fastx, filename=filename, args=args)
+    return await pick(results, filename, "seqtk seq")
+
+
+async def seqtk_cutn(fasta: File, prefix: str = "sample", args: str = "") -> File:
+    """The gaps (runs of N) in ``fasta`` as a BED, ``seqtk cutN -g``: ``<prefix>.bed``."""
+    results = await seqtk_cutn_cmd(fasta=fasta, prefix=prefix, args=args)
+    return await pick(results, f"{prefix}.bed", "seqtk cutN")

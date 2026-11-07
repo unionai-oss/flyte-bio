@@ -8,6 +8,8 @@ Exposes:
   ``args`` starts with the mode, e.g. ``scale-regions -b 1000``.
 - :func:`deeptools_plotheatmap` — a heatmap of a computeMatrix matrix:
   ``<prefix>.plotHeatmap.pdf`` and ``<prefix>.plotHeatmap.mat.tab``.
+- :func:`deeptools_plotprofile` — a profile plot of a computeMatrix matrix:
+  ``<prefix>.plotProfile.pdf`` and its data ``<prefix>.plotProfile.tab``.
 - :func:`deeptools_plotfingerprint` — a fingerprint plot of BAMs' cumulative
   coverage: ``<prefix>.plotFingerprint.pdf``, the raw counts
   ``<prefix>.plotFingerprint.raw.txt`` and the quality metrics
@@ -22,6 +24,11 @@ Exposes:
   ``<prefix>.plotCorrelation.mat.tab``.
 - :func:`deeptools_plotpca` — a PCA plot of a multiBamSummary matrix:
   ``<prefix>.plotPCA.pdf`` and its data ``<prefix>.plotPCA.tab``.
+- :func:`deeptools_bamcoverage` — a BAM's (or CRAM's) coverage track:
+  ``<prefix>.bigWig``, or ``<prefix>.bedgraph`` when ``args`` has
+  ``--outFileFormat bedgraph`` (or ``-of bedgraph``). As upstream, a CRAM is
+  first converted to BAM against its reference, since deepTools can't read
+  CRAM.
 
 deepTools labels samples after their file names, so the inputs are linked into
 the working directory under their own names, in the caller's order (the order
@@ -29,6 +36,9 @@ of the plot's samples). As upstream, ``--numberOfProcessors`` is the task's
 CPUs, and computeMatrix records it in the matrix header. plotFingerprint adds
 ``--extendReads <fragment_size>`` for single-end reads when ``fragment_size``
 is set (upstream's ``params.fragment_size``).
+
+bamCoverage's upstream module pins an image with samtools, so it has its own
+environment; :data:`env` aggregates both.
 """
 
 from dataclasses import dataclass
@@ -40,9 +50,12 @@ from flyte.io import Dir, File
 from flyte_bio.limits import TASK_LIMITS
 
 DEEPTOOLS_IMAGE = "community.wave.seqera.io/library/deeptools:3.5.6--511a2b05870b9ec3"
+DEEPTOOLS_SAMTOOLS_IMAGE = "community.wave.seqera.io/library/deeptools_samtools:22ef5f45259c4336"
 # Upstream's tests run with 4 CPUs, which computeMatrix records in its matrix header.
 DEFAULT_RESOURCES = flyte.Resources(cpu=4, memory="8Gi")
 HEATMAP_RESOURCES = flyte.Resources(cpu=1, memory="6Gi")
+# Upstream's process_low.
+BAMCOVERAGE_RESOURCES = flyte.Resources(cpu=2, memory="8Gi")
 
 # Inputs are linked into a working directory under their own names; matplotlib
 # needs a writable HOME and config directory.
@@ -133,6 +146,30 @@ deeptools_plotheatmap_cmd = shell.create(
             --matrixFile "$NAME" \
             --outFileName "$P.plotHeatmap.pdf" \
             --outFileNameMatrix "$P.plotHeatmap.mat.tab"
+        mv ./*.pdf ./*.tab "$OUT"/
+    """,
+)
+
+deeptools_plotprofile_cmd = shell.create(
+    name="deeptools_plotprofile",
+    image=DEEPTOOLS_IMAGE,
+    resources=HEATMAP_RESOURCES,
+    inputs={"matrix": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        MAT=({{inputs.matrix}})
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        {WORKDIR_SETUP}
+        NAME=$(basename "${{MAT[0]}}")
+        ln -s "${{MAT[0]}}" "$NAME"
+        plotProfile \
+            $ARGS \
+            --matrixFile "$NAME" \
+            --outFileName "$P.plotProfile.pdf" \
+            --outFileNameData "$P.plotProfile.tab" || exit 1
         mv ./*.pdf ./*.tab "$OUT"/
     """,
 )
@@ -279,15 +316,83 @@ deeptools_plotpca_cmd = shell.create(
     """,
 )
 
-env = flyte.TaskEnvironment.from_task(
-    "deeptools",
+# The alignment and its index, and the reference and its .fai, are linked side
+# by side under their own names. A CRAM is converted to `<name>.bam` first, as
+# upstream (deepTools can't read CRAM).
+deeptools_bamcoverage_cmd = shell.create(
+    name="deeptools_bamcoverage",
+    image=DEEPTOOLS_SAMTOOLS_IMAGE,
+    resources=BAMCOVERAGE_RESOURCES,
+    inputs={
+        "alignment": File,
+        "index": File | None,
+        "fasta": File | None,
+        "fai": File | None,
+        "blacklist": File | None,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        IN=({{inputs.alignment}})
+        shopt -s nullglob
+        IDX=({{inputs.index}}); FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); BLACKLIST=({{inputs.blacklist}})
+        shopt -u nullglob
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        case " $ARGS " in
+            *" --outFileFormat bedgraph "*|*" -of bedgraph "*) EXT=bedgraph ;;
+            *) EXT=bigWig ;;
+        esac
+        {WORKDIR_SETUP}
+        NAME=$(basename "${{IN[0]}}"); ln -s "${{IN[0]}}" "$NAME"
+        if [ ${{#IDX[@]}} -gt 0 ]; then ln -s "${{IDX[0]}}" "$(basename "${{IDX[0]}}")"; fi
+        if [ "${{NAME##*.}}" = cram ]; then
+            FA_NAME=$(basename "${{FA[0]}}"); ln -s "${{FA[0]}}" "$FA_NAME"
+            FAI_ARGS=()
+            if [ ${{#FAI[@]}} -gt 0 ]; then
+                ln -s "${{FAI[0]}}" "$(basename "${{FAI[0]}}")"
+                FAI_ARGS=(--fai-reference "$(basename "${{FAI[0]}}")")
+            fi
+            BAM="${{NAME%.cram}}.bam"
+            samtools view -T "$FA_NAME" "$NAME" "${{FAI_ARGS[@]}}" -@ $TASK_CPUS -o "$BAM" || exit 1
+            samtools index -b "$BAM" -@ $TASK_CPUS || exit 1
+        else
+            BAM=$NAME
+        fi
+        BLACKLIST_ARGS=()
+        if [ ${{#BLACKLIST[@]}} -gt 0 ]; then
+            BL_NAME=$(basename "${{BLACKLIST[0]}}"); ln -s "${{BLACKLIST[0]}}" "$BL_NAME"
+            BLACKLIST_ARGS=(--blackListFileName "$BL_NAME")
+        fi
+        bamCoverage \
+            --bam "$BAM" \
+            $ARGS \
+            --numberOfProcessors $TASK_CPUS \
+            --outFileName "$P.$EXT" \
+            "${{BLACKLIST_ARGS[@]}}" || exit 1
+        mv "$P.$EXT" "$OUT"/
+    """,
+)
+
+# One image per environment: bamCoverage's has samtools too, so `env` aggregates two.
+deeptools_tools_env = flyte.TaskEnvironment.from_task(
+    "deeptools_tools",
     deeptools_computematrix_cmd.as_task(),
     deeptools_plotheatmap_cmd.as_task(),
+    deeptools_plotprofile_cmd.as_task(),
     deeptools_plotfingerprint_cmd.as_task(),
     deeptools_multibamsummary_cmd.as_task(),
     deeptools_plotcorrelation_cmd.as_task(),
     deeptools_plotpca_cmd.as_task(),
 )
+deeptools_bamcoverage_env = flyte.TaskEnvironment.from_task(
+    "deeptools_bamcoverage", deeptools_bamcoverage_cmd.as_task()
+)
+env = flyte.TaskEnvironment(name="deeptools", depends_on=[deeptools_tools_env, deeptools_bamcoverage_env])
 
 
 def file_name(file: File) -> str:
@@ -358,6 +463,23 @@ async def deeptools_plotheatmap(matrix: File, prefix: str = "sample", args: str 
     return PlotHeatmapResult(
         pdf=await pick(results, f"{prefix}.plotHeatmap.pdf"),
         table=await pick(results, f"{prefix}.plotHeatmap.mat.tab"),
+        results=results,
+    )
+
+
+@dataclass
+class PlotProfileResult:
+    pdf: File  # <prefix>.plotProfile.pdf
+    table: File  # <prefix>.plotProfile.tab
+    results: Dir
+
+
+async def deeptools_plotprofile(matrix: File, prefix: str = "sample", args: str = "") -> PlotProfileResult:
+    """Plot a profile of a computeMatrix ``matrix`` (``.mat.gz``)."""
+    results = await deeptools_plotprofile_cmd(matrix=matrix, prefix=prefix, args=args)
+    return PlotProfileResult(
+        pdf=await pick(results, f"{prefix}.plotProfile.pdf"),
+        table=await pick(results, f"{prefix}.plotProfile.tab"),
         results=results,
     )
 
@@ -475,3 +597,33 @@ async def deeptools_plotpca(matrix: File, prefix: str = "sample", args: str = ""
         table=await pick(results, f"{prefix}.plotPCA.tab"),
         results=results,
     )
+
+
+async def deeptools_bamcoverage(
+    alignment: File,
+    prefix: str,
+    index: File | None = None,
+    fasta: File | None = None,
+    fai: File | None = None,
+    blacklist: File | None = None,
+    args: str = "",
+) -> File:
+    """The coverage track of ``alignment`` (a BAM, or a CRAM with ``fasta``), skipping ``blacklist`` regions.
+
+    Returns ``<prefix>.bigWig``, or ``<prefix>.bedgraph`` when ``args`` has ``--outFileFormat bedgraph``
+    (or ``-of bedgraph``).
+    """
+    if alignment.name.endswith(".cram") and fasta is None:
+        raise ValueError("deeptools bamCoverage needs the reference fasta for a CRAM")
+    padded = f" {args} "
+    extension = "bedgraph" if " --outFileFormat bedgraph " in padded or " -of bedgraph " in padded else "bigWig"
+    results = await deeptools_bamcoverage_cmd(
+        alignment=alignment,
+        index=index,
+        fasta=fasta,
+        fai=fai,
+        blacklist=blacklist,
+        prefix=prefix,
+        args=args,
+    )
+    return await pick(results, f"{prefix}.{extension}")

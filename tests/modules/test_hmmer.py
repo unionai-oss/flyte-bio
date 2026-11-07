@@ -21,6 +21,8 @@ hmmer/hmmrank tests (modules commit 9a1cc9f, HMMER 3.4, DuckDB 1.5.5).
   heredoc-forging prefix holds newlines, which Flyte's object store can't hold
   in a file name, so its case checks that the task runs it and that the
   wrapper refuses it, rather than the output's name.
+- esl_sfetch_index: upstream's hmmer/eslsfetchindex test (Easel 0.49), the
+  SARS-CoV-2 scaffolds' SSI index, by md5.
 """
 
 import asyncio
@@ -32,8 +34,8 @@ from pathlib import Path
 from flyte.io import File
 
 from flyte_bio.modules.duckdb import duckdb_table2parquet
-from flyte_bio.modules.hmmer import hmmalign, hmmbuild, hmmrank, hmmrank_cmd, hmmsearch
-from tests.framework import assert_gunzipped_md5, env, fixture
+from flyte_bio.modules.hmmer import esl_sfetch_index, hmmalign, hmmbuild, hmmrank, hmmrank_cmd, hmmsearch
+from tests.framework import assert_gunzipped_md5, assert_md5, env, fixture
 
 HMM = "delete_me/hmmer/bac.16S_rRNA.hmm.gz"
 SEQDB = "delete_me/hmmer/e_coli_k12_16s.fna.gz"
@@ -398,6 +400,13 @@ async def test_hmmrank_prefix_with_newline_and_heredoc_delimiter() -> None:
         raise AssertionError("hmmrank accepted a prefix with a newline")
 
 
+@env.task
+async def test_hmmer_esl_sfetch_index() -> None:
+    ssi = await esl_sfetch_index(await fixture("genomics/sarscov2/illumina/fasta/scaffolds.fasta"))
+    assert ssi.name == "scaffolds.fasta.ssi", ssi.name
+    await assert_md5(ssi, "759746a03598daa237d86bd6f5030859", label="scaffolds.fasta.ssi")
+
+
 tests = [
     test_hmmsearch_txt,
     test_hmmsearch_txt_sto_tbl_domtbl,
@@ -412,4 +421,5 @@ tests = [
     test_hmmrank_prefix_with_quote,
     test_hmmrank_prefix_with_shell_characters,
     test_hmmrank_prefix_with_newline_and_heredoc_delimiter,
+    test_hmmer_esl_sfetch_index,
 ]

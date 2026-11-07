@@ -32,6 +32,10 @@ Also exposes:
   as ``<prefix>.hmmrank.tsv.gz``. The tables are read, and the result written,
   under fixed names, so no name or prefix reaches the SQL. A prefix containing
   a newline is refused: Flyte's object store can't hold such a file name.
+- :func:`esl_sfetch_index` — Easel's SSI index of the sequence file
+  ``seqfile`` (``esl-sfetch --index``), ``<seqfile name>.ssi``, for fast
+  retrieval of sequences by name. The index records the file's name, so the
+  file is indexed under its own name.
 """
 
 from dataclasses import dataclass
@@ -50,6 +54,9 @@ BUILD_RESOURCES = flyte.Resources(cpu=2, memory="4Gi")
 
 HMMRANK_IMAGE = "community.wave.seqera.io/library/duckdb-cli:1.5.5--dca0d52c5239b678"
 RANK_RESOURCES = flyte.Resources(cpu=2, memory="4Gi")
+
+# Upstream's image for esl-sfetch --index: HMMER 3.4 (Easel 0.49) and coreutils.
+SFETCH_IMAGE = "community.wave.seqera.io/library/hmmer_coreutils:e129de528776aa4c"
 
 hmmsearch_cmd = shell.create(
     name="hmmsearch",
@@ -281,11 +288,29 @@ hmmrank_cmd = shell.create(
     """,
 )
 
+esl_sfetch_index_cmd = shell.create(
+    name="esl_sfetch_index",
+    image=SFETCH_IMAGE,
+    resources=SINGLE_RESOURCES,
+    inputs={"seqfile": File},
+    outputs={"results": Dir},
+    script=r"""
+        SEQ=({inputs.seqfile})
+        OUT={outputs.results}
+        W=$(mktemp -d); cd "$W"
+        NAME=$(basename "${SEQ[0]}")
+        ln -s "${SEQ[0]}" "$NAME"
+        esl-sfetch --index "$NAME" || exit 1
+        mv "$NAME.ssi" "$OUT"/
+    """,
+)
+
 hmmer_env = flyte.TaskEnvironment.from_task(
     "hmmer_tools", hmmsearch_cmd.as_task(), hmmalign_cmd.as_task(), hmmbuild_cmd.as_task()
 )
 hmmrank_env = flyte.TaskEnvironment.from_task("hmmer_rank", hmmrank_cmd.as_task())
-env = flyte.TaskEnvironment(name="hmmer", depends_on=[hmmer_env, hmmrank_env])
+sfetch_env = flyte.TaskEnvironment.from_task("hmmer_sfetch", esl_sfetch_index_cmd.as_task())
+env = flyte.TaskEnvironment(name="hmmer", depends_on=[hmmer_env, hmmrank_env, sfetch_env])
 
 
 @dataclass
@@ -376,3 +401,12 @@ async def hmmrank(tblout: File, domtblout: File | None = None, prefix: str = "sa
     if found is None:
         raise FileNotFoundError(f"hmmrank wrote no {prefix}.hmmrank.tsv.gz")
     return found
+
+
+async def esl_sfetch_index(seqfile: File) -> File:
+    """Easel's SSI index of ``seqfile``: ``<seqfile name>.ssi``."""
+    results = await esl_sfetch_index_cmd(seqfile=seqfile)
+    indexes = [f for f in await results.list_files() if f.name.endswith(".ssi")]
+    if len(indexes) != 1:
+        raise FileNotFoundError(f"esl-sfetch wrote {len(indexes)} .ssi indexes, expected 1")
+    return indexes[0]

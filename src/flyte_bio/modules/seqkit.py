@@ -28,6 +28,14 @@ Exposes:
   (``<input name>.part_001.fastq.gz``, …) and are returned in name order. The
   parts come back as a Dir, which stages up to a few hundred files: split into
   fewer, bigger parts (``--by-part``) for larger inputs.
+- :func:`seqkit_fq2fa` — ``seqkit fq2fa``: FASTQ to FASTA, ``<prefix>.fa.gz``.
+- :func:`seqkit_grep` — ``seqkit grep`` of one FASTA/FASTQ file by the
+  patterns in a file (one per line, ``-f``) and/or one ``pattern`` (``-p``,
+  which may contain spaces; as in seqkit, commas separate patterns). As
+  upstream, the output is ``<prefix>.<out_ext>``, where ``out_ext`` defaults to
+  ``fa`` for FASTA-named inputs and ``fq`` otherwise, plus ``.gz`` for a
+  gzipped input (seqkit compresses by the extension). Matching options
+  (``-n``, ``-r``, ``-v``…) go in ``args``.
 
 All pass the task's CPUs as ``--threads``. ``args`` is split on whitespace
 without shell quote removal, so write ``-p A``, not ``-p 'A'``; patterns are
@@ -50,6 +58,8 @@ DEFAULT_RESOURCES = flyte.Resources(cpu=2, memory="4Gi")
 # Input names that upstream treats as FASTA: seqkit replace's and seqkit seq's lists differ.
 FASTA_NAME = re.compile(r".+\.(fasta|fa|fas|fna|faa)(\.gz)?")
 SEQ_FASTA_NAME = re.compile(r".+\.(fasta|fa|fas|fna|fsa)(\.gz)?")
+# seqkit grep's (upstream's ``.*f[astn]*a(.gz)?``, with its unescaped dot).
+GREP_FASTA_NAME = re.compile(r".*f[astn]*a(.gz)?")
 
 # A list[File] is staged under the files' names and globbed alphabetically, so
 # ``names`` carries the caller's order (one name per line) into the script.
@@ -165,6 +175,51 @@ seqkit_split2_cmd = shell.create(
     """,
 )
 
+# Upstream labels fq2fa process_single.
+FQ2FA_RESOURCES = flyte.Resources(cpu=1, memory="2Gi")
+
+seqkit_fq2fa_cmd = shell.create(
+    name="seqkit_fq2fa",
+    image=SEQKIT_IMAGE,
+    resources=FQ2FA_RESOURCES,
+    inputs={"fastq": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        IN=({{inputs.fastq}})
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        set -f
+        seqkit fq2fa $ARGS -j $TASK_CPUS -o "$OUT/$P.fa.gz" "${{IN[0]}}" || exit 1
+    """,
+)
+
+# The pattern is its own input (passed as one -p value), so it may contain spaces.
+seqkit_grep_cmd = shell.create(
+    name="seqkit_grep",
+    image=SEQKIT_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"sequence": File, "pattern_file": File | None, "pattern": str, "filename": str, "args": str},
+    defaults={"pattern": "", "args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        IN=({{inputs.sequence}})
+        shopt -s nullglob; PATTERNS=({{inputs.pattern_file}}); shopt -u nullglob
+        PATTERN={{inputs.pattern}}
+        NAME={{inputs.filename}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        set -f
+        SEARCH=()
+        if [ ${{#PATTERNS[@]}} -gt 0 ]; then SEARCH+=(-f "${{PATTERNS[0]}}"); fi
+        if [ -n "$PATTERN" ]; then SEARCH+=(-p "$PATTERN"); fi
+        seqkit grep $ARGS --threads $TASK_CPUS "${{SEARCH[@]}}" "${{IN[0]}}" -o "$OUT/$NAME" || exit 1
+    """,
+)
+
 env = flyte.TaskEnvironment.from_task(
     "seqkit",
     seqkit_stats_cmd.as_task(),
@@ -172,6 +227,8 @@ env = flyte.TaskEnvironment.from_task(
     seqkit_seq_cmd.as_task(),
     seqkit_rmdup_cmd.as_task(),
     seqkit_split2_cmd.as_task(),
+    seqkit_fq2fa_cmd.as_task(),
+    seqkit_grep_cmd.as_task(),
 )
 
 
@@ -251,3 +308,34 @@ async def seqkit_split2(reads: list[File], args: str = "") -> list[File]:
     read2 = reads[1] if len(reads) == 2 else None
     results = await seqkit_split2_cmd(read1=reads[0], read2=read2, args=args)
     return sorted(await results.list_files(), key=file_name)
+
+
+async def seqkit_fq2fa(fastq: File, prefix: str = "sample", args: str = "") -> File:
+    """``seqkit fq2fa`` of ``fastq``: ``<prefix>.fa.gz``."""
+    results = await seqkit_fq2fa_cmd(fastq=fastq, prefix=prefix, args=args)
+    return await pick(results, f"{prefix}.fa.gz", "seqkit fq2fa")
+
+
+def grep_extension(name: str, out_ext: str = "") -> str:
+    """Upstream's output extension for seqkit grep over an input named ``name``."""
+    return (out_ext or ("fa" if GREP_FASTA_NAME.fullmatch(name) else "fq")) + (".gz" if name.endswith(".gz") else "")
+
+
+async def seqkit_grep(
+    sequence: File,
+    patterns: File | None = None,
+    pattern: str = "",
+    out_ext: str = "",
+    prefix: str = "sample",
+    args: str = "",
+) -> File:
+    """The records of ``sequence`` matching ``patterns`` (a file, one per line) or ``pattern``.
+
+    The output is ``<prefix>.<out_ext>``, plus ``.gz`` for a gzipped input; ``out_ext`` defaults
+    to ``fa`` for a FASTA-named input and ``fq`` otherwise.
+    """
+    filename = f"{prefix}.{grep_extension(file_name(sequence), out_ext)}"
+    results = await seqkit_grep_cmd(
+        sequence=sequence, pattern_file=patterns, pattern=pattern, filename=filename, args=args
+    )
+    return await pick(results, filename, "seqkit grep")

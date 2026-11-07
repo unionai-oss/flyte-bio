@@ -7,6 +7,11 @@ seqkit 2.13.0), with each case's ``ext.args`` (seqkit/seq's
 gunzips its input in the test, where upstream runs its gunzip module.
 Upstream's replace patterns are shell-quoted (``-p 'A'``); here they are bare.
 nf-test hashes ``.gz`` outputs decompressed.
+
+The seqkit/fq2fa and seqkit/grep cases are upstream's at the same commit.
+seqkit/grep's pattern-file cases write upstream's ``chr22.header`` (``chr22``
+and a newline); its ``with_pattern`` case, ``ext.args = '-p chr22'``, passes
+the pattern as the dedicated ``pattern`` input.
 """
 
 import gzip
@@ -15,7 +20,15 @@ from pathlib import Path
 
 from flyte.io import File
 
-from flyte_bio.modules.seqkit import seqkit_replace, seqkit_rmdup, seqkit_seq, seqkit_split2, seqkit_stats
+from flyte_bio.modules.seqkit import (
+    seqkit_fq2fa,
+    seqkit_grep,
+    seqkit_replace,
+    seqkit_rmdup,
+    seqkit_seq,
+    seqkit_split2,
+    seqkit_stats,
+)
 from tests.framework import assert_gunzipped_md5, assert_md5, env, fixture
 
 FASTQ = "genomics/sarscov2/illumina/fastq/"
@@ -256,6 +269,46 @@ async def test_seqkit_split2_single_end_length_uncompressed() -> None:
     await check_split2(parts, {name.removesuffix(".gz"): md5 for name, md5 in SPLIT_BY_LENGTH_1.items()})
 
 
+@env.task
+async def test_seqkit_fq2fa_fastq_gz() -> None:
+    out = await seqkit_fq2fa(await fixture(FASTQ + "test_1.fastq.gz"), prefix="test")
+    assert name_of(out) == "test.fa.gz", f"expected test.fa.gz, got {name_of(out)}"
+    await assert_gunzipped_md5(out, "f0c5c9110ce19e9ebbc9a6b6baf9e105", label="test.fa.gz")
+
+
+HUMAN_GENOME = "genomics/homo_sapiens/genome/"
+CHR22_MD5 = "f315020d899597c1b57e5fe9f60f4c3e"
+
+
+async def chr22_header() -> File:
+    path = Path(tempfile.mkdtemp()) / "chr22.header"
+    path.write_text("chr22\n")
+    return await File.from_local(str(path))
+
+
+@env.task
+async def test_seqkit_grep_file_gzipped() -> None:
+    sequence = await fixture(HUMAN_GENOME + "genome.fasta.gz")
+    out = await seqkit_grep(sequence, patterns=await chr22_header(), prefix="test")
+    assert name_of(out) == "test.fa.gz", f"expected test.fa.gz, got {name_of(out)}"
+    await assert_gunzipped_md5(out, CHR22_MD5, label="test.fa.gz")
+
+
+@env.task
+async def test_seqkit_grep_file_uncompressed() -> None:
+    sequence = await fixture(HUMAN_GENOME + "genome.fasta")
+    out = await seqkit_grep(sequence, patterns=await chr22_header(), prefix="test")
+    assert name_of(out) == "test.fa", f"expected test.fa, got {name_of(out)}"
+    await assert_md5(out, CHR22_MD5, label="test.fa")
+
+
+@env.task
+async def test_seqkit_grep_pattern() -> None:
+    out = await seqkit_grep(await fixture(HUMAN_GENOME + "genome.fasta"), pattern="chr22", prefix="test")
+    assert name_of(out) == "test.fa", f"expected test.fa, got {name_of(out)}"
+    await assert_md5(out, CHR22_MD5, label="test.fa")
+
+
 tests = [
     test_seqkit_stats_single_end,
     test_seqkit_stats_paired_end,
@@ -281,4 +334,8 @@ tests = [
     test_seqkit_split2_single_end_size,
     test_seqkit_split2_paired_end_size,
     test_seqkit_split2_single_end_length_uncompressed,
+    test_seqkit_fq2fa_fastq_gz,
+    test_seqkit_grep_file_gzipped,
+    test_seqkit_grep_file_uncompressed,
+    test_seqkit_grep_pattern,
 ]

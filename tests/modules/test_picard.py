@@ -23,6 +23,8 @@ picard/collecthsmetrics cases are upstream's at the same commit (Picard
 - CollectHsMetrics: upstream snapshots the file's size and its first 101
   lines less the date line; these tests compare the md5 of those 100 lines
   (joined by newlines), and the size.
+- MergeSamFiles (picard/mergesamfiles at the same commit): the merged BAM's
+  name and reads md5.
 """
 
 import hashlib
@@ -36,6 +38,7 @@ from flyte_bio.modules.picard import (
     picard_collectmultiplemetrics,
     picard_createsequencedictionary,
     picard_markduplicates,
+    picard_mergesamfiles,
 )
 from flyte_bio.modules.samtools import samtools_view
 from tests.framework import assert_nonempty, assert_reads_md5, env, fixture
@@ -240,6 +243,18 @@ async def test_picard_collecthsmetrics_samebed() -> None:
     await check_collecthsmetrics(metrics, 3586, "a9162e3220034a5a2aba90e9d7d7e945")
 
 
+@env.task
+async def test_picard_mergesamfiles_bams() -> None:
+    # upstream case: picard/mergesamfiles "test-picard-mergesamfiles"
+    bams = [
+        await fixture(SC2 + "illumina/bam/test.paired_end.sorted.bam"),
+        await fixture(SC2 + "illumina/bam/test.single_end.bam"),
+    ]
+    merged = await picard_mergesamfiles(bams, prefix="test")
+    assert merged.name == "test.bam", merged.name
+    await assert_reads_md5(merged, "730da54c088350ff625d34b95e623dca", label="merged bam")
+
+
 tests = [
     test_markduplicates_sorted_bam,
     test_picard_collectmultiplemetrics,
@@ -253,4 +268,5 @@ tests = [
     test_picard_collecthsmetrics_nofasta,
     test_picard_collecthsmetrics_bed,
     test_picard_collecthsmetrics_samebed,
+    test_picard_mergesamfiles_bams,
 ]

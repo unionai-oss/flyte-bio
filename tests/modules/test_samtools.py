@@ -15,6 +15,10 @@ The convert and dict cases (upstream's samtools/convert and samtools/dict at
 modules commit 9a1cc9f, samtools 1.25) check what upstream snapshots: the
 output names, the converted BAM's read sequences' md5, and the dictionary's
 first line.
+
+The import cases are upstream's samtools/import at the same commit (samtools
+1.25): the output name and the read sequences' md5, which is the same for a
+pair and its interleaved file.
 """
 
 import asyncio
@@ -33,6 +37,7 @@ from flyte_bio.modules.samtools import (
     samtools_fixmate,
     samtools_flagstat,
     samtools_idxstats,
+    samtools_import,
     samtools_index,
     samtools_markdup,
     samtools_merge,
@@ -378,6 +383,34 @@ async def test_samtools_markdup_bam() -> None:
     assert "\tCL:samtools markdup " in header, header
 
 
+SC2_FASTQ = "genomics/sarscov2/illumina/fastq/"
+
+
+@env.task
+async def test_samtools_import_single() -> None:
+    # upstream case: samtools/import "samtools_import_single "
+    out = await samtools_import([await fixture(SC2_FASTQ + "test_1.fastq.gz")], "test", single_end=True)
+    assert_name(out, "test.bam")
+    await assert_reads_md5(out, "c17efa4ccc4e9018090792c71af92660", label="samtools import single-end")
+
+
+@env.task
+async def test_samtools_import_paired() -> None:
+    # upstream case: samtools/import "samtools_import_paired "
+    reads = list(await asyncio.gather(fixture(SC2_FASTQ + "test_1.fastq.gz"), fixture(SC2_FASTQ + "test_2.fastq.gz")))
+    out = await samtools_import(reads, "test")
+    assert_name(out, "test.bam")
+    await assert_reads_md5(out, "88d78879c34214288644aec7ec3cb270", label="samtools import paired-end")
+
+
+@env.task
+async def test_samtools_import_interleaved() -> None:
+    # upstream case: samtools/import "samtools_import_interleaved"
+    out = await samtools_import([await fixture(SC2_FASTQ + "test_interleaved.fastq.gz")], "test")
+    assert_name(out, "test.bam")
+    await assert_reads_md5(out, "88d78879c34214288644aec7ec3cb270", label="samtools import interleaved")
+
+
 tests = [
     test_faidx,
     test_sort,
@@ -401,4 +434,7 @@ tests = [
     test_samtools_fixmate_bam,
     test_samtools_fixmate_cram,
     test_samtools_markdup_bam,
+    test_samtools_import_single,
+    test_samtools_import_paired,
+    test_samtools_import_interleaved,
 ]
