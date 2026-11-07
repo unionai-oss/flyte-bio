@@ -16,6 +16,16 @@ Exposes the subset of the samtools suite the RNA-seq pipeline leans on:
 - :func:`samtools_convert` — convert a BAM to CRAM or a CRAM to BAM against
   its reference, and index the result.
 - :func:`samtools_dict` — a FASTA's sequence dictionary, ``<fasta name>.dict``.
+- :func:`samtools_calmd` — recalculate an alignment's MD/NM tags against its
+  reference, as ``<prefix>.bam`` (SAM text unless ``args`` has ``-b``).
+- :func:`samtools_fixmate` — fill in mate coordinates and flags of a
+  name-grouped alignment, as ``<prefix>.<ext>``.
+- :func:`samtools_markdup` — mark duplicates in a coordinate-sorted
+  alignment, as ``<prefix>.<ext>``.
+
+fixmate and markdup write SAM, BAM or CRAM following ``--output-fmt`` in
+``args`` (BAM by default). As upstream, calmd and markdup get ``-@`` of the
+task's CPUs, fixmate ``--threads`` of its CPUs minus 1.
 
 The FASTQ conversions write upstream's names: ``<prefix>_1`` and
 ``<prefix>_2`` for paired reads (``<prefix>_1`` alone for single-end), or
@@ -28,7 +38,8 @@ upstream, ``samtools fastq`` gets ``--threads`` of the task's CPUs minus 1,
 and ``collate`` and its ``fastq`` the task's CPUs each.
 
 Each upstream module pins its own samtools build, so the FASTQ conversions
-have their own environments (convert and dict share fastq's samtools 1.25);
+have their own environments (convert, dict, calmd, fixmate and markdup share
+fastq's samtools 1.25);
 :data:`env` aggregates them.
 """
 
@@ -53,6 +64,8 @@ DEFAULT_RESOURCES = flyte.Resources(cpu=1, memory="6Gi")
 SORT_RESOURCES = flyte.Resources(cpu=4, memory="12Gi")
 # Upstream's process_low for the FASTQ conversions.
 FASTQ_RESOURCES = flyte.Resources(cpu=2, memory="4Gi")
+# calmd and markdup (upstream's process_medium), at the 4 CPUs upstream's tests run with.
+MEDIUM_RESOURCES = flyte.Resources(cpu=4, memory="8Gi")
 
 
 # `faidx` writes the index next to its input, so symlink the FASTA into the
@@ -340,6 +353,102 @@ samtools_dict_cmd = shell.create(
 )
 
 
+# As upstream: `calmd` writes SAM (BAM with `-b` in args) to `<prefix>.bam`.
+# The alignment, the FASTA and its .fai are linked side by side under their
+# own names in a work dir, so the @PG command line names them as upstream's.
+samtools_calmd_cmd = shell.create(
+    name="samtools_calmd",
+    image=SAMTOOLS_FASTQ_IMAGE,
+    resources=MEDIUM_RESOURCES,
+    inputs={"alignment": File, "fasta": File, "fai": File | None, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        IN=({{inputs.alignment}}); FA=({{inputs.fasta}})
+        shopt -s nullglob; FAI=({{inputs.fai}}); shopt -u nullglob
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}/{{inputs.prefix}}.bam
+        W=$(mktemp -d); cd "$W"
+        NAME=$(basename "${{IN[0]}}"); ln -s "${{IN[0]}}" "$NAME"
+        FA_NAME=$(basename "${{FA[0]}}"); ln -s "${{FA[0]}}" "$FA_NAME"
+        if [ ${{#FAI[@]}} -gt 0 ]; then ln -s "${{FAI[0]}}" "$FA_NAME.fai"; fi
+        samtools calmd -@ $TASK_CPUS $ARGS "$NAME" "$FA_NAME" > "$OUT"
+    """,
+)
+
+
+def alignment_extension_script() -> str:
+    """Bash setting ``EXT`` from ``--output-fmt`` in ``$ARGS`` (sam, bam, cram), else bam, as upstream."""
+    return r"""
+        case " $ARGS " in
+            *"--output-fmt sam"*) EXT=sam ;;
+            *"--output-fmt bam"*) EXT=bam ;;
+            *"--output-fmt cram"*) EXT=cram ;;
+            *) EXT=bam ;;
+        esac
+    """
+
+
+# As upstream: the output format follows `--output-fmt` in args (default BAM),
+# and `--threads` is the task's CPUs minus 1 (samtools counts extra threads).
+# The reference, when given, is linked with its .fai into the work dir.
+samtools_fixmate_cmd = shell.create(
+    name="samtools_fixmate",
+    image=SAMTOOLS_FASTQ_IMAGE,
+    resources=FASTQ_RESOURCES,
+    inputs={"alignment": File, "fasta": File | None, "fai": File | None, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        IN=({{inputs.alignment}})
+        shopt -s nullglob; FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); shopt -u nullglob
+        ARGS={{inputs.args}}
+        {alignment_extension_script()}
+        OUT={{outputs.results}}/{{inputs.prefix}}.$EXT
+        W=$(mktemp -d); cd "$W"
+        NAME=$(basename "${{IN[0]}}"); ln -s "${{IN[0]}}" "$NAME"
+        REF=()
+        if [ ${{#FA[@]}} -gt 0 ]; then
+            FA_NAME=$(basename "${{FA[0]}}"); ln -s "${{FA[0]}}" "$FA_NAME"
+            if [ ${{#FAI[@]}} -gt 0 ]; then ln -s "${{FAI[0]}}" "$FA_NAME.fai"; fi
+            REF=(--reference "$FA_NAME")
+        fi
+        samtools fixmate $ARGS --threads $(( TASK_CPUS - 1 )) "${{REF[@]}}" "$NAME" "$OUT"
+    """,
+)
+
+# As upstream: the output format follows `--output-fmt` in args (default BAM);
+# temporary files go to `<prefix>.*` in the work dir (`-T`).
+samtools_markdup_cmd = shell.create(
+    name="samtools_markdup",
+    image=SAMTOOLS_FASTQ_IMAGE,
+    resources=MEDIUM_RESOURCES,
+    inputs={"alignment": File, "fasta": File | None, "fai": File | None, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        IN=({{inputs.alignment}})
+        shopt -s nullglob; FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); shopt -u nullglob
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        {alignment_extension_script()}
+        OUT={{outputs.results}}/$P.$EXT
+        W=$(mktemp -d); cd "$W"
+        NAME=$(basename "${{IN[0]}}"); ln -s "${{IN[0]}}" "$NAME"
+        REF=()
+        if [ ${{#FA[@]}} -gt 0 ]; then
+            FA_NAME=$(basename "${{FA[0]}}"); ln -s "${{FA[0]}}" "$FA_NAME"
+            if [ ${{#FAI[@]}} -gt 0 ]; then ln -s "${{FAI[0]}}" "$FA_NAME.fai"; fi
+            REF=(--reference "$FA_NAME")
+        fi
+        samtools markdup $ARGS "${{REF[@]}}" -@ $TASK_CPUS -T "$P" "$NAME" "$OUT"
+    """,
+)
+
+
 samtools_tools_env = flyte.TaskEnvironment.from_task(
     "samtools_tools",
     samtools_faidx.as_task(),
@@ -352,7 +461,13 @@ samtools_tools_env = flyte.TaskEnvironment.from_task(
     samtools_idxstats.as_task(),
 )
 samtools_fastq_env = flyte.TaskEnvironment.from_task(
-    "samtools_fastq", samtools_fastq_cmd.as_task(), samtools_convert_cmd.as_task(), samtools_dict_cmd.as_task()
+    "samtools_fastq",
+    samtools_fastq_cmd.as_task(),
+    samtools_convert_cmd.as_task(),
+    samtools_dict_cmd.as_task(),
+    samtools_calmd_cmd.as_task(),
+    samtools_fixmate_cmd.as_task(),
+    samtools_markdup_cmd.as_task(),
 )
 samtools_collatefastq_env = flyte.TaskEnvironment.from_task(
     "samtools_collatefastq", samtools_collatefastq_cmd.as_task()
@@ -486,3 +601,57 @@ async def samtools_dict(fasta: File, args: str = "") -> File:
     if dictionary is None:
         raise FileNotFoundError(f"samtools dict wrote no {fasta.name}.dict")
     return dictionary
+
+
+async def pick_alignment(results: Dir, prefix: str, args: str, tool: str) -> File:
+    """``<prefix>.<sam|bam|cram>`` from ``results``, the extension following ``--output-fmt`` in ``args``."""
+    extension = "bam"
+    for fmt in ("sam", "bam", "cram"):
+        if f"--output-fmt {fmt}" in args:
+            extension = fmt
+            break
+    found = await results.get_file(f"{prefix}.{extension}")
+    if found is None:
+        raise FileNotFoundError(f"samtools {tool} wrote no {prefix}.{extension}")
+    return found
+
+
+async def samtools_calmd(alignment: File, fasta: File, prefix: str, fai: File | None = None, args: str = "") -> File:
+    """``alignment`` with its MD and NM tags recalculated against ``fasta``, as ``<prefix>.bam``.
+
+    As upstream, the output is SAM text unless ``args`` asks for BAM (``-b``).
+    """
+    if alignment.name == f"{prefix}.bam":
+        raise ValueError("input and output names are the same; choose another prefix")
+    results = await samtools_calmd_cmd(alignment=alignment, fasta=fasta, fai=fai, prefix=prefix, args=args)
+    out = await results.get_file(f"{prefix}.bam")
+    if out is None:
+        raise FileNotFoundError(f"samtools calmd wrote no {prefix}.bam")
+    return out
+
+
+async def samtools_fixmate(
+    alignment: File, prefix: str, fasta: File | None = None, fai: File | None = None, args: str = ""
+) -> File:
+    """A name-grouped ``alignment`` with its mate fields filled in, as ``<prefix>.<ext>``.
+
+    The extension follows ``--output-fmt`` in ``args`` (default bam); a CRAM needs ``fasta``.
+    Upstream's default prefix is ``<id>_fixmate``.
+    """
+    if alignment.name in (f"{prefix}.sam", f"{prefix}.bam", f"{prefix}.cram"):
+        raise ValueError("input and output names are the same; choose another prefix")
+    results = await samtools_fixmate_cmd(alignment=alignment, fasta=fasta, fai=fai, prefix=prefix, args=args)
+    return await pick_alignment(results, prefix, args, "fixmate")
+
+
+async def samtools_markdup(
+    alignment: File, prefix: str, fasta: File | None = None, fai: File | None = None, args: str = ""
+) -> File:
+    """A coordinate-sorted ``alignment`` with its duplicates marked, as ``<prefix>.<ext>``.
+
+    The extension follows ``--output-fmt`` in ``args`` (default bam); a CRAM needs ``fasta``.
+    """
+    if alignment.name in (f"{prefix}.sam", f"{prefix}.bam", f"{prefix}.cram"):
+        raise ValueError("input and output names are the same; choose another prefix")
+    results = await samtools_markdup_cmd(alignment=alignment, fasta=fasta, fai=fai, prefix=prefix, args=args)
+    return await pick_alignment(results, prefix, args, "markdup")

@@ -1,13 +1,16 @@
-"""Tests for flyte_bio.modules.bwa (md5s from upstream's bwa/index and bwa/mem snapshots).
+"""Tests for flyte_bio.modules.bwa (md5s from upstream's bwa/index, bwa/mem, bwa/samse and bwa/sampe snapshots).
 
-bwa/mem's snapshot hashes the alignments' read sequences (nft-bam
-``getReadsMD5``), in file order.
+bwa/mem's, bwa/samse's and bwa/sampe's snapshots hash the alignments' read
+sequences (nft-bam ``getReadsMD5``), in file order. bwa/aln's snapshot holds
+only the ``.sai`` names (modules commit 9a1cc9f, bwa 0.7.19).
 """
 
 import asyncio
 
-from flyte_bio.modules.bwa import bwa_index, bwa_mem
-from tests.framework import assert_md5, assert_reads_md5, env, fixture
+from flyte.io import Dir, File
+
+from flyte_bio.modules.bwa import bwa_aln, bwa_index, bwa_mem, bwa_sampe, bwa_samse
+from tests.framework import assert_md5, assert_nonempty, assert_reads_md5, env, fixture
 
 FASTQ = "genomics/sarscov2/illumina/fastq/"
 
@@ -51,4 +54,59 @@ async def test_bwa_mem() -> None:
         await assert_reads_md5(bam, md5, label=label)
 
 
-tests = [test_bwa_index, test_bwa_mem]
+async def sarscov2_reads() -> tuple[File, File, Dir]:
+    fasta, r1, r2 = await asyncio.gather(
+        fixture("genomics/sarscov2/genome/genome.fasta"),
+        fixture(FASTQ + "test_1.fastq.gz"),
+        fixture(FASTQ + "test_2.fastq.gz"),
+    )
+    return r1, r2, await bwa_index(fasta)
+
+
+@env.task
+async def test_bwa_aln_single_end() -> None:
+    # upstream case: bwa/aln "Single-End"
+    r1, _, index = await sarscov2_reads()
+    sais = await bwa_aln(r1, None, index, prefix="test")
+    assert [s.name for s in sais] == ["test.sai"], [s.name for s in sais]
+    await assert_nonempty(sais[0], label="test.sai")
+
+
+@env.task
+async def test_bwa_aln_paired_end() -> None:
+    # upstream case: bwa/aln "Paired-End"
+    r1, r2, index = await sarscov2_reads()
+    sais = await bwa_aln(r1, r2, index, prefix="test")
+    assert [s.name for s in sais] == ["test.1.sai", "test.2.sai"], [s.name for s in sais]
+    for sai in sais:
+        await assert_nonempty(sai, label=sai.name)
+
+
+@env.task
+async def test_bwa_samse() -> None:
+    # upstream case: bwa/samse "SamSE"
+    r1, _, index = await sarscov2_reads()
+    (sai,) = await bwa_aln(r1, None, index, prefix="test")
+    bam = await bwa_samse(r1, sai, index, prefix="test")
+    assert bam.name == "test.bam", bam.name
+    await assert_reads_md5(bam, "1ca0f48b86ee8cf2417f72d6bf95939a", label="test.bam")
+
+
+@env.task
+async def test_bwa_sampe() -> None:
+    # upstream case: bwa/sampe "SamPE"
+    r1, r2, index = await sarscov2_reads()
+    sais = await bwa_aln(r1, r2, index, prefix="test")
+    bam = await bwa_sampe(r1, r2, sais, index, prefix="test")
+    assert bam.name == "test.bam", bam.name
+    await assert_reads_md5(bam, "ae4005223c9eb0f2b11bcd984e088f9c", label="test.bam")
+
+
+tests = [
+    test_bwa_index,
+    test_bwa_mem,
+    test_bwa_aln_single_end,
+    test_bwa_aln_paired_end,
+    test_bwa_samse,
+    test_bwa_sampe,
+]

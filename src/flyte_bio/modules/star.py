@@ -5,6 +5,9 @@ Exposes:
 - :data:`star_genome_generate` — build a STAR genome index from a FASTA +
   GTF.
 - :data:`star_align` — align reads against a STAR index.
+- :func:`star_indexversion` — the genome index version this STAR writes and
+  reads (``versionGenome``), as ``<prefix>.txt``, so a prebuilt index can be
+  checked against it.
 
 STAR emits a dozen prefix-named files whose exact names depend on the
 options passed, so :data:`star_align` captures its whole output directory as
@@ -12,8 +15,6 @@ one :class:`Dir`; downstream steps pick out the genome BAM, transcriptome
 BAM, ``SJ.out.tab``, logs, etc. by name. All STAR tasks share one
 biocontainer (STAR + samtools + gawk).
 """
-
-
 
 import flyte
 from flyte.extras import shell
@@ -43,7 +44,8 @@ star_genome_generate = shell.create(
     outputs={"index": Dir},
     script=f"""
         {TASK_LIMITS}
-""" + r"""
+"""
+    r"""
         ln -s {inputs.fasta} genome.fa
         ARGS={inputs.args}
         if [[ "$ARGS" == *"--genomeSAindexNbases"* ]]; then
@@ -96,7 +98,8 @@ star_align = shell.create(
     outputs={"output": Dir},
     script=f"""
         {TASK_LIMITS}
-""" + r"""
+"""
+    r"""
         shopt -s nullglob; R2=({inputs.reads_2}); shopt -u nullglob
         ARGS={inputs.args}
         STAR \
@@ -110,8 +113,34 @@ star_align = shell.create(
 )
 
 
+# As upstream: the default of `versionGenome` in STAR's help, without its
+# comment.
+star_indexversion_cmd = shell.create(
+    name="star_indexversion",
+    image=STAR_IMAGE,
+    resources=flyte.Resources(cpu=1, memory="1Gi"),
+    inputs={"prefix": str},
+    defaults={"prefix": "index_version"},
+    outputs={"results": Dir},
+    script=r"""
+        STAR --help | grep 'versionGenome' | sed -e 's/versionGenome[ \t]*//' | sed -e 's/ .*//' \
+            > {outputs.results}/{inputs.prefix}.txt
+    """,
+)
+
+
 env = flyte.TaskEnvironment.from_task(
     "star",
     star_genome_generate.as_task(),
     star_align.as_task(),
+    star_indexversion_cmd.as_task(),
 )
+
+
+async def star_indexversion(prefix: str = "index_version") -> File:
+    """``<prefix>.txt``: the genome index version (``versionGenome``) of this STAR, e.g. ``2.7.4a``."""
+    results = await star_indexversion_cmd(prefix=prefix)
+    version = await results.get_file(f"{prefix}.txt")
+    if version is None:
+        raise FileNotFoundError(f"STAR index version wrote no {prefix}.txt")
+    return version

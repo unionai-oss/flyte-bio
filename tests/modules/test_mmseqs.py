@@ -1,9 +1,10 @@
 """Tests for flyte_bio.modules.mmseqs.
 
 The cases and expected md5s are upstream's mmseqs/createdb, mmseqs/cluster,
-mmseqs/linclust and mmseqs/createtsv tests (modules commit 9a1cc9f, MMseqs2
-18.8cc5c). The clustering tests run on 2 CPUs, as upstream's did: a clustering
-result has one data file per thread, and upstream lists ``.0`` and ``.1``.
+mmseqs/linclust, mmseqs/createtsv, mmseqs/createindex and
+mmseqs/tsv2exprofiledb tests (modules commit 9a1cc9f, MMseqs2 18.8cc5c). The
+clustering tests run on 2 CPUs, as upstream's did: a clustering result has one
+data file per thread, and upstream lists ``.0`` and ``.1``.
 """
 
 import asyncio
@@ -19,10 +20,12 @@ from flyte.io import Dir
 from flyte_bio.modules.mmseqs import (
     mmseqs_cluster_cmd,
     mmseqs_createdb,
+    mmseqs_createindex,
     mmseqs_createtsv,
     mmseqs_databases,
     mmseqs_linclust_cmd,
     mmseqs_taxonomy,
+    mmseqs_tsv2exprofiledb,
 )
 from tests.framework import assert_md5, env, fixture
 
@@ -146,6 +149,98 @@ async def test_mmseqs_createtsv_taxonomy() -> None:
     await assert_md5(tsv, "7e42aeb7daeeb54739e84fc6ecb0b5fc", label="test_query.tsv")
 
 
+# Upstream snapshots the indexed directory's files but for these name endings:
+# the index data itself (mmseqs.idx) and the per-thread files of the
+# clustering and alignment results (only checked to exist).
+CREATEINDEX_UNCHECKED = ["mmseqs.idx", *(f"_aln.{i}" for i in range(1, 8)), *(f"_clu.{i}" for i in range(1, 8))]
+CREATEINDEX_FILES = {
+    "mmseqs": "a5ba5a88d2995da3522dddb4abca07ef",
+    "mmseqs.dbtype": "f1d3ff8443297732862df21dc4e57262",
+    "mmseqs.fasta": "b40600ad3be77f076df716e6cf99c64c",
+    "mmseqs.idx.dbtype": "9a198d4f48144e20661df7fd2dc41bf7",
+    "mmseqs.idx.index": "3451d87bd8a5a7182d36d53edd213c59",
+    "mmseqs.index": "c012bdab1c61eeafcb99d1b26650f3d0",
+    "mmseqs.lookup": "fa898551a6b303614ae6e29c237b7fc6",
+    "mmseqs.source": "16bef02c30aadbfa8d035596502f0aa2",
+    "mmseqs.tsv": "4e7ba50ce2879660dc6595286bf0d097",
+    "mmseqs_aln.0": "043e7e17756de6492a673c4b8c164892",
+    "mmseqs_aln.dbtype": "cbe23d9655fccd4311acdd6261c81bd8",
+    "mmseqs_aln.index": "9e17db59a56719569d20f72f0f48924d",
+    "mmseqs_aln.tsv": "e6fc24b66126dec818f89491edb79fec",
+    "mmseqs_clu.0": "86256b3bd5cd46a4ce865c477a381e08",
+    "mmseqs_clu.dbtype": "b9d9c6dbc098c97ae446f612efd8eafd",
+    "mmseqs_clu.index": "a0b78f31aee2c327d72f32919814baf1",
+    "mmseqs_h": "2b2cb13de706b3bb48a38942d851f452",
+    "mmseqs_h.dbtype": "740bab4f9ec8808aedb68d6b1281aeb2",
+    "mmseqs_h.index": "0040e6a02964914a87ef1efbe9011cbf",
+    "mmseqs_h.tsv": "8c733b4ef72b8c470ac30537cf6981bd",
+    "mmseqs_profile": "6c29ffea085c8c78e97533f9bcbedd98",
+    "mmseqs_profile.dbtype": "f2dd0dedb2c260419ece4a9e03b2e828",
+    "mmseqs_profile.index": "e09d927ca8d4779b7cfb937f435cf7d3",
+    "mmseqs_profile.lookup": "fa898551a6b303614ae6e29c237b7fc6",
+    "mmseqs_profile.source": "16bef02c30aadbfa8d035596502f0aa2",
+    "mmseqs_profile_h": "2b2cb13de706b3bb48a38942d851f452",
+    "mmseqs_profile_h.dbtype": "740bab4f9ec8808aedb68d6b1281aeb2",
+    "mmseqs_profile_h.index": "0040e6a02964914a87ef1efbe9011cbf",
+    "mmseqs_seq": "e6c2c906a7ced527a75c7b175776f0b1",
+    "mmseqs_seq.dbtype": "4352d88a78aa39750bf70cd6f27bcaa5",
+    "mmseqs_seq.index": "09f8cf12406b814198156e56f5acd8dc",
+    "mmseqs_seq.lookup": "fa898551a6b303614ae6e29c237b7fc6",
+    "mmseqs_seq.source": "16bef02c30aadbfa8d035596502f0aa2",
+    "mmseqs_seq.tsv": "fcc20038fa951bc085463bb49ffa5e25",
+    "mmseqs_seq_h": "2b2cb13de706b3bb48a38942d851f452",
+    "mmseqs_seq_h.dbtype": "740bab4f9ec8808aedb68d6b1281aeb2",
+    "mmseqs_seq_h.index": "0040e6a02964914a87ef1efbe9011cbf",
+}
+
+
+@env.task
+async def test_mmseqs_createindex_sarscov2() -> None:
+    indexed = await mmseqs_createindex(await sarscov2_database(), args="--remove-tmp-files 1 -v 0")
+    # The unchecked files are only listed: the index data runs to gigabytes even for this small database.
+    files = [file async for file in indexed.walk()]
+    unchecked = [file.name for file in files if any(file.name.endswith(end) for end in CREATEINDEX_UNCHECKED)]
+    assert "mmseqs.idx" in unchecked, f"createindex: no mmseqs.idx in {sorted(file.name for file in files)}"
+    checked = [file for file in files if file.name not in unchecked]
+    assert sorted(file.name for file in checked) == sorted(CREATEINDEX_FILES), (
+        f"createindex: files {sorted(file.name for file in checked)}"
+    )
+    for file in checked:
+        await assert_md5(file, CREATEINDEX_FILES[file.name], label=f"createindex {file.name}")
+
+
+# Upstream's listing also has the archive's tmp/, which the fixture drops.
+EXPROFILE_NAMES = [
+    *(f"mmseqs{suffix}" for suffix in ("", ".dbtype", ".fasta", ".index", ".lookup", ".source", ".tsv")),
+    *(f"mmseqs_aln.{i}" for i in range(8)),
+    "mmseqs_aln.dbtype",
+    "mmseqs_aln.index",
+    "mmseqs_aln.tsv",
+    *(f"mmseqs_clu.{i}" for i in range(8)),
+    "mmseqs_clu.dbtype",
+    "mmseqs_clu.index",
+    *(f"mmseqs_db{db}{suffix}" for db in ("", "_aln", "_h", "_seq", "_seq_h") for suffix in ("", ".dbtype", ".index")),
+    *(f"mmseqs_h{suffix}" for suffix in ("", ".dbtype", ".index", ".tsv")),
+    *(f"mmseqs_profile{suffix}" for suffix in ("", ".dbtype", ".index", ".lookup", ".source")),
+    *(f"mmseqs_profile_h{suffix}" for suffix in ("", ".dbtype", ".index")),
+    *(f"mmseqs_seq{suffix}" for suffix in ("", ".dbtype", ".index", ".lookup", ".source", ".tsv")),
+    *(f"mmseqs_seq_h{suffix}" for suffix in ("", ".dbtype", ".index")),
+]
+
+
+@env.task
+async def test_mmseqs_tsv2exprofiledb_sarscov2() -> None:
+    # As upstream: many of the new databases are validly empty on this small
+    # input, so the files are listed and a few checked by md5.
+    result = await mmseqs_tsv2exprofiledb(await sarscov2_database())
+    md5s = {
+        "mmseqs.tsv": "4e7ba50ce2879660dc6595286bf0d097",
+        "mmseqs": "a5ba5a88d2995da3522dddb4abca07ef",
+        "mmseqs_seq.index": "09f8cf12406b814198156e56f5acd8dc",
+    }
+    await check_dir(result, EXPROFILE_NAMES, md5s, "tsv2exprofiledb")
+
+
 tests = [
     test_mmseqs_createdb_contigs,
     test_mmseqs_createdb_gzipped_proteome,
@@ -153,4 +248,6 @@ tests = [
     test_mmseqs_linclust,
     test_mmseqs_createtsv_cluster,
     test_mmseqs_createtsv_taxonomy,
+    test_mmseqs_createindex_sarscov2,
+    test_mmseqs_tsv2exprofiledb_sarscov2,
 ]

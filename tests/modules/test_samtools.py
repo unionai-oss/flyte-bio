@@ -24,14 +24,17 @@ import hashlib
 from flyte.io import File
 
 from flyte_bio.modules.samtools import (
+    samtools_calmd,
     samtools_collatefastq,
     samtools_convert,
     samtools_dict,
     samtools_faidx,
     samtools_fastq,
+    samtools_fixmate,
     samtools_flagstat,
     samtools_idxstats,
     samtools_index,
+    samtools_markdup,
     samtools_merge,
     samtools_sort,
     samtools_stats,
@@ -305,6 +308,76 @@ async def test_samtools_dict_fasta() -> None:
     assert lines[1].startswith("@SQ\tSN:MT192765.1\tLN:29829\tM5:c95f3e5592d0ad9974e41e7f0ea14eb0\t"), lines[1]
 
 
+async def sam_text(alignment: File, args: str) -> str:
+    """``samtools view`` of ``alignment`` with ``args``, as text."""
+    out = await samtools_view(bam=alignment, args=args)
+    async with out.open("rb") as fh:
+        return bytes(await fh.read()).decode()
+
+
+@env.task
+async def test_samtools_calmd_bam() -> None:
+    # upstream case: samtools/calmd "bam" (modules commit 9a1cc9f, samtools 1.25). Its md5 is of calmd's SAM
+    # text, @PG command line included: the 4 CPUs (-@ 4) and the inputs' names match upstream's.
+    bam, fasta, fai = await asyncio.gather(
+        fixture(HUMAN_SORTED_BAM), fixture(HUMAN_FASTA), fixture(HUMAN_FASTA + ".fai")
+    )
+    out = await samtools_calmd(bam, fasta, "test", fai=fai)
+    assert_name(out, "test.bam")
+    await assert_md5(out, "45f5722212b78c74427ac14670c7ea0c", label="samtools calmd")
+
+
+@env.task
+async def test_samtools_fixmate_bam() -> None:
+    # upstream case: samtools/fixmate "sarscov2 - bam" (modules commit 9a1cc9f; upstream passes the human FASTA)
+    bam, fasta, fai = await asyncio.gather(fixture(PAIRED_BAM), fixture(HUMAN_FASTA), fixture(HUMAN_FASTA + ".fai"))
+    out = await samtools_fixmate(bam, "test_fixmate", fasta=fasta, fai=fai)
+    assert_name(out, "test_fixmate.bam")
+    await assert_reads_md5(out, "762e859a3d0ed1553655cde77665c940", label="samtools fixmate")
+
+
+@env.task
+async def test_samtools_fixmate_cram() -> None:
+    # upstream case: samtools/fixmate "human - cram" (the name only). Upstream name-sorts the CRAM to a CRAM
+    # first; our sort takes no reference, so the CRAM is converted to BAM and name-sorted. That the CRAM
+    # holds the sorted reads is our check.
+    cram, crai, fasta, fai = await asyncio.gather(
+        fixture(HUMAN_SORTED_CRAM),
+        fixture(HUMAN_SORTED_CRAM + ".crai"),
+        fixture(HUMAN_FASTA),
+        fixture(HUMAN_FASTA + ".fai"),
+    )
+    converted = await samtools_convert(cram, fasta, "test", index=crai, fai=fai)
+    name_sorted = await samtools_sort(bam=converted.alignment, args="-n")
+    out = await samtools_fixmate(
+        name_sorted, "test_fixmate", fasta=fasta, fai=fai, args="--output-fmt cram,version=3.0"
+    )
+    assert_name(out, "test_fixmate.cram")
+    expected = await reads_md5(name_sorted)
+    actual = await cram_reads_md5(out, fasta, fai)
+    assert actual == expected, f"fixmate CRAM reads md5 {actual}, expected the sorted input's {expected}"
+
+
+@env.task
+async def test_samtools_markdup_bam() -> None:
+    # upstream case: samtools/markdup "sarscov2 - bam" (modules commit 9a1cc9f). Its md5 is of the whole BAM,
+    # whose header records each step's command line, so check the content: the same reads in the same
+    # order, and markdup's @PG line. (This fixture's reads have no duplicates to mark.)
+    bam, fasta, fai = await asyncio.gather(
+        fixture(PAIRED_BAM),
+        fixture("genomics/sarscov2/genome/genome.fasta"),
+        fixture("genomics/sarscov2/genome/genome.fasta.fai"),
+    )
+    fixed = await samtools_fixmate(bam, "test.fixmate", fasta=fasta, fai=fai)
+    coordinate_sorted = await samtools_sort(bam=fixed)
+    out = await samtools_markdup(coordinate_sorted, "test.markdup", fasta=fasta, fai=fai)
+    assert_name(out, "test.markdup.bam")
+    expected = await reads_md5(coordinate_sorted)
+    await assert_reads_md5(out, expected, label="samtools markdup")
+    header = await sam_text(out, "-H")
+    assert "\tCL:samtools markdup " in header, header
+
+
 tests = [
     test_faidx,
     test_sort,
@@ -324,4 +397,8 @@ tests = [
     test_samtools_convert_bam_to_cram,
     test_samtools_convert_cram_to_bam,
     test_samtools_dict_fasta,
+    test_samtools_calmd_bam,
+    test_samtools_fixmate_bam,
+    test_samtools_fixmate_cram,
+    test_samtools_markdup_bam,
 ]

@@ -1,4 +1,4 @@
-"""bbmap — BBTools: BBSplit binning, BBDuk trimming/filtering, BBNorm normalization and FilterByName.
+"""bbmap — BBTools: BBSplit binning, BBDuk trimming/filtering, BBNorm normalization, FilterByName and Repair.
 
 Exposes :func:`bbsplit_index`, which builds a BBSplit index from a primary
 FASTA plus other references (e.g. contaminant genomes), and
@@ -24,6 +24,15 @@ from the extension). As upstream, it writes ``<prefix>.<format>`` (single-end,
 or with ``interleaved_output``) or ``<prefix>_1.<format>`` /
 ``<prefix>_2.<format>``, and FilterByName's standard output in
 ``<prefix>.log``. Paired reads come as two files, or interleaved in one.
+
+And it exposes :func:`bbmap_repair`, which re-pairs mates that are out of
+order (or have lost their partner) in two FASTQs, or in one interleaved
+FASTQ. As upstream, it writes ``<prefix>_1_repaired.fastq.gz`` /
+``<prefix>_2_repaired.fastq.gz`` (two mates) or ``<prefix>_repaired.fastq.gz``
+(interleaved), the reads left without a mate in
+``<prefix>_singleton.fastq.gz``, and Repair's output in
+``<prefix>.repair.sh.log``. Upstream gives Repair all the task's memory as
+heap; here it gets the usual 80%.
 
 The index-reuse handling is upstream's: BBSplit records each reference's
 source path and modification time in ``ref/genome/*/summary.txt`` and
@@ -53,6 +62,8 @@ BBDUK_RESOURCES = flyte.Resources(cpu=6, memory="16Gi")
 BBNORM_RESOURCES = flyte.Resources(cpu=6, memory="16Gi")
 # Upstream labels FilterByName process_single (1 CPU, 6 GB).
 FILTERBYNAME_RESOURCES = flyte.Resources(cpu=1, memory="6Gi")
+# Upstream labels Repair process_single too.
+REPAIR_RESOURCES = flyte.Resources(cpu=1, memory="6Gi")
 
 # Other references are passed as explicit `name=filename` pairs: a list[File]
 # is staged under original basenames and globbed alphabetically, so file
@@ -255,6 +266,39 @@ bbmap_filterbyname_cmd = shell.create(
     """,
 )
 
+# As upstream: without reads_2, reads_1 holds interleaved pairs.
+bbmap_repair_cmd = shell.create(
+    name="bbmap_repair",
+    image=BBMAP_IMAGE,
+    resources=REPAIR_RESOURCES,
+    inputs={"reads_1": File, "reads_2": File | None, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        R1=({{inputs.reads_1}})
+        shopt -s nullglob; R2=({{inputs.reads_2}}); shopt -u nullglob
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        if [ ${{#R2[@]}} -eq 0 ]; then
+            IN=(in="${{R1[0]}}"); REPAIRED=(out="$OUT/${{P}}_repaired.fastq.gz")
+        else
+            IN=(in="${{R1[0]}}" in2="${{R2[0]}}")
+            REPAIRED=(out="$OUT/${{P}}_1_repaired.fastq.gz" out2="$OUT/${{P}}_2_repaired.fastq.gz")
+        fi
+        W=$(mktemp -d); cd "$W"
+        repair.sh \
+            -Xmx{JAVA_HEAP_MB}M \
+            "${{IN[@]}}" \
+            "${{REPAIRED[@]}}" \
+            outs="$OUT/${{P}}_singleton.fastq.gz" \
+            threads=$TASK_CPUS \
+            $ARGS \
+            &> "$OUT/$P.repair.sh.log" || exit 1
+    """,
+)
+
 env = flyte.TaskEnvironment.from_task(
     "bbmap",
     bbsplit_index_cmd.as_task(),
@@ -262,6 +306,7 @@ env = flyte.TaskEnvironment.from_task(
     bbduk_cmd.as_task(),
     bbnorm_cmd.as_task(),
     bbmap_filterbyname_cmd.as_task(),
+    bbmap_repair_cmd.as_task(),
 )
 
 
@@ -432,3 +477,33 @@ async def bbmap_filterbyname(
     else:
         names_out = [f"{prefix}_1.{output_format}", f"{prefix}_2.{output_format}"]
     return FilterByNameResult(reads=[await pick(name) for name in names_out], log=await pick(f"{prefix}.log"))
+
+
+@dataclass
+class RepairResult:
+    reads: list[File]  # <prefix>_1_repaired.fastq.gz and <prefix>_2_repaired.fastq.gz, or <prefix>_repaired.fastq.gz
+    singletons: File  # <prefix>_singleton.fastq.gz
+    log: File  # <prefix>.repair.sh.log
+
+
+async def bbmap_repair(
+    reads_1: File, reads_2: File | None = None, prefix: str = "repair", args: str = ""
+) -> RepairResult:
+    """Re-pair one sample's mates with Repair; without ``reads_2``, ``reads_1`` holds interleaved pairs."""
+    results = await bbmap_repair_cmd(reads_1=reads_1, reads_2=reads_2, prefix=prefix, args=args)
+
+    async def pick(name: str) -> File:
+        found = await results.get_file(name)
+        if found is None:
+            raise FileNotFoundError(f"repair wrote no {name}")
+        return found
+
+    if reads_2 is None:
+        names = [f"{prefix}_repaired.fastq.gz"]
+    else:
+        names = [f"{prefix}_1_repaired.fastq.gz", f"{prefix}_2_repaired.fastq.gz"]
+    return RepairResult(
+        reads=[await pick(name) for name in names],
+        singletons=await pick(f"{prefix}_singleton.fastq.gz"),
+        log=await pick(f"{prefix}.repair.sh.log"),
+    )

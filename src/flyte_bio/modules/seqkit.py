@@ -16,6 +16,18 @@ Exposes:
   is ``<prefix>.fasta`` for a FASTA-named input and ``<prefix>.fastq``
   otherwise, gzipped by ``gzip -c <gzip_args>`` (``<prefix>.<ext>.gz``) when
   the input is; a prefix that would overwrite the input is an error.
+- :func:`seqkit_rmdup` — ``seqkit rmdup`` over one FASTA/FASTQ file (by
+  sequence ID unless ``args`` says ``-s`` or ``-n``). As upstream, the output is
+  ``<prefix>.fasta`` or ``<prefix>.fastq`` by the input's name, plus ``.gz``
+  (compressed by seqkit) for a gzipped input, with seqkit's messages (``[INFO]
+  N duplicated records removed``) in ``<prefix>.log``; a prefix that would
+  overwrite the input is an error.
+- :func:`seqkit_split2` — ``seqkit split2`` of single-end reads, or of a pair
+  (``--read1``/``--read2``), into parts by ``args`` (``--by-part 3``,
+  ``--by-size 50``, ``--by-length 8K``). The parts keep seqkit's names
+  (``<input name>.part_001.fastq.gz``, …) and are returned in name order. The
+  parts come back as a Dir, which stages up to a few hundred files: split into
+  fewer, bigger parts (``--by-part``) for larger inputs.
 
 All pass the task's CPUs as ``--threads``. ``args`` is split on whitespace
 without shell quote removal, so write ``-p A``, not ``-p 'A'``; patterns are
@@ -24,6 +36,7 @@ can't contain spaces.
 """
 
 import re
+from dataclasses import dataclass
 
 import flyte
 from flyte.extras import shell
@@ -108,9 +121,64 @@ seqkit_seq_cmd = shell.create(
     """,
 )
 
-env = flyte.TaskEnvironment.from_task(
-    "seqkit", seqkit_stats_cmd.as_task(), seqkit_replace_cmd.as_task(), seqkit_seq_cmd.as_task()
+seqkit_rmdup_cmd = shell.create(
+    name="seqkit_rmdup",
+    image=SEQKIT_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"fastx": File, "filename": str, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        IN=({{inputs.fastx}})
+        NAME={{inputs.filename}}
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        set -f
+        STATUS=0
+        seqkit rmdup --threads $TASK_CPUS $ARGS "${{IN[0]}}" -o "$OUT/$NAME" 2> "$OUT/$P.log" || STATUS=1
+        cat "$OUT/$P.log" >&2
+        exit $STATUS
+    """,
 )
+
+# The reads are separate inputs so a pair keeps its order (a list[File] is staged alphabetically).
+seqkit_split2_cmd = shell.create(
+    name="seqkit_split2",
+    image=SEQKIT_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"read1": File, "read2": File | None, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        shopt -s nullglob; R1=({{inputs.read1}}); R2=({{inputs.read2}}); shopt -u nullglob
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        set -f
+        W=$(mktemp -d)
+        if [ ${{#R2[@]}} -gt 0 ]; then INPUT=(--read1 "${{R1[0]}}" --read2 "${{R2[0]}}"); else INPUT=("${{R1[0]}}"); fi
+        seqkit split2 $ARGS --threads $TASK_CPUS "${{INPUT[@]}}" --out-dir "$W/parts" || exit 1
+        set +f
+        mv "$W/parts"/* "$OUT"/
+    """,
+)
+
+env = flyte.TaskEnvironment.from_task(
+    "seqkit",
+    seqkit_stats_cmd.as_task(),
+    seqkit_replace_cmd.as_task(),
+    seqkit_seq_cmd.as_task(),
+    seqkit_rmdup_cmd.as_task(),
+    seqkit_split2_cmd.as_task(),
+)
+
+
+@dataclass
+class SeqkitRmdupResult:
+    fastx: File  # <prefix>.fasta / <prefix>.fastq, plus .gz for a gzipped input
+    log: File  # <prefix>.log: seqkit's messages, e.g. "N duplicated records removed"
 
 
 def file_name(file: File) -> str:
@@ -160,3 +228,26 @@ async def seqkit_seq(fastx: File, prefix: str = "sample", args: str = "", gzip_a
         raise ValueError("Input and output names are the same, set prefix to disambiguate!")
     results = await seqkit_seq_cmd(fastx=fastx, filename=filename, args=args, gzip_args=gzip_args)
     return await pick(results, filename, "seqkit seq")
+
+
+async def seqkit_rmdup(fastx: File, prefix: str = "sample", args: str = "") -> SeqkitRmdupResult:
+    """``seqkit rmdup`` over ``fastx``: the deduplicated reads and seqkit's log."""
+    name = file_name(fastx)
+    extension = "fasta" if SEQ_FASTA_NAME.fullmatch(name) else "fastq"
+    filename = f"{prefix}.{extension}" + (".gz" if name.endswith(".gz") else "")
+    if filename == name:
+        raise ValueError('Input and output names are the same, use "prefix" to disambiguate!')
+    results = await seqkit_rmdup_cmd(fastx=fastx, filename=filename, prefix=prefix, args=args)
+    return SeqkitRmdupResult(
+        fastx=await pick(results, filename, "seqkit rmdup"),
+        log=await pick(results, f"{prefix}.log", "seqkit rmdup"),
+    )
+
+
+async def seqkit_split2(reads: list[File], args: str = "") -> list[File]:
+    """``seqkit split2`` of one file (single-end) or a pair: the parts, in name order."""
+    if len(reads) not in (1, 2):
+        raise ValueError(f"seqkit_split2 takes one file or a pair, got {len(reads)}")
+    read2 = reads[1] if len(reads) == 2 else None
+    results = await seqkit_split2_cmd(read1=reads[0], read2=read2, args=args)
+    return sorted(await results.list_files(), key=file_name)

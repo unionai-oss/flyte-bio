@@ -1,15 +1,21 @@
 """Tests for flyte_bio.modules.seqkit.
 
-The cases and expected md5s are upstream's seqkit/stats, seqkit/replace and
-seqkit/seq tests (modules commit 9a1cc9f, seqkit 2.13.0), with each case's
-``ext.args`` (seqkit/seq's ``ext.args2 = '-n'`` is ``gzip_args``).
+The cases and expected md5s are upstream's seqkit/stats, seqkit/replace,
+seqkit/seq, seqkit/rmdup and seqkit/split2 tests (modules commit 9a1cc9f,
+seqkit 2.13.0), with each case's ``ext.args`` (seqkit/seq's
+``ext.args2 = '-n'`` is ``gzip_args``). seqkit/split2's uncompressed case
+gunzips its input in the test, where upstream runs its gunzip module.
 Upstream's replace patterns are shell-quoted (``-p 'A'``); here they are bare.
 nf-test hashes ``.gz`` outputs decompressed.
 """
 
+import gzip
+import tempfile
+from pathlib import Path
+
 from flyte.io import File
 
-from flyte_bio.modules.seqkit import seqkit_replace, seqkit_seq, seqkit_stats
+from flyte_bio.modules.seqkit import seqkit_replace, seqkit_rmdup, seqkit_seq, seqkit_split2, seqkit_stats
 from tests.framework import assert_gunzipped_md5, assert_md5, env, fixture
 
 FASTQ = "genomics/sarscov2/illumina/fastq/"
@@ -104,6 +110,152 @@ async def test_seqkit_seq_name_conflict_fails() -> None:
         raise AssertionError("seqkit_seq accepted an output name equal to its input's")
 
 
+NO_DUPLICATES_LOG = "a41135cfe024baaf42f135583fe73f0d"
+
+
+async def text(file: File) -> str:
+    async with file.open("rb") as fh:
+        return bytes(await fh.read()).decode()
+
+
+async def check_rmdup(fastx: File, expected_name: str, md5: str, log_md5: str, removed: int) -> None:
+    result = await seqkit_rmdup(fastx, prefix="test")
+    assert name_of(result.fastx) == expected_name, f"expected {expected_name}, got {name_of(result.fastx)}"
+    if expected_name.endswith(".gz"):
+        await assert_gunzipped_md5(result.fastx, md5, label=expected_name)
+    else:
+        await assert_md5(result.fastx, md5, label=expected_name)
+    assert name_of(result.log) == "test.log", f"expected test.log, got {name_of(result.log)}"
+    log = await text(result.log)
+    assert f"{removed} duplicated records removed" in log, log
+    await assert_md5(result.log, log_md5, label="test.log")
+
+
+@env.task
+async def test_seqkit_rmdup_genome_fasta() -> None:
+    fasta = await fixture(GENOME + "genome.fasta")
+    await check_rmdup(fasta, "test.fasta", "483f4a5dfe60171c86ee9b7e6dff908b", NO_DUPLICATES_LOG, 0)
+
+
+@env.task
+async def test_seqkit_rmdup_repeated_fasta() -> None:
+    path = Path(tempfile.mkdtemp()) / "repeated.fasta"
+    path.write_text(">A\nAGCTAGCTAGCT\n>B\nAGCTAGCTAGCT\n>A\nAGCTAGCTAGCT")
+    fasta = await File.from_local(str(path))
+    await check_rmdup(fasta, "test.fasta", "7510a742291241e7d7556bf720caf65c", "314c0aaef0f832a217a3f6ce3f8bc117", 1)
+
+
+@env.task
+async def test_seqkit_rmdup_genome_fasta_gz() -> None:
+    fasta = await fixture(GENOME + "genome.fasta.gz")
+    await check_rmdup(fasta, "test.fasta.gz", "483f4a5dfe60171c86ee9b7e6dff908b", NO_DUPLICATES_LOG, 0)
+
+
+@env.task
+async def test_seqkit_rmdup_fastq_gz() -> None:
+    reads = await fixture(FASTQ + "test_1.fastq.gz")
+    await check_rmdup(reads, "test.fastq.gz", "4161df271f9bfcd25d5845a1e220dbec", NO_DUPLICATES_LOG, 0)
+
+
+@env.task
+async def test_seqkit_rmdup_name_conflict_fails() -> None:
+    try:
+        await seqkit_rmdup(await fixture(FASTQ + "test_1.fastq.gz"), prefix="test_1")
+    except ValueError as e:
+        assert "Input and output names are the same" in str(e), str(e)
+    else:
+        raise AssertionError("seqkit_rmdup accepted an output name equal to its input's")
+
+
+async def check_split2(parts: list[File], expected: dict[str, str]) -> None:
+    names = [name_of(f) for f in parts]
+    assert names == list(expected), f"expected parts {list(expected)}, got {names}"
+    for part, (name, md5) in zip(parts, expected.items()):
+        if name.endswith(".gz"):
+            await assert_gunzipped_md5(part, md5, label=name)
+        else:
+            await assert_md5(part, md5, label=name)
+
+
+async def paired_reads() -> list[File]:
+    return [await fixture(FASTQ + "test_1.fastq.gz"), await fixture(FASTQ + "test_2.fastq.gz")]
+
+
+SPLIT_BY_LENGTH_1 = {
+    "test_1.part_001.fastq.gz": "ffc87eb34d91d23ec9095bd8609a6a70",
+    "test_1.part_002.fastq.gz": "8d71a0abe239e05e5c57c4d27c799a1d",
+}
+SPLIT_BY_PART_1 = {
+    "test_1.part_001.fastq.gz": "b3c4d28be7ea9b960fbf1cb452adb53c",
+    "test_1.part_002.fastq.gz": "c134c70c5b70c6b3c65979448b38917e",
+    "test_1.part_003.fastq.gz": "822a40283637e2715e77d1ed0ed5bd52",
+}
+SPLIT_BY_SIZE_1 = {
+    "test_1.part_001.fastq.gz": "ecc4b1841cd94704bba742ea4dcd48b0",
+    "test_1.part_002.fastq.gz": "b3de467f2b6ab0d14e1f6ce14932a411",
+}
+
+
+@env.task
+async def test_seqkit_split2_single_end_length() -> None:
+    parts = await seqkit_split2([await fixture(FASTQ + "test_1.fastq.gz")], args="--by-length 8K")
+    await check_split2(parts, SPLIT_BY_LENGTH_1)
+
+
+@env.task
+async def test_seqkit_split2_paired_end_length() -> None:
+    parts = await seqkit_split2(await paired_reads(), args="--by-length 8K")
+    expected = SPLIT_BY_LENGTH_1 | {
+        "test_2.part_001.fastq.gz": "77b9076f82a762711582584342bde5a1",
+        "test_2.part_002.fastq.gz": "33bb6e3edc759baa7ba6580da36def48",
+    }
+    await check_split2(parts, expected)
+
+
+@env.task
+async def test_seqkit_split2_single_end_part() -> None:
+    parts = await seqkit_split2([await fixture(FASTQ + "test_1.fastq.gz")], args="--by-part 3")
+    await check_split2(parts, SPLIT_BY_PART_1)
+
+
+@env.task
+async def test_seqkit_split2_paired_end_part() -> None:
+    parts = await seqkit_split2(await paired_reads(), args="--by-part 3")
+    expected = SPLIT_BY_PART_1 | {
+        "test_2.part_001.fastq.gz": "13d14d69744bd93c8c51873b529bf714",
+        "test_2.part_002.fastq.gz": "5f5a78d78f312164a1159c62d65c15f1",
+        "test_2.part_003.fastq.gz": "48bcbceb485b73bcf1f198e252b016d8",
+    }
+    await check_split2(parts, expected)
+
+
+@env.task
+async def test_seqkit_split2_single_end_size() -> None:
+    parts = await seqkit_split2([await fixture(FASTQ + "test_1.fastq.gz")], args="--by-size 50")
+    await check_split2(parts, SPLIT_BY_SIZE_1)
+
+
+@env.task
+async def test_seqkit_split2_paired_end_size() -> None:
+    parts = await seqkit_split2(await paired_reads(), args="--by-size 50")
+    expected = SPLIT_BY_SIZE_1 | {
+        "test_2.part_001.fastq.gz": "201ee95b559240e27830970b78a547c8",
+        "test_2.part_002.fastq.gz": "35ff29a76f34b2507a37287352324650",
+    }
+    await check_split2(parts, expected)
+
+
+@env.task
+async def test_seqkit_split2_single_end_length_uncompressed() -> None:
+    gzipped = await fixture(FASTQ + "test_1.fastq.gz")
+    async with gzipped.open("rb") as fh:
+        raw = bytes(await fh.read())
+    path = Path(tempfile.mkdtemp()) / "test_1.fastq"
+    path.write_bytes(gzip.decompress(raw))
+    parts = await seqkit_split2([await File.from_local(str(path))], args="--by-length 8K")
+    await check_split2(parts, {name.removesuffix(".gz"): md5 for name, md5 in SPLIT_BY_LENGTH_1.items()})
+
+
 tests = [
     test_seqkit_stats_single_end,
     test_seqkit_stats_paired_end,
@@ -117,4 +269,16 @@ tests = [
     test_seqkit_seq_genome_fasta_gz,
     test_seqkit_seq_fastq_gz,
     test_seqkit_seq_name_conflict_fails,
+    test_seqkit_rmdup_genome_fasta,
+    test_seqkit_rmdup_repeated_fasta,
+    test_seqkit_rmdup_genome_fasta_gz,
+    test_seqkit_rmdup_fastq_gz,
+    test_seqkit_rmdup_name_conflict_fails,
+    test_seqkit_split2_single_end_length,
+    test_seqkit_split2_paired_end_length,
+    test_seqkit_split2_single_end_part,
+    test_seqkit_split2_paired_end_part,
+    test_seqkit_split2_single_end_size,
+    test_seqkit_split2_paired_end_size,
+    test_seqkit_split2_single_end_length_uncompressed,
 ]

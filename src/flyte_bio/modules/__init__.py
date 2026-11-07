@@ -9,6 +9,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.aria2` — file downloads.
 - :mod:`flyte_bio.modules.art` — Illumina read simulation.
 - :mod:`flyte_bio.modules.bakta` — bacterial genome annotation (database download, annotate).
+- :mod:`flyte_bio.modules.bamtools` — BAM statistics and splitting.
 - :mod:`flyte_bio.modules.bbmap` — BBSplit (index build + read binning).
 - :mod:`flyte_bio.modules.bcftools` — VCF/BCF utilities (stats, sort, norm, view, filter, annotate, merge, mpileup).
 - :mod:`flyte_bio.modules.bedops` — GTF to BED conversion.
@@ -57,6 +58,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.gtffilter` — restrict a GTF to a genome's sequences.
 - :mod:`flyte_bio.modules.gtfgenefilter` — keep GTF lines on a genome's sequences (scRNA-seq).
 - :mod:`flyte_bio.modules.gunzip` — single-file gzip decompression.
+- :mod:`flyte_bio.modules.gzrt` — recover data from corrupt gzipped FASTQs.
 - :mod:`flyte_bio.modules.hisat2` — splice-aware short-read alignment (splice sites, build, align).
 - :mod:`flyte_bio.modules.hmmer` — profile HMM search (hmmsearch).
 - :mod:`flyte_bio.modules.htslib` — bgzip + tabix.
@@ -68,6 +70,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.krona` — interactive taxonomy charts.
 - :mod:`flyte_bio.modules.macs2` — ChIP/ATAC-seq peak calling.
 - :mod:`flyte_bio.modules.mafft` — multiple sequence alignment.
+- :mod:`flyte_bio.modules.mat2json` — MATLAB .mat to JSON/CSV conversion.
 - :mod:`flyte_bio.modules.md5sum` — MD5 checksums of files.
 - :mod:`flyte_bio.modules.megahit` — short-read and metagenome assembly.
 - :mod:`flyte_bio.modules.mindagap` — tile-gap filling and duplicate spot finding.
@@ -78,9 +81,11 @@ across its tasks:
 - :mod:`flyte_bio.modules.multiqc` — aggregate QC report.
 - :mod:`flyte_bio.modules.multiqccustombiotype` — biotype counts for MultiQC.
 - :mod:`flyte_bio.modules.nacho` — NanoString QC and normalisation.
+- :mod:`flyte_bio.modules.nanocomp` — long-read dataset comparison.
 - :mod:`flyte_bio.modules.nanolyse` — lambda phage read removal.
 - :mod:`flyte_bio.modules.nanoplot` — long-read QC plots and statistics.
 - :mod:`flyte_bio.modules.ncbigenomedownload` — NCBI genome downloads.
+- :mod:`flyte_bio.modules.numorph` — light-sheet preprocessing, resampling and nuclei counting.
 - :mod:`flyte_bio.modules.optitype` — HLA class I genotyping.
 - :mod:`flyte_bio.modules.pcgr` — PCGR reference bundle download.
 - :mod:`flyte_bio.modules.picard` — Picard MarkDuplicates.
@@ -104,6 +109,8 @@ across its tasks:
 - :mod:`flyte_bio.modules.scanpy` — AnnData conversions (simpleaf to h5ad, concatenation).
 - :mod:`flyte_bio.modules.simpleaf` — single-cell quantification with alevin-fry (index, quant).
 - :mod:`flyte_bio.modules.samtools` — alignment sort/index/stats/faidx.
+- :mod:`flyte_bio.modules.seacr` — CUT&RUN/CUT&Tag peak calling.
+- :mod:`flyte_bio.modules.seq2hla` — HLA typing and expression from RNA-seq.
 - :mod:`flyte_bio.modules.seqfu` — sequence-length statistics.
 - :mod:`flyte_bio.modules.seqkit` — FASTA/FASTQ statistics and pattern replacement.
 - :mod:`flyte_bio.modules.seqtk` — FASTQ subsampling.
@@ -132,8 +139,10 @@ across its tasks:
 - :mod:`flyte_bio.modules.umitools` — UMI extraction and deduplication.
 - :mod:`flyte_bio.modules.untar` — tar archive extraction.
 - :mod:`flyte_bio.modules.unzip` — zip archive extraction.
+- :mod:`flyte_bio.modules.unzipfiles` — archive extraction with a file list.
 - :mod:`flyte_bio.modules.vcftools` — VCF summaries (Ts/Tv, filters).
 - :mod:`flyte_bio.modules.vsearch` — sequence clustering.
+- :mod:`flyte_bio.modules.wipertools` — repair malformed FASTQs in parallel chunks.
 - :mod:`flyte_bio.modules.xz` — xz decompression.
 - :mod:`flyte_bio.modules.yara` — read mapping (index, mapper).
 
@@ -152,6 +161,7 @@ from .anndatar import env as anndatar_env
 from .aria2 import env as aria2_env
 from .art import env as art_env
 from .bakta import env as bakta_env
+from .bamtools import env as bamtools_env
 from .bbmap import env as bbmap_env
 from .bcftools import env as bcftools_env
 from .bedops import env as bedops_env
@@ -200,6 +210,7 @@ from .gtf2bed import env as gtf2bed_env
 from .gtffilter import env as gtffilter_env
 from .gtfgenefilter import env as gtfgenefilter_env
 from .gunzip import env as gunzip_env
+from .gzrt import env as gzrt_env
 from .hisat2 import env as hisat2_env
 from .hmmer import env as hmmer_env
 from .htslib import env as htslib_env
@@ -211,6 +222,7 @@ from .kraken2 import env as kraken2_env
 from .krona import env as krona_env
 from .macs2 import env as macs2_env
 from .mafft import env as mafft_env
+from .mat2json import env as mat2json_env
 from .md5sum import env as md5sum_env
 from .megahit import env as megahit_env
 from .mindagap import env as mindagap_env
@@ -221,9 +233,11 @@ from .msisensorpro import env as msisensorpro_env
 from .multiqc import env as multiqc_env
 from .multiqccustombiotype import env as multiqccustombiotype_env
 from .nacho import env as nacho_env
+from .nanocomp import env as nanocomp_env
 from .nanolyse import env as nanolyse_env
 from .nanoplot import env as nanoplot_env
 from .ncbigenomedownload import env as ncbigenomedownload_env
+from .numorph import env as numorph_env
 from .optitype import env as optitype_env
 from .pcgr import env as pcgr_env
 from .picard import env as picard_env
@@ -246,6 +260,8 @@ from .salmon import env as salmon_env
 from .sam2lca import env as sam2lca_env
 from .samtools import env as samtools_env
 from .scanpy import env as scanpy_env
+from .seacr import env as seacr_env
+from .seq2hla import env as seq2hla_env
 from .seqfu import env as seqfu_env
 from .seqkit import env as seqkit_env
 from .seqtk import env as seqtk_env
@@ -275,8 +291,10 @@ from .umicollapse import env as umicollapse_env
 from .umitools import env as umitools_env
 from .untar import env as untar_env
 from .unzip import env as unzip_env
+from .unzipfiles import env as unzipfiles_env
 from .vcftools import env as vcftools_env
 from .vsearch import env as vsearch_env
+from .wipertools import env as wipertools_env
 from .xz import env as xz_env
 from .yara import env as yara_env
 
@@ -289,6 +307,7 @@ env = flyte.TaskEnvironment(
         aria2_env,
         art_env,
         bakta_env,
+        bamtools_env,
         bbmap_env,
         bcftools_env,
         bedops_env,
@@ -335,6 +354,7 @@ env = flyte.TaskEnvironment(
         gtffilter_env,
         gtfgenefilter_env,
         gunzip_env,
+        gzrt_env,
         hisat2_env,
         hmmer_env,
         htslib_env,
@@ -346,6 +366,7 @@ env = flyte.TaskEnvironment(
         krona_env,
         macs2_env,
         mafft_env,
+        mat2json_env,
         md5sum_env,
         megahit_env,
         mindagap_env,
@@ -356,9 +377,11 @@ env = flyte.TaskEnvironment(
         multiqc_env,
         multiqccustombiotype_env,
         nacho_env,
+        nanocomp_env,
         nanolyse_env,
         nanoplot_env,
         ncbigenomedownload_env,
+        numorph_env,
         optitype_env,
         pcgr_env,
         picard_env,
@@ -381,6 +404,8 @@ env = flyte.TaskEnvironment(
         sam2lca_env,
         samtools_env,
         scanpy_env,
+        seacr_env,
+        seq2hla_env,
         seqfu_env,
         seqkit_env,
         seqtk_env,
@@ -409,8 +434,10 @@ env = flyte.TaskEnvironment(
         umitools_env,
         untar_env,
         unzip_env,
+        unzipfiles_env,
         vcftools_env,
         vsearch_env,
+        wipertools_env,
         xz_env,
         yara_env,
     ],
@@ -432,6 +459,7 @@ __all__ = [
     "aria2_env",
     "art_env",
     "bakta_env",
+    "bamtools_env",
     "bbmap_env",
     "bcftools_env",
     "bedops_env",
@@ -481,6 +509,7 @@ __all__ = [
     "gtffilter_env",
     "gtfgenefilter_env",
     "gunzip_env",
+    "gzrt_env",
     "hisat2_env",
     "hmmer_env",
     "htslib_env",
@@ -493,6 +522,7 @@ __all__ = [
     "licensed_env",
     "macs2_env",
     "mafft_env",
+    "mat2json_env",
     "md5sum_env",
     "megahit_env",
     "mindagap_env",
@@ -503,9 +533,11 @@ __all__ = [
     "multiqc_env",
     "multiqccustombiotype_env",
     "nacho_env",
+    "nanocomp_env",
     "nanolyse_env",
     "nanoplot_env",
     "ncbigenomedownload_env",
+    "numorph_env",
     "optitype_env",
     "pcgr_env",
     "picard_env",
@@ -528,6 +560,8 @@ __all__ = [
     "sam2lca_env",
     "samtools_env",
     "scanpy_env",
+    "seacr_env",
+    "seq2hla_env",
     "seqfu_env",
     "seqkit_env",
     "seqtk_env",
@@ -557,8 +591,10 @@ __all__ = [
     "umitools_env",
     "untar_env",
     "unzip_env",
+    "unzipfiles_env",
     "vcftools_env",
     "vsearch_env",
+    "wipertools_env",
     "xz_env",
     "yara_env",
 ]

@@ -11,6 +11,8 @@ Currently exposed:
 - :func:`bedtools_genomecov` — genome-wide coverage of a BAM (e.g. bedGraph).
 - :func:`bedtools_getfasta` — the FASTA sequences of a BED's intervals.
 - :func:`bedtools_maskfasta` — a FASTA with a BED's intervals masked.
+- :func:`bedtools_bamtobed` — a BAM's alignments as BED intervals.
+- :func:`bedtools_complement` — the intervals of a genome a BED doesn't cover.
 
 The module-level :data:`env` is a single :class:`flyte.TaskEnvironment`
 containing every bedtools task. All commands share the same biocontainer
@@ -240,9 +242,42 @@ def bedtools_fasta_task(subcommand: str):
 bedtools_getfasta_cmd = bedtools_fasta_task("getfasta")
 bedtools_maskfasta_cmd = bedtools_fasta_task("maskfasta")
 
-# `env` stays the one to depend on: it pulls in the FASTA tools' env too.
+# bamtobed and complement run on the same image; each writes `<prefix>.bed`.
+bedtools_bamtobed_cmd = shell.create(
+    name="bedtools_bamtobed",
+    image=FASTA_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"bam": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        BAM=({inputs.bam})
+        ARGS={inputs.args}
+        bedtools bamtobed $ARGS -i "${BAM[0]}" > {outputs.results}/{inputs.prefix}.bed
+    """,
+)
+
+bedtools_complement_cmd = shell.create(
+    name="bedtools_complement",
+    image=FASTA_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"bed": File, "sizes": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        BED=({inputs.bed}); SIZES=({inputs.sizes})
+        ARGS={inputs.args}
+        bedtools complement -i "${BED[0]}" -g "${SIZES[0]}" $ARGS > {outputs.results}/{inputs.prefix}.bed
+    """,
+)
+
+# `env` stays the one to depend on: it pulls in the newer image's env too.
 fasta_env = flyte.TaskEnvironment.from_task(
-    "bedtools_fasta", bedtools_getfasta_cmd.as_task(), bedtools_maskfasta_cmd.as_task()
+    "bedtools_fasta",
+    bedtools_getfasta_cmd.as_task(),
+    bedtools_maskfasta_cmd.as_task(),
+    bedtools_bamtobed_cmd.as_task(),
+    bedtools_complement_cmd.as_task(),
 )
 env.add_dependency(fasta_env)
 
@@ -275,4 +310,24 @@ async def bedtools_maskfasta(bed: File, fasta: File, prefix: str, args: str = ""
     out = await results.get_file(f"{prefix}.fa")
     if out is None:
         raise FileNotFoundError(f"bedtools maskfasta wrote no {prefix}.fa")
+    return out
+
+
+async def bedtools_bamtobed(bam: File, prefix: str, args: str = "") -> File:
+    """The alignments of ``bam`` as BED intervals, ``<prefix>.bed``."""
+    results = await bedtools_bamtobed_cmd(bam=bam, prefix=prefix, args=args)
+    out = await results.get_file(f"{prefix}.bed")
+    if out is None:
+        raise FileNotFoundError(f"bedtools bamtobed wrote no {prefix}.bed")
+    return out
+
+
+async def bedtools_complement(bed: File, sizes: File, prefix: str, args: str = "") -> File:
+    """The intervals of the genome in ``sizes`` (chromosome, length) that ``bed`` doesn't cover, ``<prefix>.bed``."""
+    if bed.name == f"{prefix}.bed":
+        raise ValueError("input and output names are the same; choose another prefix")
+    results = await bedtools_complement_cmd(bed=bed, sizes=sizes, prefix=prefix, args=args)
+    out = await results.get_file(f"{prefix}.bed")
+    if out is None:
+        raise FileNotFoundError(f"bedtools complement wrote no {prefix}.bed")
     return out

@@ -34,6 +34,11 @@ Exposes:
   a VCF, writing ``<prefix>.vcf.gz`` (+ ``.tbi``).
 - :func:`gatk4_intervallisttools` — split an interval list for scattering,
   as upstream into ``<prefix>_split/temp_*/<n>scattered.interval_list``.
+- :func:`gatk4_combinegvcfs` — combine per-sample (or per-interval) GVCFs
+  into ``<prefix>.combined.g.vcf.gz``.
+- :func:`gatk4_splitncigarreads` — split RNA-seq reads at their ``N`` CIGAR
+  operations (spliced alignments), optionally within intervals, writing
+  ``<prefix>.bam``.
 
 The Mutect2 and VariantFiltration references may be
 bgzipped FASTA (pass the ``.gzi``); the dictionary is linked under the name
@@ -635,6 +640,77 @@ gatk4_intervallisttools_cmd = shell.create(
     """,
 )
 
+# As upstream: every GVCF is a --variant, and the reference is passed with its
+# .fai and .dict beside it. GVCFs and their indices (.tbi, or .idx for a plain
+# VCF) are linked under their own names, so GATK pairs them.
+gatk4_combinegvcfs_cmd = shell.create(
+    name="gatk4_combinegvcfs",
+    image=GATK4_LITE_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={
+        "vcfs": list[File],
+        "indices": list[File],
+        "fasta": File,
+        "fai": File,
+        "dict": File,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
+        VCFS=({{inputs.vcfs}}); IDXS=({{inputs.indices}})
+        FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); D=({{inputs.dict}})
+        REF_FA="${{FA[0]}}"; REF_FAI="${{FAI[0]}}"; REF_DICT="${{D[0]}}"; REF_GZI=""
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        {LINK_REFERENCE}
+        INPUTS=()
+        for v in "${{VCFS[@]}}"; do ln -s "$v" "$(basename "$v")"; INPUTS+=(--variant "$(basename "$v")"); done
+        for i in "${{IDXS[@]}}"; do ln -s "$i" "$(basename "$i")"; done
+        gatk --java-options "$JAVA_OPTIONS" CombineGVCFs \
+            "${{INPUTS[@]}}" --output {{outputs.results}}/{{inputs.prefix}}.combined.g.vcf.gz \
+            --reference "$REF" --tmp-dir . $ARGS
+    """,
+)
+
+# As upstream: the BAM is linked beside its index and the reference beside its
+# .fai and .dict; intervals are optional.
+gatk4_splitncigarreads_cmd = shell.create(
+    name="gatk4_splitncigarreads",
+    image=GATK4_LITE_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={
+        "bam": File,
+        "bai": File,
+        "intervals": File | None,
+        "fasta": File,
+        "fai": File,
+        "dict": File,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
+        B=({{inputs.bam}}); I=({{inputs.bai}}); FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); D=({{inputs.dict}})
+        shopt -s nullglob; BED=({{inputs.intervals}}); shopt -u nullglob
+        REF_FA="${{FA[0]}}"; REF_FAI="${{FAI[0]}}"; REF_DICT="${{D[0]}}"; REF_GZI=""
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        {LINK_REFERENCE}
+        BAM=$(basename "${{B[0]}}"); ln -s "${{B[0]}}" "$BAM"; ln -s "${{I[0]}}" "$BAM.bai"
+        INTERVALS=(); [ ${{#BED[@]}} -gt 0 ] && INTERVALS=(--intervals "${{BED[0]}}")
+        gatk --java-options "$JAVA_OPTIONS" SplitNCigarReads \
+            --input "$BAM" --output {{outputs.results}}/{{inputs.prefix}}.bam --reference "$REF" \
+            "${{INTERVALS[@]}}" --tmp-dir . $ARGS
+    """,
+)
+
 # One image per environment: MarkDuplicates', CNNScoreVariants', the lite tools' and IntervalListTools' differ,
 # so `env` has five.
 gatk4_env = flyte.TaskEnvironment.from_task(
@@ -657,6 +733,8 @@ gatk4_lite_env = flyte.TaskEnvironment.from_task(
     gatk4_mergemutectstats_cmd.as_task(),
     gatk4_filtermutectcalls_cmd.as_task(),
     gatk4_variantfiltration_cmd.as_task(),
+    gatk4_combinegvcfs_cmd.as_task(),
+    gatk4_splitncigarreads_cmd.as_task(),
 )
 gatk4_lite_python_env = flyte.TaskEnvironment.from_task("gatk4_lite_python", gatk4_intervallisttools_cmd.as_task())
 env = flyte.TaskEnvironment(
@@ -1044,3 +1122,36 @@ async def gatk4_intervallisttools(intervals: File, prefix: str, args: str = "") 
     results = await gatk4_intervallisttools_cmd(intervals=intervals, prefix=prefix, args=args)
     lists = [f async for f in results.walk() if f.path.endswith(".interval_list")]
     return sorted(lists, key=lambda f: (len(f.name), f.name))
+
+
+async def gatk4_combinegvcfs(
+    vcfs: list[File], indices: list[File], fasta: File, fai: File, dict: File, prefix: str, args: str = ""
+) -> File:
+    """``<prefix>.combined.g.vcf.gz``: the GVCFs ``vcfs`` combined into one multi-sample GVCF.
+
+    ``indices`` are the GVCFs' ``.tbi`` (or ``.idx`` for plain VCFs), paired
+    with them by name, so all the names must be distinct.
+    """
+    if len(indices) != len(vcfs):
+        raise ValueError(f"{len(vcfs)} GVCFs but {len(indices)} indices")
+    results = await gatk4_combinegvcfs_cmd(
+        vcfs=vcfs, indices=indices, fasta=fasta, fai=fai, dict=dict, prefix=prefix, args=args
+    )
+    return await only_file(results, f"{prefix}.combined.g.vcf.gz", "CombineGVCFs")
+
+
+async def gatk4_splitncigarreads(
+    bam: File,
+    bai: File,
+    fasta: File,
+    fai: File,
+    dict: File,
+    prefix: str,
+    intervals: File | None = None,
+    args: str = "",
+) -> File:
+    """``<prefix>.bam``: ``bam`` with reads split at their ``N`` CIGAR operations, as for RNA-seq variant calling."""
+    results = await gatk4_splitncigarreads_cmd(
+        bam=bam, bai=bai, intervals=intervals, fasta=fasta, fai=fai, dict=dict, prefix=prefix, args=args
+    )
+    return await only_file(results, f"{prefix}.bam", "SplitNCigarReads")

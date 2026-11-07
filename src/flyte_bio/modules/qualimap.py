@@ -1,8 +1,17 @@
-"""qualimap — RNA-seq alignment QC (``qualimap rnaseq``).
+"""qualimap — alignment QC (``qualimap rnaseq``, ``qualimap bamqc``).
 
-Exposes :func:`qualimap_rnaseq`, which writes Qualimap's RNA-seq QC report
-directory (``qualimapReport.html``, ``rnaseq_qc_results.txt``, raw data and
-plots) for one BAM.
+Exposes:
+
+- :func:`qualimap_rnaseq`, which writes Qualimap's RNA-seq QC report
+  directory (``qualimapReport.html``, ``rnaseq_qc_results.txt``, raw data and
+  plots) for one BAM.
+- :func:`qualimap_bamqc`, which writes Qualimap's BAM QC report directory
+  (``qualimapReport.html``, ``genome_results.txt``, ``css/``,
+  ``images_qualimapReport/``, ``raw_data_qualimapReport/``) for one BAM,
+  optionally restricted to the regions of a GFF/BED (``gff``). Paired-end
+  samples add ``--collect-overlap-pairs``, as upstream; threads follow the
+  task's CPUs. Pass the protocol in ``args`` (``-p non-strand-specific``, ...),
+  as upstream's ``ext.args``.
 
 Qualimap records the BAM and GTF paths it was given in
 ``rnaseq_qc_results.txt``. As upstream's staging does, the inputs are
@@ -19,9 +28,13 @@ from flyte_bio.limits import JAVA_HEAP_MB, TASK_LIMITS
 # Pinned biocontainer URI. Upstream's main.nf names the bare
 # `biocontainers/qualimap:...` (Docker Hub) — use the quay.io mirror.
 QUALIMAP_IMAGE = "quay.io/biocontainers/qualimap:2.3--hdfd78af_0"
+# bamqc is pinned upstream to a newer build of the same release.
+QUALIMAP_BAMQC_IMAGE = "community.wave.seqera.io/library/qualimap:2.3--e70af3f76915782f"
 
 QUALIMAP_MEMORY_MB = 8192
 DEFAULT_RESOURCES = flyte.Resources(cpu=2, memory=f"{QUALIMAP_MEMORY_MB}Mi")
+# Upstream labels bamqc process_medium.
+BAMQC_RESOURCES = flyte.Resources(cpu=4, memory="16Gi")
 
 # Upstream maps the sample's strandedness to Qualimap's protocol names.
 qualimap_rnaseq_cmd = shell.create(
@@ -73,10 +86,51 @@ qualimap_rnaseq_cmd = shell.create(
 )
 
 
-env = flyte.TaskEnvironment.from_task(
-    "qualimap",
-    qualimap_rnaseq_cmd.as_task(),
+# As for rnaseq, the BAM (and GFF) are linked into the working directory under
+# their own names, which Qualimap records in genome_results.txt.
+qualimap_bamqc_cmd = shell.create(
+    name="qualimap_bamqc",
+    image=QUALIMAP_BAMQC_IMAGE,
+    resources=BAMQC_RESOURCES,
+    inputs={"bam": File, "gff": File | None, "prefix": str, "single_end": bool, "args": str},
+    defaults={"single_end": False, "args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        BAM=({{inputs.bam}})
+        shopt -s nullglob; GFF=({{inputs.gff}}); shopt -u nullglob
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        BAM_NAME=$(basename "${{BAM[0]}}")
+        ln -s "${{BAM[0]}}" "$BAM_NAME"
+        REGIONS=()
+        if [ ${{#GFF[@]}} -gt 0 ]; then
+            ln -s "${{GFF[0]}}" "$(basename "${{GFF[0]}}")"
+            REGIONS=(--gff "$(basename "${{GFF[0]}}")")
+        fi
+        PAIRS=()
+        [ {{inputs.single_end}} = true ] || PAIRS=(--collect-overlap-pairs)
+        unset DISPLAY
+        mkdir -p tmp
+        export _JAVA_OPTIONS=-Djava.io.tmpdir=./tmp
+        qualimap \
+            --java-mem-size={JAVA_HEAP_MB}M \
+            bamqc \
+            $ARGS \
+            -bam "$BAM_NAME" \
+            "${{REGIONS[@]}}" \
+            "${{PAIRS[@]}}" \
+            -outdir "$P" \
+            -nt $TASK_CPUS
+        cp -r "$P"/. {{outputs.results}}/
+    """,
 )
+
+# One image per environment: bamqc's differs from rnaseq's, so `env` has two.
+qualimap_rnaseq_env = flyte.TaskEnvironment.from_task("qualimap_rnaseq", qualimap_rnaseq_cmd.as_task())
+qualimap_bamqc_env = flyte.TaskEnvironment.from_task("qualimap_bamqc", qualimap_bamqc_cmd.as_task())
+env = flyte.TaskEnvironment(name="qualimap", depends_on=[qualimap_rnaseq_env, qualimap_bamqc_env])
 
 
 async def qualimap_rnaseq(
@@ -104,3 +158,10 @@ async def qualimap_rnaseq(
         bam_name=bam_name,
         args=args,
     )
+
+
+async def qualimap_bamqc(
+    bam: File, prefix: str, gff: File | None = None, single_end: bool = False, args: str = ""
+) -> Dir:
+    """Run ``qualimap bamqc`` on ``bam`` (within ``gff``'s regions, if given); returns the report directory."""
+    return await qualimap_bamqc_cmd(bam=bam, gff=gff, prefix=prefix, single_end=single_end, args=args)

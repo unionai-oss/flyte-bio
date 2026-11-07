@@ -25,6 +25,10 @@ test_1.fastq.gz alone, read as interleaved pairs. These tests pass the same
 single file, so the snapshot md5s reproduce (the ``.bz2`` outputs, written by
 bzip2 -9, byte for byte). The paired-end bz2 case also runs a real pair of
 mates, which upstream doesn't: with no names the reads pass unchanged.
+
+The bbmap/repair cases are upstream's at the same commit, with their test
+config's ``qin=33``. Upstream snapshots the repaired reads' md5s
+(decompressed) and the singleton file's and log's names.
 """
 
 import gzip
@@ -35,8 +39,10 @@ from flyte_bio.modules.bbmap import (
     BBDukResult,
     BBNormResult,
     FilterByNameResult,
+    RepairResult,
     bbduk,
     bbmap_filterbyname,
+    bbmap_repair,
     bbnorm,
     bbsplit,
     bbsplit_index,
@@ -263,6 +269,35 @@ async def test_bbmap_filterbyname_interleaved_output() -> None:
     await check_filterbyname(result, {"test.fastq.gz": "91dc9a4c9423b78c36bbce6b9c851b9b"}, gunzipped=True)
 
 
+async def check_repair(result: RepairResult, md5s: dict[str, str]) -> None:
+    assert [f.name for f in result.reads] == list(md5s), [f.name for f in result.reads]
+    for file, md5 in zip(result.reads, md5s.values(), strict=True):
+        await assert_gunzipped_md5(file, md5, label=file.name)
+    assert result.singletons.name == "test_singleton.fastq.gz", result.singletons.name
+    assert result.log.name == "test.repair.sh.log", result.log.name
+
+
+@env.task
+async def test_bbmap_repair_paired() -> None:
+    # upstream case: bbmap/repair "sarscov2_illumina_paired - fastq_gz"
+    result = await bbmap_repair(*await bbduk_reads(), prefix="test", args="qin=33")
+    await check_repair(
+        result,
+        {
+            "test_1_repaired.fastq.gz": "4161df271f9bfcd25d5845a1e220dbec",
+            "test_2_repaired.fastq.gz": "2ebae722295ea66d84075a3b042e2b42",
+        },
+    )
+
+
+@env.task
+async def test_bbmap_repair_interleaved() -> None:
+    # upstream case: bbmap/repair "sarscov2_illumina_interleaved - fastq_gz"
+    reads = await fixture(FASTQ + "test_interleaved.fastq.gz")
+    result = await bbmap_repair(reads, prefix="test", args="qin=33")
+    await check_repair(result, {"test_repaired.fastq.gz": "efe40fe3df38b5a1c469890e5ad19874"})
+
+
 tests = [
     test_bbsplit_prebuilt_index,
     test_bbduk_single_end,
@@ -277,4 +312,6 @@ tests = [
     test_bbmap_filterbyname_fasta,
     test_bbmap_filterbyname_names,
     test_bbmap_filterbyname_interleaved_output,
+    test_bbmap_repair_paired,
+    test_bbmap_repair_interleaved,
 ]

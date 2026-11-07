@@ -7,7 +7,14 @@ When upstream changes its snapshot, update the constant and re-run.
 
 
 
-from flyte_bio.modules.bedtools import bedtools_getfasta, bedtools_intersect, bedtools_maskfasta, bedtools_sort
+from flyte_bio.modules.bedtools import (
+    bedtools_bamtobed,
+    bedtools_complement,
+    bedtools_getfasta,
+    bedtools_intersect,
+    bedtools_maskfasta,
+    bedtools_sort,
+)
 from tests.framework import assert_md5, env, fixture
 
 
@@ -56,4 +63,30 @@ async def test_bedtools_maskfasta() -> None:
     await assert_md5(out, "f4f6749698f11074228d2c79338e3b9c", label="bedtools maskfasta")
 
 
-tests = [test_intersect_bed_bed, test_sort_bed, test_bedtools_getfasta, test_bedtools_maskfasta]
+@env.task
+async def test_bedtools_bamtobed_bam() -> None:
+    # upstream case: bedtools/bamtobed "sarscov2 - bam" (modules commit 9a1cc9f)
+    bam = await fixture("genomics/sarscov2/illumina/bam/test.single_end.bam")
+    out = await bedtools_bamtobed(bam, prefix="test")
+    assert out.name == "test.bed", out.name
+    await assert_md5(out, "a6a299bd39dc56225f8029c05ea97dcb", label="bedtools bamtobed")
+
+
+@env.task
+async def test_bedtools_complement_bed() -> None:
+    # upstream case: bedtools/complement "sarscov2" (modules commit 9a1cc9f)
+    bed = await fixture("genomics/sarscov2/genome/bed/test.bed")
+    sizes = await fixture("genomics/sarscov2/genome/genome.sizes")
+    out = await bedtools_complement(bed, sizes, prefix="test_out")
+    assert out.name == "test_out.bed", out.name
+    await assert_md5(out, "d71df7e47aec0661c27b71e483e727f9", label="bedtools complement")
+
+
+tests = [
+    test_intersect_bed_bed,
+    test_sort_bed,
+    test_bedtools_getfasta,
+    test_bedtools_maskfasta,
+    test_bedtools_bamtobed_bam,
+    test_bedtools_complement_bed,
+]

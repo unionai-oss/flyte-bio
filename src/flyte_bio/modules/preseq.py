@@ -1,4 +1,4 @@
-"""preseq — library complexity estimation (``preseq lc_extrap``).
+"""preseq — library complexity estimation (``preseq lc_extrap``, ``c_curve``).
 
 Exposes :func:`preseq_lcextrap`, which extrapolates the number of distinct
 reads a library would yield at greater sequencing depth, from one sample's
@@ -11,6 +11,12 @@ extrapolation curve) and ``<prefix>.command.log`` (preseq's stderr).
 Upstream retries a failed run with ``-defects`` (skip the defect test), on
 its second task attempt; here the retry happens within the same task, and
 the log keeps both attempts' stderr.
+
+:func:`preseq_ccurve` computes the observed complexity curve (``preseq
+c_curve``) of one sample's mapped reads, ``-pe`` for paired-end samples as
+upstream, writing ``<prefix>.c_curve.txt`` and ``<prefix>.command.log``.
+Upstream ignores c_curve failures (its ``error_ignore`` label); here a
+failure fails the task.
 """
 
 from dataclasses import dataclass
@@ -46,7 +52,28 @@ preseq_lcextrap_cmd = shell.create(
     """,
 )
 
-env = flyte.TaskEnvironment.from_task("preseq", preseq_lcextrap_cmd.as_task())
+preseq_ccurve_cmd = shell.create(
+    name="preseq_ccurve",
+    image=PRESEQ_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"bam": File, "prefix": str, "single_end": bool, "args": str},
+    defaults={"single_end": False, "args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        BAM=({inputs.bam})
+        P={inputs.prefix}
+        ARGS={inputs.args}
+        OUT={outputs.results}
+        PE=()
+        [ {inputs.single_end} = true ] || PE=(-pe)
+        LOG="$OUT/$P.command.log"
+        preseq c_curve $ARGS "${PE[@]}" -output "$OUT/$P.c_curve.txt" "${BAM[0]}" 2> "$LOG" \
+            || { cat "$LOG" >&2; exit 1; }
+        cat "$LOG" >&2
+    """,
+)
+
+env = flyte.TaskEnvironment.from_task("preseq", preseq_lcextrap_cmd.as_task(), preseq_ccurve_cmd.as_task())
 
 
 @dataclass
@@ -70,4 +97,28 @@ async def preseq_lcextrap(
 
     return PreseqLcextrapResult(
         lc_extrap=await pick(f"{prefix}.lc_extrap.txt"), log=await pick(f"{prefix}.command.log"), results=results
+    )
+
+
+@dataclass
+class PreseqCcurveResult:
+    c_curve: File  # <prefix>.c_curve.txt
+    log: File  # <prefix>.command.log
+    results: Dir
+
+
+async def preseq_ccurve(
+    bam: File, prefix: str = "sample", single_end: bool = False, args: str = ""
+) -> PreseqCcurveResult:
+    """``preseq c_curve`` of ``bam``'s mapped reads; ``-pe`` unless ``single_end``."""
+    results = await preseq_ccurve_cmd(bam=bam, prefix=prefix, single_end=single_end, args=args)
+
+    async def pick(name: str) -> File:
+        found = await results.get_file(name)
+        if found is None:
+            raise FileNotFoundError(f"preseq c_curve wrote no {name}")
+        return found
+
+    return PreseqCcurveResult(
+        c_curve=await pick(f"{prefix}.c_curve.txt"), log=await pick(f"{prefix}.command.log"), results=results
     )

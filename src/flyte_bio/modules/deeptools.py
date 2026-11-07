@@ -12,6 +12,16 @@ Exposes:
   coverage: ``<prefix>.plotFingerprint.pdf``, the raw counts
   ``<prefix>.plotFingerprint.raw.txt`` and the quality metrics
   ``<prefix>.plotFingerprint.qcmetrics.txt``.
+- :func:`deeptools_multibamsummary` — read coverage of BAMs over genome-wide
+  bins (``multiBamSummary bins``), labelled by ``labels`` if given:
+  ``<prefix>.bamSummary.npz`` (prefix ``all_bam`` by default), the matrix
+  plotCorrelation and plotPCA read.
+- :func:`deeptools_plotcorrelation` — a correlation plot of a multiBamSummary
+  matrix (``spearman`` and ``heatmap`` unless ``method``/``plot_type`` say
+  otherwise): ``<prefix>.plotCorrelation.pdf`` and the correlation matrix
+  ``<prefix>.plotCorrelation.mat.tab``.
+- :func:`deeptools_plotpca` — a PCA plot of a multiBamSummary matrix:
+  ``<prefix>.plotPCA.pdf`` and its data ``<prefix>.plotPCA.tab``.
 
 deepTools labels samples after their file names, so the inputs are linked into
 the working directory under their own names, in the caller's order (the order
@@ -166,11 +176,117 @@ deeptools_plotfingerprint_cmd = shell.create(
     """,
 )
 
+# Each BAM's index is linked beside it. `labels` is space-separated.
+deeptools_multibamsummary_cmd = shell.create(
+    name="deeptools_multibamsummary",
+    image=DEEPTOOLS_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={
+        "bams": list[File],
+        "bam_names": str,
+        "bais": list[File],
+        "bai_names": str,
+        "labels": str,
+        "blacklist": File | None,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"labels": "", "args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        BAM=({{inputs.bams}})
+        BAI=({{inputs.bais}})
+        shopt -s nullglob; BLACKLIST=({{inputs.blacklist}}); shopt -u nullglob
+        BAM_NAMES={{inputs.bam_names}}
+        BAI_NAMES={{inputs.bai_names}}
+        LABELS={{inputs.labels}}
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        {WORKDIR_SETUP}
+        {LINK_IN_ORDER}
+        LINKED=(); link_in_order "$(dirname "${{BAM[0]}}")" "$BAM_NAMES"; BAMS=("${{LINKED[@]}}")
+        LINKED=(); link_in_order "$(dirname "${{BAI[0]}}")" "$BAI_NAMES"
+        EXTRA=()
+        if [ -n "$LABELS" ]; then EXTRA+=(--labels $LABELS); fi
+        BLACKLIST_ARGS=()
+        if [ ${{#BLACKLIST[@]}} -gt 0 ]; then
+            NAME=$(basename "${{BLACKLIST[0]}}")
+            ln -s "${{BLACKLIST[0]}}" "$NAME"
+            BLACKLIST_ARGS+=(--blackListFileName "$NAME")
+        fi
+        multiBamSummary bins \
+            $ARGS \
+            "${{EXTRA[@]}}" \
+            --bamfiles "${{BAMS[@]}}" \
+            --numberOfProcessors $TASK_CPUS \
+            --outFileName "$P.bamSummary.npz" \
+            "${{BLACKLIST_ARGS[@]}}" || exit 1
+        mv "$P.bamSummary.npz" "$OUT"/
+    """,
+)
+
+deeptools_plotcorrelation_cmd = shell.create(
+    name="deeptools_plotcorrelation",
+    image=DEEPTOOLS_IMAGE,
+    resources=HEATMAP_RESOURCES,
+    inputs={"matrix": File, "method": str, "plot_type": str, "prefix": str, "args": str},
+    defaults={"method": "spearman", "plot_type": "heatmap", "args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        MAT=({{inputs.matrix}})
+        METHOD={{inputs.method}}
+        PLOT_TYPE={{inputs.plot_type}}
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        {WORKDIR_SETUP}
+        NAME=$(basename "${{MAT[0]}}")
+        ln -s "${{MAT[0]}}" "$NAME"
+        plotCorrelation \
+            $ARGS \
+            --corData "$NAME" \
+            --corMethod "$METHOD" \
+            --whatToPlot "$PLOT_TYPE" \
+            --plotFile "$P.plotCorrelation.pdf" \
+            --outFileCorMatrix "$P.plotCorrelation.mat.tab" || exit 1
+        mv ./*.pdf ./*.tab "$OUT"/
+    """,
+)
+
+deeptools_plotpca_cmd = shell.create(
+    name="deeptools_plotpca",
+    image=DEEPTOOLS_IMAGE,
+    resources=HEATMAP_RESOURCES,
+    inputs={"matrix": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        MAT=({{inputs.matrix}})
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        {WORKDIR_SETUP}
+        NAME=$(basename "${{MAT[0]}}")
+        ln -s "${{MAT[0]}}" "$NAME"
+        plotPCA \
+            $ARGS \
+            --corData "$NAME" \
+            --plotFile "$P.plotPCA.pdf" \
+            --outFileNameData "$P.plotPCA.tab" || exit 1
+        mv ./*.pdf ./*.tab "$OUT"/
+    """,
+)
+
 env = flyte.TaskEnvironment.from_task(
     "deeptools",
     deeptools_computematrix_cmd.as_task(),
     deeptools_plotheatmap_cmd.as_task(),
     deeptools_plotfingerprint_cmd.as_task(),
+    deeptools_multibamsummary_cmd.as_task(),
+    deeptools_plotcorrelation_cmd.as_task(),
+    deeptools_plotpca_cmd.as_task(),
 )
 
 
@@ -280,5 +396,82 @@ async def deeptools_plotfingerprint(
         pdf=await pick(results, f"{prefix}.plotFingerprint.pdf"),
         matrix=await pick(results, f"{prefix}.plotFingerprint.raw.txt"),
         metrics=await pick(results, f"{prefix}.plotFingerprint.qcmetrics.txt"),
+        results=results,
+    )
+
+
+async def deeptools_multibamsummary(
+    bams: list[File],
+    bais: list[File],
+    labels: list[str] | None = None,
+    blacklist: File | None = None,
+    prefix: str = "all_bam",
+    args: str = "",
+) -> File:
+    """Coverage of ``bams`` (in order, each indexed by its ``.bai`` in ``bais``) over genome-wide bins.
+
+    ``labels`` name the samples (one per BAM, no whitespace); ``blacklist`` regions are skipped.
+    Returns ``<prefix>.bamSummary.npz``.
+    """
+    labels = labels or []
+    if labels and len(labels) != len(bams):
+        raise ValueError(f"deeptools needs one label per BAM, got {len(labels)} for {len(bams)} BAMs")
+    if any(not label or any(c.isspace() for c in label) for label in labels):
+        raise ValueError(f"deeptools labels must be nonempty and have no whitespace, got {labels}")
+    results = await deeptools_multibamsummary_cmd(
+        bams=bams,
+        bam_names=ordered_names(bams, "BAMs"),
+        bais=bais,
+        bai_names=ordered_names(bais, "BAM indexes"),
+        labels=" ".join(labels),
+        blacklist=blacklist,
+        prefix=prefix,
+        args=args,
+    )
+    return await pick(results, f"{prefix}.bamSummary.npz")
+
+
+@dataclass
+class PlotCorrelationResult:
+    pdf: File  # <prefix>.plotCorrelation.pdf
+    matrix: File  # <prefix>.plotCorrelation.mat.tab
+    results: Dir
+
+
+async def deeptools_plotcorrelation(
+    matrix: File, method: str = "", plot_type: str = "", prefix: str = "sample", args: str = ""
+) -> PlotCorrelationResult:
+    """Correlation plot of a multiBamSummary ``matrix`` (``.npz``).
+
+    ``method`` (``spearman`` if empty) and ``plot_type`` (``heatmap`` if empty) are plotCorrelation's
+    ``--corMethod`` and ``--whatToPlot``.
+    """
+    results = await deeptools_plotcorrelation_cmd(
+        matrix=matrix,
+        method=method or "spearman",
+        plot_type=plot_type or "heatmap",
+        prefix=prefix,
+        args=args,
+    )
+    return PlotCorrelationResult(
+        pdf=await pick(results, f"{prefix}.plotCorrelation.pdf"),
+        matrix=await pick(results, f"{prefix}.plotCorrelation.mat.tab"),
+        results=results,
+    )
+
+
+@dataclass
+class PlotPCAResult:
+    pdf: File  # <prefix>.plotPCA.pdf
+    table: File  # <prefix>.plotPCA.tab
+    results: Dir
+
+
+async def deeptools_plotpca(matrix: File, prefix: str = "sample", args: str = "") -> PlotPCAResult:
+    """PCA plot of a multiBamSummary ``matrix`` (``.npz``)."""
+    results = await deeptools_plotpca_cmd(matrix=matrix, prefix=prefix, args=args)
+    return PlotPCAResult(
+        pdf=await pick(results, f"{prefix}.plotPCA.pdf"),
+        table=await pick(results, f"{prefix}.plotPCA.tab"),
         results=results,
     )

@@ -27,8 +27,20 @@ Exposes:
 - :func:`mmseqs_taxonomy` — assign taxonomy to a query database against a
   database with taxonomy (e.g. from :func:`mmseqs_databases`): a Dir of the
   taxonomy result database ``<prefix>.*``.
+- :func:`mmseqs_createindex` — precompute the k-mer index of a database for
+  faster searches: the input Dir with ``<name>.idx{,.dbtype,.index}`` added.
+- :func:`mmseqs_tsv2exprofiledb` — an expandable profile database (as
+  ColabFold's ``uniref30``/``colabfold_envdb`` downloads ship) from its
+  ``<name>.tsv``, ``<name>_h.tsv``, ``<name>_seq.tsv`` and ``<name>_aln.tsv``:
+  the input Dir with ``<name>_db``, ``<name>_db_h``, ``<name>_db_seq``,
+  ``<name>_db_seq_h`` and ``<name>_db_aln`` databases added.
 
-Every tool but createdb runs with ``--threads`` set to the task's CPUs. A
+As upstream, createindex and tsv2exprofiledb return their input directory
+with the new files beside the database, which is copied into the output (so
+the task's disk needs room for the database twice). An index or profile
+database is a few large files, not many, so it stays a Dir.
+
+Every tool but createdb and tsv2exprofiledb runs with ``--threads`` set to the task's CPUs. A
 clustering result has one data file per thread, so its file list follows the
 CPU count. Temporary files go to a scratch directory outside the outputs.
 """
@@ -50,6 +62,10 @@ CLUSTER_RESOURCES = flyte.Resources(cpu=4, memory="16Gi", disk="20Gi")
 CREATETSV_RESOURCES = flyte.Resources(cpu=1, memory="2Gi")
 TAXONOMY_RESOURCES = flyte.Resources(cpu=4, memory="16Gi", disk="20Gi")
 DATABASES_RESOURCES = flyte.Resources(cpu=2, memory="8Gi", disk="40Gi")
+# Upstream: process_high (+ process_high_memory for createindex). Real profile
+# databases need far more memory and disk; raise them with an override.
+CREATEINDEX_RESOURCES = flyte.Resources(cpu=4, memory="16Gi", disk="40Gi")
+TSV2EXPROFILEDB_RESOURCES = flyte.Resources(cpu=4, memory="16Gi", disk="40Gi")
 DEFAULT_PATTERN = "*.dbtype"
 
 # The base path of the database in directory $1 whose files match $2, as
@@ -211,6 +227,52 @@ mmseqs_databases_cmd = shell.create(
     """,
 )
 
+mmseqs_createindex_cmd = shell.create(
+    name="mmseqs_createindex",
+    image=MMSEQS_IMAGE,
+    resources=CREATEINDEX_RESOURCES,
+    inputs={"db": Dir, "db_pattern": str, "args": str},
+    defaults={"db_pattern": DEFAULT_PATTERN, "args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        {DATABASE_BASE}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        # The index goes next to the database, so the database is copied into the output first.
+        cp -rL {{inputs.db}}/. "$OUT"/ || exit 1
+        DB=$(database_base "$OUT" {{inputs.db_pattern}}) || exit 1
+        W=$(mktemp -d); cd "$W"
+
+        # As upstream, the split memory limit is 80% of the task's memory, in whole GiB.
+        mmseqs createindex "$DB" tmp1 $ARGS --threads $TASK_CPUS \
+            --split-memory-limit $(( TASK_MEMORY_MB / 1024 * 8 / 10 ))G || exit 1
+    """,
+)
+
+mmseqs_tsv2exprofiledb_cmd = shell.create(
+    name="mmseqs_tsv2exprofiledb",
+    image=MMSEQS_IMAGE,
+    resources=TSV2EXPROFILEDB_RESOURCES,
+    inputs={"database": Dir, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        ARGS={inputs.args}
+        OUT={outputs.results}
+        cp -rL {inputs.database}/. "$OUT"/ || exit 1
+        # As upstream, the database is named by its <name>_seq.tsv.
+        DB=$(find -L "$OUT/" -name "*_seq.tsv" | sed 's/_seq\.tsv$//')
+        if [ -z "$DB" ]; then
+            echo "no *_seq.tsv in the database directory" >&2
+            exit 1
+        fi
+        W=$(mktemp -d); cd "$W"
+
+        mmseqs tsv2exprofiledb "$DB" "${DB}_db" $ARGS || exit 1
+    """,
+)
+
 # One image per environment: mmseqs databases needs wget too.
 mmseqs_env = flyte.TaskEnvironment.from_task(
     "mmseqs_tools",
@@ -219,6 +281,8 @@ mmseqs_env = flyte.TaskEnvironment.from_task(
     mmseqs_linclust_cmd.as_task(),
     mmseqs_createtsv_cmd.as_task(),
     mmseqs_taxonomy_cmd.as_task(),
+    mmseqs_createindex_cmd.as_task(),
+    mmseqs_tsv2exprofiledb_cmd.as_task(),
 )
 mmseqs_download_env = flyte.TaskEnvironment.from_task("mmseqs_download", mmseqs_databases_cmd.as_task())
 env = flyte.TaskEnvironment(name="mmseqs", depends_on=[mmseqs_env, mmseqs_download_env])
@@ -288,3 +352,13 @@ async def mmseqs_taxonomy(
 async def mmseqs_databases(database: str, args: str = "") -> Dir:
     """Download and build the public database ``database``: a Dir of ``database*``."""
     return await mmseqs_databases_cmd(database=database, args=args)
+
+
+async def mmseqs_createindex(db: Dir, db_pattern: str = DEFAULT_PATTERN, args: str = "") -> Dir:
+    """``db`` with the index of its database (found by ``db_pattern``) added: ``<name>.idx*``."""
+    return await mmseqs_createindex_cmd(db=db, db_pattern=db_pattern, args=args)
+
+
+async def mmseqs_tsv2exprofiledb(database: Dir, args: str = "") -> Dir:
+    """``database`` with the expandable profile database of its ``<name>*.tsv`` files added: ``<name>_db*``."""
+    return await mmseqs_tsv2exprofiledb_cmd(database=database, args=args)

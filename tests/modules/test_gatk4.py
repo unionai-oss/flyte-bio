@@ -4,6 +4,7 @@ import asyncio
 import gzip
 import hashlib
 import tempfile
+import zlib
 from pathlib import Path
 
 from flyte.io import File
@@ -14,6 +15,7 @@ from flyte_bio.modules.gatk4 import (
     gatk4_baserecalibrator,
     gatk4_bedtointervallist,
     gatk4_cnnscorevariants,
+    gatk4_combinegvcfs,
     gatk4_createsequencedictionary,
     gatk4_filtermutectcalls,
     gatk4_filtervarianttranches,
@@ -25,6 +27,7 @@ from flyte_bio.modules.gatk4 import (
     gatk4_mergemutectstats,
     gatk4_mergevcfs,
     gatk4_mutect2,
+    gatk4_splitncigarreads,
     gatk4_variantfiltration,
 )
 from flyte_bio.modules.samtools import samtools_view
@@ -509,6 +512,58 @@ async def test_gatk4_intervallisttools() -> None:
         await assert_md5(f, md5, label=f.name)
 
 
+# The record lines (linesGzip[102..-1]) of upstream's gatk4/combinegvcfs snapshot: their count and the md5 of the
+# lines joined with newlines. The 102 header lines before them record the command line and date.
+COMBINEGVCFS_HEADER_LINES = 102
+COMBINEGVCFS_BODY_LINES = 130
+COMBINEGVCFS_BODY_MD5 = "1e3cf9acf1124f1bee2440f67fa2606a"
+
+
+@env.task
+async def test_gatk4_combinegvcfs() -> None:
+    # upstream case: gatk4/combinegvcfs "test_gatk4_combinegvcfs"
+    vcf, idx = await asyncio.gather(
+        fixture(HS + "illumina/gvcf/test.genome.vcf"), fixture(HS + "illumina/gvcf/test.genome.vcf.idx")
+    )
+    fasta, fai, dict_ = await human_reference()
+    combined = await gatk4_combinegvcfs([vcf], [idx], fasta, fai, dict_, prefix="test")
+    assert combined.name == "test.combined.g.vcf.gz", combined.name
+    async with combined.open("rb") as fh:
+        lines = gzip.decompress(bytes(await fh.read())).decode().splitlines()
+    assert lines[COMBINEGVCFS_HEADER_LINES - 1].startswith("#CHROM"), lines[COMBINEGVCFS_HEADER_LINES - 1]
+    body = lines[COMBINEGVCFS_HEADER_LINES:]
+    assert len(body) == COMBINEGVCFS_BODY_LINES, f"{len(body)} lines after the header"
+    actual = hashlib.md5("\n".join(body).encode()).hexdigest()
+    assert actual == COMBINEGVCFS_BODY_MD5, f"combined GVCF body md5 {actual}, expected {COMBINEGVCFS_BODY_MD5}"
+
+
+async def assert_bam(bam: File, name: str, label: str) -> None:
+    """``bam`` is named ``name`` and is a BAM (gzip-framed, ``BAM\\1`` magic)."""
+    assert bam.name == name, f"{label}: {bam.name}"
+    async with bam.open("rb") as fh:
+        head = bytes(await fh.read(1 << 16))
+    magic = zlib.decompressobj(wbits=31).decompress(head)[:4]  # the first BGZF block
+    assert magic == b"BAM\1", f"{label}: starts {magic!r}"
+
+
+@env.task
+async def test_gatk4_splitncigarreads() -> None:
+    # upstream cases: gatk4/splitncigarreads "test_gatk4_splitncigarreads" / "..._intervals".
+    # Upstream snapshots only the output's name (the BAM header records the command line).
+    bam, bai = await asyncio.gather(
+        fixture(SC2 + "illumina/bam/test.paired_end.sorted.bam"),
+        fixture(SC2 + "illumina/bam/test.paired_end.sorted.bam.bai"),
+    )
+    fasta, fai, dict_ = await sarscov2_reference()
+    bed = await fixture(SC2 + "genome/bed/test.bed")
+    plain, within = await asyncio.gather(
+        gatk4_splitncigarreads(bam, bai, fasta, fai, dict_, prefix="test"),
+        gatk4_splitncigarreads(bam, bai, fasta, fai, dict_, prefix="test", intervals=bed),
+    )
+    await assert_bam(plain, "test.bam", "splitncigarreads")
+    await assert_bam(within, "test.bam", "splitncigarreads intervals")
+
+
 tests = [
     test_createsequencedictionary,
     test_intervallisttobed,
@@ -528,4 +583,6 @@ tests = [
     test_gatk4_filtermutectcalls,
     test_gatk4_variantfiltration,
     test_gatk4_intervallisttools,
+    test_gatk4_combinegvcfs,
+    test_gatk4_splitncigarreads,
 ]

@@ -3,18 +3,16 @@
 STAR outputs aren't content-reproducible enough to md5 across thread counts
 / index parameters (the upstream snapshot md5s only the splice-junction
 table), so these are run-to-green checks: the index and the alignment output
-directory are produced and non-empty.
+directory are produced and non-empty. STAR's index version is pure data, so
+it is md5-checked.
 """
 
-
-
-from flyte_bio.modules.star import star_align, star_genome_generate
-from tests.framework import assert_dir_nonempty, env, fixture
+from flyte_bio.modules.star import star_align, star_genome_generate, star_indexversion
+from tests.framework import assert_dir_nonempty, assert_md5, env, fixture
 
 # Args from the upstream star/align "paired_end" test config.
 ALIGN_ARGS = (
-    "--readFilesCommand zcat --outSAMtype BAM SortedByCoordinate "
-    "--outWigType bedGraph --outWigStrand Unstranded"
+    "--readFilesCommand zcat --outSAMtype BAM SortedByCoordinate --outWigType bedGraph --outWigStrand Unstranded"
 )
 
 
@@ -39,4 +37,12 @@ async def test_align() -> None:
     await assert_dir_nonempty(out, label="star align")
 
 
-tests = [test_genome_generate, test_align]
+@env.task
+async def test_star_indexversion_normal_run() -> None:
+    # upstream case: star/indexversion "normal run"
+    version = await star_indexversion()
+    assert version.name == "index_version.txt", version.name
+    await assert_md5(version, "184a6b325b4ac98bd08ffc0bd8f046cd", label="index_version.txt")
+
+
+tests = [test_genome_generate, test_align, test_star_indexversion_normal_run]

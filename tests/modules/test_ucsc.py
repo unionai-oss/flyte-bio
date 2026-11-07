@@ -1,11 +1,13 @@
 """Tests for flyte_bio.modules.ucsc and bedtools genomecov (the bigWig steps).
 
 Expected md5s are the upstream bedtools/genomecov, ucsc/bedclip,
-ucsc/bedgraphtobigwig and ucsc/wigtobigwig snapshot values.
+ucsc/bedgraphtobigwig, ucsc/wigtobigwig and ucsc/gtftogenepred snapshot
+values; the gtftogenepred case uses its test config's ``-genePredExt
+-geneNameAsName2`` (modules commit 9a1cc9f, UCSC 482).
 """
 
 from flyte_bio.modules.bedtools import bedtools_genomecov
-from flyte_bio.modules.ucsc import bedclip, bedgraphtobigwig, wigtobigwig
+from flyte_bio.modules.ucsc import bedclip, bedgraphtobigwig, gtftogenepred, wigtobigwig
 from tests.framework import assert_md5, env, fixture
 
 SARSCOV2 = "genomics/sarscov2/"
@@ -47,4 +49,21 @@ async def test_ucsc_wigtobigwig() -> None:
     await assert_md5(out, "b64af7003665dc51fae958216b06ed95", label="wigToBigWig")
 
 
-tests = [test_genomecov_bam_sorted, test_bedclip, test_bedgraphtobigwig, test_ucsc_wigtobigwig]
+@env.task
+async def test_ucsc_gtftogenepred_gtf() -> None:
+    # upstream case: ucsc/gtftogenepred "test-ucsc-gtftogenepred"
+    gtf = await fixture(SARSCOV2 + "genome/genome.gtf")
+    result = await gtftogenepred(gtf, prefix="test", args="-genePredExt -geneNameAsName2")
+    assert result.genepred.name == "test.genepred", result.genepred.name
+    assert result.refflat is not None and result.refflat.name == "test.refflat", result.refflat
+    await assert_md5(result.genepred, "779e4749efaf38da3443ddfde30cc76c", label="genePred")
+    await assert_md5(result.refflat, "4101802f41d4cf7ee2667587da11bf42", label="refFlat")
+
+
+tests = [
+    test_genomecov_bam_sorted,
+    test_bedclip,
+    test_bedgraphtobigwig,
+    test_ucsc_wigtobigwig,
+    test_ucsc_gtftogenepred_gtf,
+]
