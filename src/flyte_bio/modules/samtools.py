@@ -13,6 +13,9 @@ Exposes the subset of the samtools suite the RNA-seq pipeline leans on:
 - :func:`samtools_fastq` — convert an alignment's reads back to FASTQ.
 - :func:`samtools_collatefastq` — group an alignment's reads by name, then
   convert them to FASTQ (for coordinate-sorted inputs).
+- :func:`samtools_convert` — convert a BAM to CRAM or a CRAM to BAM against
+  its reference, and index the result.
+- :func:`samtools_dict` — a FASTA's sequence dictionary, ``<fasta name>.dict``.
 
 The FASTQ conversions write upstream's names: ``<prefix>_1`` and
 ``<prefix>_2`` for paired reads (``<prefix>_1`` alone for single-end), or
@@ -25,7 +28,8 @@ upstream, ``samtools fastq`` gets ``--threads`` of the task's CPUs minus 1,
 and ``collate`` and its ``fastq`` the task's CPUs each.
 
 Each upstream module pins its own samtools build, so the FASTQ conversions
-have their own environments; :data:`env` aggregates them.
+have their own environments (convert and dict share fastq's samtools 1.25);
+:data:`env` aggregates them.
 """
 
 from dataclasses import dataclass
@@ -38,7 +42,8 @@ from flyte_bio.limits import TASK_LIMITS
 
 # Pinned biocontainer URI (matches the version the RNA-seq pipeline pins).
 SAMTOOLS_IMAGE = "community.wave.seqera.io/library/htslib_samtools:1.23.1--5b6bb4ede7e612e5"
-# The images the upstream fastq and collatefastq modules pin.
+# The images the upstream fastq and collatefastq modules pin; convert and
+# dict pin fastq's.
 SAMTOOLS_FASTQ_IMAGE = "community.wave.seqera.io/library/htslib_samtools:1.25--704fb80d75745bd4"
 SAMTOOLS_COLLATEFASTQ_IMAGE = "community.wave.seqera.io/library/htslib_samtools_xz:ca51bc8a00d53523"
 
@@ -289,6 +294,52 @@ samtools_collatefastq_cmd = shell.create(
 )
 
 
+# As upstream: a BAM becomes a CRAM, anything else a BAM, then the output is
+# indexed. The input and its index are linked side by side under their own
+# names, as are the reference and its .fai (htslib may index the FASTA).
+samtools_convert_cmd = shell.create(
+    name="samtools_convert",
+    image=SAMTOOLS_FASTQ_IMAGE,
+    resources=FASTQ_RESOURCES,
+    inputs={"alignment": File, "index": File | None, "fasta": File, "fai": File | None, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        IN=({{inputs.alignment}}); FA=({{inputs.fasta}})
+        shopt -s nullglob; IDX=({{inputs.index}}); FAI=({{inputs.fai}}); shopt -u nullglob
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        W=$(mktemp -d); cd "$W"
+        NAME=$(basename "${{IN[0]}}"); ln -s "${{IN[0]}}" "$NAME"
+        if [ ${{#IDX[@]}} -gt 0 ]; then ln -s "${{IDX[0]}}" "$(basename "${{IDX[0]}}")"; fi
+        FA_NAME=$(basename "${{FA[0]}}"); ln -s "${{FA[0]}}" "$FA_NAME"
+        if [ ${{#FAI[@]}} -gt 0 ]; then ln -s "${{FAI[0]}}" "$FA_NAME.fai"; fi
+        if [ "${{NAME##*.}}" = bam ]; then EXT=cram; else EXT=bam; fi
+        samtools view --threads $TASK_CPUS --reference "$FA_NAME" $ARGS "$NAME" -o "$OUT/$P.$EXT"
+        samtools index -@$TASK_CPUS "$OUT/$P.$EXT"
+    """,
+)
+
+# The FASTA is linked under its own name, which the dictionary is named after.
+samtools_dict_cmd = shell.create(
+    name="samtools_dict",
+    image=SAMTOOLS_FASTQ_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"fasta": File, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        FA=({inputs.fasta})
+        ARGS={inputs.args}
+        W=$(mktemp -d); cd "$W"
+        NAME=$(basename "${FA[0]}"); ln -s "${FA[0]}" "$NAME"
+        samtools dict $ARGS "$NAME" > {outputs.results}/"$NAME.dict"
+    """,
+)
+
+
 samtools_tools_env = flyte.TaskEnvironment.from_task(
     "samtools_tools",
     samtools_faidx.as_task(),
@@ -300,7 +351,9 @@ samtools_tools_env = flyte.TaskEnvironment.from_task(
     samtools_flagstat.as_task(),
     samtools_idxstats.as_task(),
 )
-samtools_fastq_env = flyte.TaskEnvironment.from_task("samtools_fastq", samtools_fastq_cmd.as_task())
+samtools_fastq_env = flyte.TaskEnvironment.from_task(
+    "samtools_fastq", samtools_fastq_cmd.as_task(), samtools_convert_cmd.as_task(), samtools_dict_cmd.as_task()
+)
 samtools_collatefastq_env = flyte.TaskEnvironment.from_task(
     "samtools_collatefastq", samtools_collatefastq_cmd.as_task()
 )
@@ -399,3 +452,37 @@ async def samtools_collatefastq(
         args2=args2,
     )
     return await pick_fastq(results, prefix, "fq", interleave and not single_end, single_end)
+
+
+@dataclass
+class SamtoolsConvertResult:
+    alignment: File  # <prefix>.cram from a BAM, else <prefix>.bam
+    index: File  # <prefix>.cram.crai or <prefix>.bam.bai
+    results: Dir  # everything samtools wrote
+
+
+async def samtools_convert(
+    alignment: File, fasta: File, prefix: str, index: File | None = None, fai: File | None = None, args: str = ""
+) -> SamtoolsConvertResult:
+    """Convert a BAM ``alignment`` to ``<prefix>.cram`` (anything else to ``<prefix>.bam``) and index it.
+
+    ``fasta`` (with its ``fai``) is the reference, which a CRAM needs.
+    """
+    results = await samtools_convert_cmd(
+        alignment=alignment, index=index, fasta=fasta, fai=fai, prefix=prefix, args=args
+    )
+    extension, index_suffix = ("cram", "crai") if alignment.name.endswith(".bam") else ("bam", "bai")
+    converted = await results.get_file(f"{prefix}.{extension}")
+    converted_index = await results.get_file(f"{prefix}.{extension}.{index_suffix}")
+    if converted is None or converted_index is None:
+        raise FileNotFoundError(f"samtools convert wrote no {prefix}.{extension} and its .{index_suffix}")
+    return SamtoolsConvertResult(alignment=converted, index=converted_index, results=results)
+
+
+async def samtools_dict(fasta: File, args: str = "") -> File:
+    """``<fasta name>.dict``: the sequence dictionary of ``fasta``."""
+    results = await samtools_dict_cmd(fasta=fasta, args=args)
+    dictionary = await results.get_file(f"{fasta.name}.dict")
+    if dictionary is None:
+        raise FileNotFoundError(f"samtools dict wrote no {fasta.name}.dict")
+    return dictionary

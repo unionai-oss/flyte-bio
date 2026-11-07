@@ -43,29 +43,29 @@ bcftools/stats,7,2,yes,epitopeprediction phaseimpute rnadnavar sarek variantbenc
 bedtools/genomecov,7,2,yes,cutandrun hicar nascent raredisease riboseq rnaseq rnasplice
 custom/getchromsizes,7,2,yes,atacseq chipseq cutandrun hic nascent rnasplice viralrecon
 cutadapt,7,2,yes,ampliseq crisprseq hicar marsseq riboseq rnastructurome viralrecon
-ensemblvep/vep,7,2,,epitopeprediction pacvar raredisease rnadnavar rnavar sarek tumourevo
+ensemblvep/vep,7,2,yes,epitopeprediction pacvar raredisease rnadnavar rnavar sarek tumourevo
 htslib/bgziptabix,7,2,yes,genomeassembler pairgenomealign rnadnavar rnavar sarek variantbenchmarking viralmetagenome
 nanoplot,7,2,yes,bacass longraredisease mag nanoseq pathogensurveillance scnanoseq viralrecon
 picard/collectmultiplemetrics,7,2,yes,atacseq callingcards chipseq raredisease seqinspector viralmetagenome viralrecon
-prokka,7,2,,bacass bacmodel funcscan mag magmap metatdenovo viralmetagenome
-quast,7,2,,bacass genomeassembler genomeqc metatdenovo pathogensurveillance viralmetagenome viralrecon
+prokka,7,2,yes,bacass bacmodel funcscan mag magmap metatdenovo viralmetagenome
+quast,7,2,yes,bacass genomeassembler genomeqc metatdenovo pathogensurveillance viralmetagenome viralrecon
 samtools/fastq,7,2,yes,genomeassembler hgtseq longraredisease methylong riboseq rnaseq taxprofiler
 ucsc/bedgraphtobigwig,7,2,yes,atacseq chipseq cutandrun hicar riboseq rnaseq rnasplice
 umitools/dedup,7,2,yes,hadge nascent riboseq rnaseq rnastructurome scnanoseq viralmetagenome
 bcftools/annotate,6,2,yes,epitopeprediction phaseimpute raredisease rnavar sarek variantbenchmarking
 bcftools/filter,6,2,yes,longraredisease raredisease variantbenchmarking variantprioritization viralmetagenome viralrecon
-busco/busco,6,2,,bacass denovotranscript genomeassembler genomeqc mag pathogensurveillance
-ensemblvep/download,6,2,,epitopeprediction pacvar rnadnavar rnavar sarek tumourevo
-hmmer/hmmsearch,6,2,,ampliseq funcscan metatdenovo phyloplace proteinannotator proteinfamilies
-mafft/align,6,2,,ampliseq multiplesequencealign pathogensurveillance phyloplace proteinfamilies viralmetagenome
+busco/busco,6,2,yes,bacass denovotranscript genomeassembler genomeqc mag pathogensurveillance
+ensemblvep/download,6,2,yes,epitopeprediction pacvar rnadnavar rnavar sarek tumourevo
+hmmer/hmmsearch,6,2,yes,ampliseq funcscan metatdenovo phyloplace proteinannotator proteinfamilies
+mafft/align,6,2,yes,ampliseq multiplesequencealign pathogensurveillance phyloplace proteinfamilies viralmetagenome
 minimap2/index,6,2,yes,crisprseq longraredisease mag scnanoseq taxprofiler viralmetagenome
 pigz/compress,6,2,yes,createtaxdb magmap metatdenovo methylong multiplesequencealign scnanoseq
 preseq/lcextrap,6,2,yes,atacseq chipseq cutandrun methylseq nascent rnaseq
 salmon/index,6,2,yes,denovotranscript references riboseq rnafusion rnaseq rnasplice
-spades,6,2,,denovotranscript mag metatdenovo pathogensurveillance viralmetagenome viralrecon
+spades,6,2,yes,denovotranscript mag metatdenovo pathogensurveillance viralmetagenome viralrecon
 tabix/bgziptabix,6,2,yes,cutandrun longraredisease methylong nanoseq raredisease variantprioritization
-bakta/bakta,5,2,,bacass bacmodel funcscan magmap pathogensurveillance
-bakta/baktadbdownload,5,2,,bacass bacmodel funcscan magmap pathogensurveillance
+bakta/bakta,5,2,yes,bacass bacmodel funcscan magmap pathogensurveillance
+bakta/baktadbdownload,5,2,yes,bacass bacmodel funcscan magmap pathogensurveillance
 bbmap/bbduk,5,2,yes,detaxizer magmap metatdenovo taxprofiler viralmetagenome
 bcftools/merge,5,2,yes,longraredisease phaseimpute raredisease sarek variantbenchmarking
 bcftools/mpileup,5,2,yes,phaseimpute sarek tumourevo viralmetagenome viralrecon
@@ -78,97 +78,97 @@ samtools/collatefastq,5,2,yes,bamtofastq hlatyping rnadnavar rnafusion sarek
 seqkit/replace,5,2,yes,proteinannotator proteinfamilies riboseq rnaseq smrnaseq
 seqkit/stats,5,2,yes,mag pathogensurveillance riboseq rnaseq seqinspector
 bbmap/bbsplit,4,3,yes,references riboseq rnaseq sarek
-bcftools/concat,4,3,,longraredisease phaseimpute raredisease sarek
-bcftools/index,4,3,,longraredisease mag pacvar phaseimpute
+bcftools/concat,4,3,yes,longraredisease phaseimpute raredisease sarek
+bcftools/index,4,3,yes,longraredisease mag pacvar phaseimpute
 bedtools/intersect,4,3,yes,cutandrun methylseq nascent riboseq
-bowtie/build,4,3,,callingcards references rnastructurome smrnaseq
-csvtk/join,4,3,,differentialabundance hadge multiplesequencealign reportho
-deepvariant/rundeepvariant,4,3,,longraredisease pacvar raredisease sarek
-dragmap/hashtable,4,3,,nascent references rnadnavar sarek
-duckdb/table2parquet,4,3,,ampliseq magmap metatdenovo phyloplace
-flye,4,3,,bacass genomeassembler mag pathogensurveillance
+bowtie/build,4,3,yes,callingcards references rnastructurome smrnaseq
+csvtk/join,4,3,yes,differentialabundance hadge multiplesequencealign reportho
+deepvariant/rundeepvariant,4,3,yes,longraredisease pacvar raredisease sarek
+dragmap/hashtable,4,3,yes,nascent references rnadnavar sarek
+duckdb/table2parquet,4,3,yes,ampliseq magmap metatdenovo phyloplace
+flye,4,3,yes,bacass genomeassembler mag pathogensurveillance
 gatk4/markduplicates,4,3,yes,oncoanalyser rnadnavar rnafusion sarek
-gatk4/mutect2,4,3,,createpanelrefs raredisease rnadnavar sarek
-gatk4/variantfiltration,4,3,,pathogensurveillance raredisease rnadnavar rnavar
-hisat2/build,4,3,,raredisease references rnadnavar rnaseq
-megahit,4,3,,bacass mag metatdenovo viralmetagenome
-mmseqs/createdb,4,3,,funcscan metatdenovo proteinfamilies viralmetagenome
-mmseqs/createtsv,4,3,,funcscan metatdenovo proteinfamilies viralmetagenome
-picard/addorreplacereadgroups,4,3,,genomeassembler methylseq pathogensurveillance raredisease
-picard/createsequencedictionary,4,3,,methylseq pathogensurveillance seqinspector variantbenchmarking
-porechop/porechop,4,3,,bacass mag methylong taxprofiler
-prodigal,4,3,,funcscan mag metapep metatdenovo
-rsem/preparereference,4,3,,references riboseq rnaseq rnasplice
+gatk4/mutect2,4,3,yes,createpanelrefs raredisease rnadnavar sarek
+gatk4/variantfiltration,4,3,yes,pathogensurveillance raredisease rnadnavar rnavar
+hisat2/build,4,3,yes,raredisease references rnadnavar rnaseq
+megahit,4,3,yes,bacass mag metatdenovo viralmetagenome
+mmseqs/createdb,4,3,yes,funcscan metatdenovo proteinfamilies viralmetagenome
+mmseqs/createtsv,4,3,yes,funcscan metatdenovo proteinfamilies viralmetagenome
+picard/addorreplacereadgroups,4,3,yes,genomeassembler methylseq pathogensurveillance raredisease
+picard/createsequencedictionary,4,3,yes,methylseq pathogensurveillance seqinspector variantbenchmarking
+porechop/porechop,4,3,yes,bacass mag methylong taxprofiler
+prodigal,4,3,yes,funcscan mag metapep metatdenovo
+rsem/preparereference,4,3,yes,references riboseq rnaseq rnasplice
 rseqc/inferexperiment,4,3,yes,callingcards nascent rnaseq rnastructurome
 rseqc/readdistribution,4,3,yes,callingcards nascent rnaseq scnanoseq
-samtools/convert,4,3,,drop rnadnavar rnafusion sarek
-seqkit/seq,4,3,,funcscan genomeqc proteinannotator proteinfamilies
-seqtk/sample,4,3,,demultiplex pathogensurveillance raredisease seqinspector
-snpeff/snpeff,4,3,,longraredisease rnavar sarek viralmetagenome
-sortmerna,4,3,,denovotranscript references riboseq rnaseq
-stringtie/merge,4,3,,nanoseq riboseq rnafusion rnaseq
-trimmomatic,4,3,,callingcards mag viralintegration viralmetagenome
+samtools/convert,4,3,yes,drop rnadnavar rnafusion sarek
+seqkit/seq,4,3,yes,funcscan genomeqc proteinannotator proteinfamilies
+seqtk/sample,4,3,yes,demultiplex pathogensurveillance raredisease seqinspector
+snpeff/snpeff,4,3,yes,longraredisease rnavar sarek viralmetagenome
+sortmerna,4,3,yes,denovotranscript references riboseq rnaseq
+stringtie/merge,4,3,yes,nanoseq riboseq rnafusion rnaseq
+trimmomatic,4,3,yes,callingcards mag viralintegration viralmetagenome
 ucsc/bedclip,4,3,yes,cutandrun hicar rnaseq rnasplice
-bbmap/bbnorm,3,3,,mag metatdenovo viralmetagenome
-bcftools/consensus,3,3,,mag viralmetagenome viralrecon
-bcftools/reheader,3,3,,longraredisease raredisease variantbenchmarking
-bedtools/getfasta,3,3,,readsimulator riboseq viralrecon
-bedtools/maskfasta,3,3,,callingcards viralmetagenome viralrecon
+bbmap/bbnorm,3,3,yes,mag metatdenovo viralmetagenome
+bcftools/consensus,3,3,yes,mag viralmetagenome viralrecon
+bcftools/reheader,3,3,yes,longraredisease raredisease variantbenchmarking
+bedtools/getfasta,3,3,yes,readsimulator riboseq viralrecon
+bedtools/maskfasta,3,3,yes,callingcards viralmetagenome viralrecon
 bedtools/sort,3,3,yes,hicar metatdenovo nascent
-blast/blastn,3,3,,detaxizer viralmetagenome viralrecon
-blast/makeblastdb,3,3,,detaxizer viralmetagenome viralrecon
-bowtie/align,3,3,,callingcards rnastructurome smrnaseq
-bracken/bracken,3,3,,rnaseq taxprofiler viralmetagenome
-cellpose,3,3,,mcmicro molkart spatialaxe
-clustalo/align,3,3,,ampliseq multiplesequencealign phyloplace
-csvtk/concat,3,3,,multiplesequencealign reportho scnanoseq
+blast/blastn,3,3,yes,detaxizer viralmetagenome viralrecon
+blast/makeblastdb,3,3,yes,detaxizer viralmetagenome viralrecon
+bowtie/align,3,3,yes,callingcards rnastructurome smrnaseq
+bracken/bracken,3,3,yes,rnaseq taxprofiler viralmetagenome
+cellpose,3,3,yes,mcmicro molkart spatialaxe
+clustalo/align,3,3,yes,ampliseq multiplesequencealign phyloplace
+csvtk/concat,3,3,yes,multiplesequencealign reportho scnanoseq
 custom/catadditionalfasta,3,3,yes,references riboseq rnaseq
-deeptools/computematrix,3,3,,atacseq chipseq cutandrun
-deeptools/plotfingerprint,3,3,,atacseq chipseq cutandrun
-deeptools/plotheatmap,3,3,,atacseq chipseq cutandrun
-dragmap/align,3,3,,nascent rnadnavar sarek
-filtlong,3,3,,bacass mag taxprofiler
+deeptools/computematrix,3,3,yes,atacseq chipseq cutandrun
+deeptools/plotfingerprint,3,3,yes,atacseq chipseq cutandrun
+deeptools/plotheatmap,3,3,yes,atacseq chipseq cutandrun
+dragmap/align,3,3,yes,nascent rnadnavar sarek
+filtlong,3,3,yes,bacass mag taxprofiler
 fq/lint,3,3,yes,riboseq rnaseq seqinspector
 gatk4/applybqsr,3,3,yes,rnadnavar rnavar sarek
 gatk4/baserecalibrator,3,3,yes,rnadnavar rnavar sarek
-gatk4/filtermutectcalls,3,3,,raredisease rnadnavar sarek
+gatk4/filtermutectcalls,3,3,yes,raredisease rnadnavar sarek
 gatk4/haplotypecaller,3,3,yes,pacvar rnavar sarek
-gatk4/intervallisttools,3,3,,createpanelrefs raredisease rnavar
-gatk4/mergemutectstats,3,3,,createpanelrefs rnadnavar sarek
-hisat2/align,3,3,,nascent rnadnavar rnaseq
-hisat2/extractsplicesites,3,3,,references rnadnavar rnaseq
-hmmer/hmmalign,3,3,,ampliseq phyloplace proteinfamilies
-hmmer/hmmbuild,3,3,,ampliseq phyloplace proteinfamilies
-hmmer/hmmrank,3,3,,ampliseq metatdenovo phyloplace
-kallisto/index,3,3,,references riboseq rnaseq
-krona/ktimporttaxonomy,3,3,,hgtseq seqinspector taxprofiler
-macs2/callpeak,3,3,,atacseq cutandrun hicar
-mmseqs/cluster,3,3,,metatdenovo proteinfamilies viralmetagenome
-mmseqs/linclust,3,3,,metatdenovo proteinfamilies viralmetagenome
-picard/collecthsmetrics,3,3,,methylseq raredisease seqinspector
-porechop/abi,3,3,,ampliseq mag taxprofiler
+gatk4/intervallisttools,3,3,yes,createpanelrefs raredisease rnavar
+gatk4/mergemutectstats,3,3,yes,createpanelrefs rnadnavar sarek
+hisat2/align,3,3,yes,nascent rnadnavar rnaseq
+hisat2/extractsplicesites,3,3,yes,references rnadnavar rnaseq
+hmmer/hmmalign,3,3,yes,ampliseq phyloplace proteinfamilies
+hmmer/hmmbuild,3,3,yes,ampliseq phyloplace proteinfamilies
+hmmer/hmmrank,3,3,yes,ampliseq metatdenovo phyloplace
+kallisto/index,3,3,yes,references riboseq rnaseq
+krona/ktimporttaxonomy,3,3,yes,hgtseq seqinspector taxprofiler
+macs2/callpeak,3,3,yes,atacseq cutandrun hicar
+mmseqs/cluster,3,3,yes,metatdenovo proteinfamilies viralmetagenome
+mmseqs/linclust,3,3,yes,metatdenovo proteinfamilies viralmetagenome
+picard/collecthsmetrics,3,3,yes,methylseq raredisease seqinspector
+porechop/abi,3,3,yes,ampliseq mag taxprofiler
 rseqc/bamstat,3,3,yes,callingcards nascent rnaseq
 rseqc/innerdistance,3,3,yes,callingcards nascent rnaseq
 rseqc/junctionannotation,3,3,yes,callingcards nascent rnaseq
 rseqc/junctionsaturation,3,3,yes,callingcards nascent rnaseq
 rseqc/readduplication,3,3,yes,callingcards nascent rnaseq
-rseqc/tin,3,3,,callingcards nascent rnaseq
-rtgtools/format,3,3,,longraredisease raredisease variantbenchmarking
-samtools/dict,3,3,,fastquorum oncoanalyser pairgenomealign
-seqfu/stats,3,3,,proteinannotator proteinfamilies seqinspector
-snpeff/download,3,3,,longraredisease rnavar sarek
-sourmash/sketch,3,3,,createtaxdb magmap pathogensurveillance
+rseqc/tin,3,3,yes,callingcards nascent rnaseq
+rtgtools/format,3,3,yes,longraredisease raredisease variantbenchmarking
+samtools/dict,3,3,yes,fastquorum oncoanalyser pairgenomealign
+seqfu/stats,3,3,yes,proteinannotator proteinfamilies seqinspector
+snpeff/download,3,3,yes,longraredisease rnavar sarek
+sourmash/sketch,3,3,yes,createtaxdb magmap pathogensurveillance
 stringtie/stringtie,3,3,yes,riboseq rnafusion rnaseq
-toulligqc,3,3,,bacass scnanoseq seqinspector
-ucsc/wigtobigwig,3,3,,hicar raredisease rnastructurome
-umicollapse,3,3,,riboseq rnaseq smrnaseq
-vsearch/cluster,3,3,,ampliseq crisprseq viralmetagenome
+toulligqc,3,3,yes,bacass scnanoseq seqinspector
+ucsc/wigtobigwig,3,3,yes,hicar raredisease rnastructurome
+umicollapse,3,3,yes,riboseq rnaseq smrnaseq
+vsearch/cluster,3,3,yes,ampliseq crisprseq viralmetagenome
 adapterremoval,2,4,,mag taxprofiler
 agat/spkeeplongestisoform,2,4,,genomeqc riboseq
-aria2,2,4,,proteinannotator proteinfold
+aria2,2,4,yes,proteinannotator proteinfold
 bbmap/align,2,4,,magmap metatdenovo
 bbmap/index,2,4,,magmap metatdenovo
-bcftools/pluginsetgt,2,4,,epitopeprediction raredisease
+bcftools/pluginsetgt,2,4,yes,epitopeprediction raredisease
 bcftools/query,2,4,,phaseimpute viralrecon
 bedtools/bamtobed,2,4,,cutandrun nascent
 bioawk,2,4,,rnafusion smrnaseq
@@ -189,7 +189,7 @@ chromap/chromap,2,4,,atacseq chipseq
 chromap/index,2,4,,atacseq chipseq
 clair3,2,4,,longraredisease methylong
 cnvkit/batch,2,4,,createpanelrefs sarek
-cooler/dump,2,4,,hic hicar
+cooler/dump,2,4,yes,hic hicar
 custom/collectfeaturecounts,2,4,,magmap metatdenovo
 custom/collectstats,2,4,,magmap metatdenovo
 custom/gtffilter,2,4,yes,riboseq rnaseq
@@ -233,7 +233,7 @@ hmmer/formattsv,2,4,,ampliseq phyloplace
 homer/annotatepeaks,2,4,,atacseq chipseq
 ilastik/multicut,2,4,,mcmicro molkart
 ilastik/pixelclassification,2,4,,mcmicro molkart
-interproscan,2,4,,funcscan proteinannotator
+interproscan,2,4,yes,funcscan proteinannotator
 ivar/consensus,2,4,,viralmetagenome viralrecon
 ivar/variants,2,4,,viralmetagenome viralrecon
 kaiju/kaiju,2,4,,taxprofiler viralmetagenome
@@ -249,21 +249,21 @@ liftoff,2,4,,bacass genomeassembler
 lima,2,4,,isoseq pacvar
 manta/germline,2,4,,raredisease sarek
 manta/somatic,2,4,,rnadnavar sarek
-md5sum,2,4,,demultiplex provenancereport
+md5sum,2,4,yes,demultiplex provenancereport
 medaka,2,4,,bacass crisprseq
 merqury/merqury,2,4,,genomeassembler genomeqc
 meryl/count,2,4,,genomeassembler genomeqc
 meryl/unionsum,2,4,,genomeassembler genomeqc
 metaeuk/easypredict,2,4,,mag metatdenovo
 metaphlan/metaphlan,2,4,,funcprofiler taxprofiler
-mmseqs/databases,2,4,,funcscan mag
+mmseqs/databases,2,4,yes,funcscan mag
 mmseqs/easycluster,2,4,,genomeqc riboseq
 modkit/pileup,2,4,,longraredisease methylong
-msisensorpro/scan,2,4,,references sarek
+msisensorpro/scan,2,4,yes,references sarek
 multiqcsav,2,4,,demultiplex seqinspector
-nanolyse,2,4,,mag nanoseq
+nanolyse,2,4,yes,mag nanoseq
 nanoq,2,4,,mag taxprofiler
-ncbigenomedownload,2,4,,genomeqc readsimulator
+ncbigenomedownload,2,4,yes,genomeqc readsimulator
 pbmm2/align,2,4,,methylong pacvar
 picard/collectwgsmetrics,2,4,,raredisease rnafusion
 picard/liftovervcf,2,4,,raredisease variantbenchmarking
@@ -306,7 +306,7 @@ thermorawfileparser,2,4,,mhcquant ribomsqc
 tiara/tiara,2,4,,genomeqc mag
 tiddit/sv,2,4,,raredisease sarek
 trgt/genotype,2,4,,longraredisease pacvar
-trinity,2,4,,denovotranscript viralmetagenome
+trinity,2,4,yes,denovotranscript viralmetagenome
 tximeta/tximport,2,4,yes,riboseq rnaseq
 ucsc/gtftogenepred,2,4,,rnafusion scnanoseq
 umitools/prepareforrsem,2,4,yes,riboseq rnaseq
@@ -342,7 +342,7 @@ antismash/antismashdownloaddatabases,1,5,,funcscan
 argnorm,1,5,,funcscan
 arriba/arriba,1,5,,rnafusion
 arriba/visualisation,1,5,,rnafusion
-art/illumina,1,5,,readsimulator
+art/illumina,1,5,yes,readsimulator
 artic/guppyplex,1,5,,viralrecon
 artic/minion,1,5,,viralrecon
 ascat,1,5,,sarek
@@ -366,7 +366,7 @@ barrnap,1,5,,seqsubmit
 bases2fastq,1,5,,demultiplex
 basicpy,1,5,,mcmicro
 bbmap/clumpify,1,5,,seqinspector
-bbmap/filterbyname,1,5,,detaxizer
+bbmap/filterbyname,1,5,yes,detaxizer
 bbmap/pileup,1,5,,nascent
 bbmap/repair,1,5,,fastqrepair
 bbmap/sendsketch,1,5,,pathogensurveillance
@@ -378,7 +378,7 @@ bcl2fastq,1,5,,demultiplex
 bclconvert,1,5,,demultiplex
 beagle5/beagle,1,5,,phaseimpute
 bedops/convert2bed,1,5,,variantbenchmarking
-bedops/gtf2bed,1,5,,rnastructurome
+bedops/gtf2bed,1,5,yes,rnastructurome
 bedtools/complement,1,5,,cutandrun
 bedtools/makewindows,1,5,,phaseimpute
 bedtools/slop,1,5,,raredisease
@@ -430,7 +430,7 @@ checkv/endtoend,1,5,,viralmetagenome
 chelae/trim,1,5,,seqinspector
 chromograph,1,5,,raredisease
 clipkit,1,5,,proteinfamilies
-clustalo/guidetree,1,5,,multiplesequencealign
+clustalo/guidetree,1,5,yes,multiplesequencealign
 clusty,1,5,,viralmetagenome
 cmaple,1,5,,proteinfamilies
 cnaqc,1,5,,tumourevo
@@ -453,11 +453,11 @@ controlfreec/freec,1,5,,sarek
 controlfreec/freec2bed,1,5,,sarek
 controlfreec/freec2circos,1,5,,sarek
 controlfreec/makegraph2,1,5,,sarek
-cooler/balance,1,5,,hic
-cooler/cload,1,5,,hic
+cooler/balance,1,5,yes,hic
+cooler/cload,1,5,yes,hic
 cooler/digest,1,5,,hicar
-cooler/makebins,1,5,,hic
-cooler/zoomify,1,5,,hic
+cooler/makebins,1,5,yes,hic
+cooler/zoomify,1,5,yes,hic
 coreograph,1,5,,mcmicro
 coverm/contig,1,5,,seqsubmit
 coverm/genome,1,5,,seqsubmit
@@ -511,7 +511,7 @@ dragonflye,1,5,,bacass
 dupradar,1,5,yes,rnaseq
 easypqp/convert,1,5,,mhcquant
 easypqp/library,1,5,,mhcquant
-evigene/tr2aacds,1,5,,denovotranscript
+evigene/tr2aacds,1,5,yes,denovotranscript
 expansionhunter,1,5,,raredisease
 falint,1,5,,seqsubmit
 famsa/guidetree,1,5,,multiplesequencealign
@@ -521,7 +521,7 @@ fastplong,1,5,,genomeassembler
 fastqdl,1,5,,fetchngs
 fastqe,1,5,,seqinspector
 fastqscreen/fastqscreen,1,5,,seqinspector
-fastqutils/info,1,5,,bamtofastq
+fastqutils/info,1,5,yes,bamtofastq
 fcs/fcsadaptor,1,5,,genomeqc
 fcsgx/cleangenome,1,5,,genomeqc
 fcsgx/fetchdb,1,5,,genomeqc
@@ -535,7 +535,7 @@ fmhfunprofiler,1,5,,funcprofiler
 foldmason/createdb,1,5,,multiplesequencealign
 foldmason/easymsa,1,5,,multiplesequencealign
 foldmason/msa2lddtreport,1,5,,multiplesequencealign
-foldseek/easysearch,1,5,,proteinfold
+foldseek/easysearch,1,5,yes,proteinfold
 fqtk,1,5,,demultiplex
 freyja/boot,1,5,,viralrecon
 freyja/demix,1,5,,viralrecon
@@ -724,7 +724,7 @@ mirtrace/qc,1,5,,smrnaseq
 misopy/index,1,5,,rnasplice
 mmseqs/createindex,1,5,,proteinfold
 mmseqs/easysearch,1,5,,viralmetagenome
-mmseqs/taxonomy,1,5,,funcscan
+mmseqs/taxonomy,1,5,yes,funcscan
 mmseqs/tsv2exprofiledb,1,5,,proteinfold
 mobster,1,5,,tumourevo
 modkit/callmods,1,5,,methylong
@@ -739,8 +739,8 @@ multiseqdemux,1,5,,hadge
 muscle5/super5,1,5,,multiplesequencealign
 muse/call,1,5,,sarek
 muse/sump,1,5,,sarek
-nacho/normalize,1,5,,nanostring
-nacho/qc,1,5,,nanostring
+nacho/normalize,1,5,yes,nanostring
+nacho/qc,1,5,yes,nanostring
 nanocomp,1,5,,scnanoseq
 nextclade/datasetget,1,5,,viralrecon
 nextclade/run,1,5,,viralrecon
@@ -782,7 +782,7 @@ openmsthirdparty/cometadapter,1,5,,mhcquant
 opt/flip,1,5,,spatialaxe
 opt/stat,1,5,,spatialaxe
 opt/track,1,5,,spatialaxe
-optitype,1,5,,hlatyping
+optitype,1,5,yes,hlatyping
 orthofinder,1,5,,genomeqc
 pairix,1,5,,hicar
 pairtools/dedup,1,5,,hicar
@@ -851,9 +851,9 @@ rastair/methylkit,1,5,,methylseq
 rasusa,1,5,,bacass
 raven,1,5,,bacass
 rbt/vcfsplit,1,5,,sarek
-rclone/check,1,5,,datasync
-rclone/checksum,1,5,,datasync
-rclone/copy,1,5,,datasync
+rclone/check,1,5,yes,datasync
+rclone/checksum,1,5,yes,datasync
+rclone/copy,1,5,yes,datasync
 regtools/junctionsextract,1,5,,rnasplice
 repeatmasker/repeatmasker,1,5,,genomeqc
 repeatmodeler/builddatabase,1,5,,genomeqc
@@ -888,7 +888,7 @@ rtgtools/svdecompose,1,5,,variantbenchmarking
 rundbcan/easycgc,1,5,,funcscan
 rundbcan/easysubstrate,1,5,,funcscan
 rustqc,1,5,,rnaseq
-s4pred/runmodel,1,5,,proteinannotator
+s4pred/runmodel,1,5,yes,proteinannotator
 saltshaker/call,1,5,,raredisease
 saltshaker/classify,1,5,,raredisease
 saltshaker/plot,1,5,,raredisease
@@ -1038,7 +1038,7 @@ xeniumranger/importsegmentation,1,5,,spatialaxe
 xeniumranger/relabel,1,5,,spatialaxe
 xeniumranger/resegment,1,5,,spatialaxe
 yahs,1,5,,genomeassembler
-yara/index,1,5,,hlatyping
-yara/mapper,1,5,,hlatyping
+yara/index,1,5,yes,hlatyping
+yara/mapper,1,5,yes,hlatyping
 yte,1,5,,sarek
 zip,1,5,,differentialabundance

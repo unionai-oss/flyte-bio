@@ -1,11 +1,11 @@
 """Tests for flyte_bio.modules.ucsc and bedtools genomecov (the bigWig steps).
 
-Expected md5s are the upstream bedtools/genomecov, ucsc/bedclip and
-ucsc/bedgraphtobigwig snapshot values.
+Expected md5s are the upstream bedtools/genomecov, ucsc/bedclip,
+ucsc/bedgraphtobigwig and ucsc/wigtobigwig snapshot values.
 """
 
 from flyte_bio.modules.bedtools import bedtools_genomecov
-from flyte_bio.modules.ucsc import bedclip, bedgraphtobigwig
+from flyte_bio.modules.ucsc import bedclip, bedgraphtobigwig, wigtobigwig
 from tests.framework import assert_md5, env, fixture
 
 SARSCOV2 = "genomics/sarscov2/"
@@ -37,4 +37,14 @@ async def test_bedgraphtobigwig() -> None:
     await assert_md5(out, "910ecc7f57e3bbd5fac5a8edba4f615d", label="bigWig")
 
 
-tests = [test_genomecov_bam_sorted, test_bedclip, test_bedgraphtobigwig]
+@env.task
+async def test_ucsc_wigtobigwig() -> None:
+    # upstream case: ucsc/wigtobigwig "test-ucsc-wigtobigwig"
+    wig = await fixture(SARSCOV2 + "illumina/wig/test.wig.gz")
+    sizes = await fixture(SARSCOV2 + "genome/genome.sizes")
+    out = await wigtobigwig(wig, sizes, prefix="test")
+    assert out.name == "test.bw", out.name
+    await assert_md5(out, "b64af7003665dc51fae958216b06ed95", label="wigToBigWig")
+
+
+tests = [test_genomecov_bam_sorted, test_bedclip, test_bedgraphtobigwig, test_ucsc_wigtobigwig]

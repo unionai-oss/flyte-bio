@@ -7,7 +7,7 @@ When upstream changes its snapshot, update the constant and re-run.
 
 
 
-from flyte_bio.modules.bedtools import bedtools_intersect, bedtools_sort
+from flyte_bio.modules.bedtools import bedtools_getfasta, bedtools_intersect, bedtools_maskfasta, bedtools_sort
 from tests.framework import assert_md5, env, fixture
 
 
@@ -36,4 +36,24 @@ async def test_sort_bed() -> None:
     )
 
 
-tests = [test_intersect_bed_bed, test_sort_bed]
+@env.task
+async def test_bedtools_getfasta() -> None:
+    # upstream case: bedtools/getfasta "sarscov2 - bed - fasta"
+    bed = await fixture("genomics/sarscov2/genome/bed/test.bed")
+    fasta = await fixture("genomics/sarscov2/genome/genome.fasta")
+    out = await bedtools_getfasta(bed, fasta, prefix="test")
+    assert out.name == "test.fa", out.name
+    await assert_md5(out, "41c3a45a57a16c04f828d8f8bb52df70", label="bedtools getfasta")
+
+
+@env.task
+async def test_bedtools_maskfasta() -> None:
+    # upstream case: bedtools/maskfasta "test-bedtools-maskfasta"
+    bed = await fixture("genomics/sarscov2/genome/bed/test.bed")
+    fasta = await fixture("genomics/sarscov2/genome/genome.fasta")
+    out = await bedtools_maskfasta(bed, fasta, prefix="test")
+    assert out.name == "test.fa", out.name
+    await assert_md5(out, "f4f6749698f11074228d2c79338e3b9c", label="bedtools maskfasta")
+
+
+tests = [test_intersect_bed_bed, test_sort_bed, test_bedtools_getfasta, test_bedtools_maskfasta]

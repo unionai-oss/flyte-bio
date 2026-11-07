@@ -3,8 +3,9 @@
 Exposes one task per RSeQC script, as upstream's modules: :data:`bam_stat`,
 :data:`infer_experiment`, :data:`inner_distance`,
 :data:`junction_annotation`, :data:`junction_saturation`,
-:data:`read_distribution` and :data:`read_duplication`. Each writes its
-outputs under upstream's ``<prefix>.<suffix>`` names into an output Dir.
+:data:`read_distribution`, :data:`read_duplication` and :data:`tin`
+(transcript integrity numbers). Each writes its outputs under upstream's
+``<prefix>.<suffix>`` names into an output Dir.
 
 As upstream's staging does, every task lays its inputs out in a scratch
 directory under their original basenames — the BAM with its index beside
@@ -50,12 +51,13 @@ BAM_INPUTS = {"bam": File, "bai": File, "prefix": str}
 BED_INPUTS = {**BAM_INPUTS, "bed": File}
 
 
-def rseqc_task(name: str, inputs: dict, body: str):
+def rseqc_task(name: str, inputs: dict, body: str, defaults: dict | None = None):
     return shell.create(
         name=name,
         image=RSEQC_IMAGE,
         resources=DEFAULT_RESOURCES,
         inputs=inputs,
+        defaults=defaults,
         outputs={"results": Dir},
         script=STAGE + (STAGE_BED if "bed" in inputs else "") + body + COLLECT,
     )
@@ -126,6 +128,19 @@ read_duplication = rseqc_task(
 """,
 )
 
+# As upstream: tin.py names its outputs after the BAM; rename them to the prefix.
+tin = rseqc_task(
+    "rseqc_tin",
+    {**BED_INPUTS, "args": str},
+    r"""
+        ARGS={inputs.args}
+        tin.py -i "$B" -r "$BED" $ARGS
+        mv "${B%.*}.summary.txt" "$P.summary.txt"
+        mv "${B%.*}.tin.xls" "$P.tin.xls"
+""",
+    defaults={"args": ""},
+)
+
 
 env = flyte.TaskEnvironment.from_task(
     "rseqc",
@@ -136,6 +151,7 @@ env = flyte.TaskEnvironment.from_task(
     junction_saturation.as_task(),
     read_distribution.as_task(),
     read_duplication.as_task(),
+    tin.as_task(),
 )
 
 

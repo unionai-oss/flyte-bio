@@ -83,6 +83,8 @@ ship_in_bundle(
     "anndatar_convert.r",
     "anndata_barcodes.py",
     "multiqc_config_scrnaseq.yml",
+    "nacho_qc.R",
+    "nacho_norm.R",
 )
 
 

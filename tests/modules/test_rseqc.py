@@ -106,6 +106,17 @@ async def test_rseqc_read_duplication() -> None:
     )
 
 
+@env.task
+async def test_rseqc_tin() -> None:
+    # upstream case: rseqc/tin "sarscov2 paired-end [bam]"
+    bam, bai, bed = await inputs(BED12)
+    out = await rseqc.tin(bam=bam, bai=bai, bed=bed, prefix="test")
+    await check(
+        out,
+        {"test.summary.txt": "9d98447e178b89a89f6f5aba7a772fe6", "test.tin.xls": "abdbb6d51a5cd7038cd862ce241ecef1"},
+    )
+
+
 tests = [
     test_rseqc_bam_stat,
     test_rseqc_infer_experiment,
@@ -114,4 +125,5 @@ tests = [
     test_rseqc_junction_saturation,
     test_rseqc_read_distribution,
     test_rseqc_read_duplication,
+    test_rseqc_tin,
 ]

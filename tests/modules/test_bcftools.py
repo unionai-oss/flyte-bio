@@ -4,8 +4,9 @@ Upstream's bcftools/stats snapshot records the report's first six lines,
 which include the command line bcftools records.
 
 The other cases and expected values are upstream's bcftools/sort, norm, view,
-filter, annotate, mpileup and merge tests (modules commit 9a1cc9f, bcftools
-1.25). Their snapshots hash outputs three ways, all reproduced here:
+filter, annotate, mpileup, merge, index, concat, reheader, consensus and
+pluginsetgt tests
+(modules commit 9a1cc9f, bcftools 1.25). Their snapshots hash outputs three ways, all reproduced here:
 
 - a plain md5 (``assert_md5``), or for ``.gz`` outputs the md5 of the
   decompressed file (``assert_gunzipped_md5``). These cases pass
@@ -29,10 +30,15 @@ from flyte.io import File
 from flyte_bio.modules.bcftools import (
     BcftoolsResult,
     bcftools_annotate,
+    bcftools_concat,
+    bcftools_consensus,
     bcftools_filter,
+    bcftools_index,
     bcftools_merge,
     bcftools_mpileup,
     bcftools_norm,
+    bcftools_pluginsetgt,
+    bcftools_reheader,
     bcftools_sort,
     bcftools_stats,
     bcftools_view,
@@ -419,6 +425,129 @@ async def test_bcftools_merge_gvcf() -> None:
     await check(result, "test.vcf.gz", "gvcf", variants="645b7f7f9131bfe350a9ec3cf82c17fe")
 
 
+@env.task
+async def test_bcftools_index_vcf() -> None:
+    # upstream cases: bcftools/index "sarscov2 - vcf - csi" and "sarscov2 - vcf - tbi" (names only);
+    # that each index serves a region query is our check
+    vcf = await fixture(VCF + "test.vcf.gz")
+    csi, tbi = await asyncio.gather(bcftools_index(vcf), bcftools_index(vcf, args="--tbi"))
+    for index, name in ((csi, "test.vcf.gz.csi"), (tbi, "test.vcf.gz.tbi")):
+        assert index is not None and index.name == name, f"index is {index and index.name}, expected {name}"
+    regions = await asyncio.gather(
+        *(
+            bcftools_filter(vcf, f"region_{suffix}", index=index, args="--output-type z -r MT192765.1 --no-version")
+            for suffix, index in (("csi", csi), ("tbi", tbi))
+        )
+    )
+    for suffix, result in zip(("csi", "tbi"), regions, strict=True):
+        await check(result, f"region_{suffix}.vcf.gz", f"region query with the {suffix}", gunzipped_md5=TEST_VCF_MD5)
+
+
+@env.task
+async def test_bcftools_concat_vcfs() -> None:
+    # upstream cases: bcftools/concat "homo_sapiens - [[vcf1, vcf2], [tbi1, tbi2]]" (and its three index
+    # variants) and "homo_sapiens - [[vcf1, vcf2], []]"
+    hs_vcf = HS + "illumina/vcf/"
+    vcfs = list(
+        await asyncio.gather(
+            fixture(hs_vcf + "NA12878.chr21_22.1X.glimpse2.vcf.gz"), fixture(hs_vcf + "NA12878_GIAB.chr21_22.vcf.gz")
+        )
+    )
+    indexes = list(
+        await asyncio.gather(
+            fixture(hs_vcf + "NA12878_GIAB.chr21_22.vcf.gz.csi"),
+            fixture(hs_vcf + "NA12878.chr21_22.1X.glimpse2.vcf.gz.csi"),
+        )
+    )
+    index_cases = [
+        ("vcf_gz_index", "--output-type z --write-index --no-version --allow-overlaps", "csi"),
+        ("vcf_gz_index_csi", "--output-type z --write-index=csi --no-version --allow-overlaps -a", "csi"),
+        ("vcf_gz_index_tbi", "--output-type z --write-index=tbi --no-version --allow-overlaps", "tbi"),
+    ]
+    plain, unindexed, *indexed = await asyncio.gather(
+        bcftools_concat(vcfs, indexes, "test3", args="--no-version -a"),
+        bcftools_concat(vcfs, [], "test3", args="--no-version -a"),
+        *(bcftools_concat(vcfs, indexes, "test3_vcf", args=args) for _, args, _ in index_cases),
+    )
+    concatenated = "0b4986bbb6bdc9e0ee12ba09e70092e9"
+    await check(plain, "test3.vcf", "[vcfs, indexes]", md5=concatenated)
+    await check(unindexed, "test3.vcf", "[vcfs, []]", md5=concatenated)
+    for (label, _, suffix), result in zip(index_cases, indexed, strict=True):
+        await check(result, "test3_vcf.vcf.gz", label, gunzipped_md5=concatenated, index=f"test3_vcf.vcf.gz.{suffix}")
+
+
+@env.task
+async def test_bcftools_reheader_vcf() -> None:
+    # upstream cases: bcftools/reheader "sarscov2 - [vcf, [], []], fai - vcf output", "... - vcf.gz output",
+    # "... - bcf output", the three index variants, "sarscov2 - [vcf, header, []], []" and
+    # "sarscov2 - [vcf, [], samples], fai"
+    vcf, fai, header, samples = await asyncio.gather(
+        fixture(VCF + "test.vcf.gz"),
+        fixture(SC2 + "genome/genome.fasta.fai"),
+        fixture(VCF + "test.vcf"),
+        write_text("samples.txt", "new_name\n"),
+    )
+    vcf_out, vcf_gz, bcf, with_header, renamed, *indexed = await asyncio.gather(
+        bcftools_reheader(vcf, "tested", fai=fai, args2="--no-version"),
+        bcftools_reheader(vcf, "tested", fai=fai, args2="--no-version --output-type z"),
+        bcftools_reheader(vcf, "tested", fai=fai, args2="--no-version --output-type b"),
+        bcftools_reheader(vcf, "tested", header=header, args2="--no-version"),
+        bcftools_reheader(vcf, "tested", samples=samples, fai=fai, args2="--no-version"),
+        *(bcftools_reheader(vcf, "test_vcf", fai=fai, args2=f"{args} --no-version") for _, args, _ in INDEX_CASES),
+    )
+    await check(vcf_out, "tested.vcf", "vcf output", md5=TEST_VCF_MD5)
+    await check(vcf_gz, "tested.vcf.gz", "vcf.gz output", gunzipped_md5=TEST_VCF_MD5)
+    await check(bcf, "tested.bcf.gz", "bcf output", gunzipped_md5="c8a304c8d2892039201154153c8cd536")
+    await check(with_header, "tested.vcf", "header", md5="3189bc9a720d5d5d3006bf72d91300cb")
+    await check(renamed, "tested.vcf", "samples", md5="c64c373c10b0be24b29d6f18708ec1e8")
+    for (label, _, suffix), result in zip(INDEX_CASES, indexed, strict=True):
+        await check(result, "test_vcf.vcf.gz", label, gunzipped_md5=TEST_VCF_MD5, index=f"test_vcf.vcf.gz.{suffix}")
+
+
+@env.task
+async def test_bcftools_consensus_fasta() -> None:
+    # upstream cases: bcftools/consensus "bcftools - test" (masked by test.bed) and "bcftools - test - no mask"
+    vcf, tbi, fasta, bed = await asyncio.gather(
+        fixture(VCF + "test.vcf.gz"),
+        fixture(VCF + "test.vcf.gz.tbi"),
+        fixture(SC2 + "genome/genome.fasta"),
+        fixture(SC2 + "genome/bed/test.bed"),
+    )
+    masked, unmasked = await asyncio.gather(
+        bcftools_consensus(vcf, tbi, fasta, "test", mask=bed), bcftools_consensus(vcf, tbi, fasta, "test")
+    )
+    for label, consensus, md5 in (
+        ("masked", masked, "313f4a657187fdaf293c4ed69d98c112"),
+        ("no mask", unmasked, "e57d3e4d113f989bc069c5fd61627091"),
+    ):
+        assert consensus.name == "test.fa", f"{label}: output is {consensus.name}"
+        await assert_md5(consensus, md5, label=f"consensus {label}")
+
+
+@env.task
+async def test_bcftools_pluginsetgt_vcf() -> None:
+    # upstream cases: bcftools/pluginsetgt "sarscov2 - [vcf, tbi], [], []" (and its three index variants)
+    # and "sarscov2 - [vcf, tbi], vcf, tsv, []": every genotype phased, with the plugin's -s 42
+    vcf, tbi, regions, targets = await asyncio.gather(
+        fixture(VCF + "test.vcf.gz"),
+        fixture(VCF + "test.vcf.gz.tbi"),
+        fixture(VCF + "test3.vcf.gz"),
+        fixture(VCF + "test2.targets.tsv.gz"),
+    )
+    common = {"target_gt": "a", "new_gt": "p", "index": tbi, "args2": "-s 42"}
+    args = "--no-version --output-type v"
+    plain, subset, *indexed = await asyncio.gather(
+        bcftools_pluginsetgt(vcf, "out", args=args, **common),
+        bcftools_pluginsetgt(vcf, "out", regions=regions, targets=targets, args=args, **common),
+        *(bcftools_pluginsetgt(vcf, "out_vcf", args=f"{a} --no-version", **common) for _, a, _ in INDEX_CASES),
+    )
+    phased = "9fb75c9fdb304b49c3895476666a85bb"
+    await check(plain, "out.vcf", "[vcf, tbi]", md5=phased)
+    await check(subset, "out.vcf", "regions and targets", md5="55e955c359bf9094bb692660f3c1c677")
+    for (label, _, suffix), result in zip(INDEX_CASES, indexed, strict=True):
+        await check(result, "out_vcf.vcf.gz", label, gunzipped_md5=phased, index=f"out_vcf.vcf.gz.{suffix}")
+
+
 tests = [
     test_bcftools_stats,
     test_bcftools_filter_expression,
@@ -431,4 +560,9 @@ tests = [
     test_bcftools_mpileup_bam,
     test_bcftools_merge_vcfs,
     test_bcftools_merge_gvcf,
+    test_bcftools_index_vcf,
+    test_bcftools_concat_vcfs,
+    test_bcftools_reheader_vcf,
+    test_bcftools_consensus_fasta,
+    test_bcftools_pluginsetgt_vcf,
 ]

@@ -9,6 +9,8 @@ Currently exposed:
 - :data:`bedtools_sort` — sort BED/GFF/VCF features by chromosome and start.
 - :data:`bedtools_merge` — combine overlapping or nearby features into one.
 - :func:`bedtools_genomecov` — genome-wide coverage of a BAM (e.g. bedGraph).
+- :func:`bedtools_getfasta` — the FASTA sequences of a BED's intervals.
+- :func:`bedtools_maskfasta` — a FASTA with a BED's intervals masked.
 
 The module-level :data:`env` is a single :class:`flyte.TaskEnvironment`
 containing every bedtools task. All commands share the same biocontainer
@@ -210,6 +212,40 @@ env = flyte.TaskEnvironment.from_task(
 # genomecov's image differs, and a TaskEnvironment holds one image.
 genomecov_env = flyte.TaskEnvironment.from_task("bedtools_genomecov", bedtools_genomecov_cmd.as_task())
 
+# getfasta and maskfasta run on upstream's newer bedtools image. Both write
+# `<prefix>.fa`; getfasta indexes the FASTA beside itself, so (as upstream
+# stages it) the FASTA is linked into a scratch directory first.
+FASTA_IMAGE = "community.wave.seqera.io/library/bedtools:2.31.1--897920cd303d6413"
+
+
+def bedtools_fasta_task(subcommand: str):
+    return shell.create(
+        name=f"bedtools_{subcommand}",
+        image=FASTA_IMAGE,
+        resources=DEFAULT_RESOURCES,
+        inputs={"bed": File, "fasta": File, "prefix": str, "args": str},
+        defaults={"args": ""},
+        outputs={"results": Dir},
+        script=rf"""
+        BED=({{inputs.bed}}); FA=({{inputs.fasta}})
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}/{{inputs.prefix}}.fa
+        W=$(mktemp -d); cd "$W"
+        FA_LINK=$(basename "${{FA[0]}}"); ln -s "${{FA[0]}}" "$FA_LINK"
+        bedtools {subcommand} $ARGS -fi "$FA_LINK" -bed "${{BED[0]}}" -fo "$OUT"
+    """,
+    )
+
+
+bedtools_getfasta_cmd = bedtools_fasta_task("getfasta")
+bedtools_maskfasta_cmd = bedtools_fasta_task("maskfasta")
+
+# `env` stays the one to depend on: it pulls in the FASTA tools' env too.
+fasta_env = flyte.TaskEnvironment.from_task(
+    "bedtools_fasta", bedtools_getfasta_cmd.as_task(), bedtools_maskfasta_cmd.as_task()
+)
+env.add_dependency(fasta_env)
+
 
 async def bedtools_genomecov(
     bam: File, prefix: str, extension: str = "bedGraph", sort: bool = True, args: str = ""
@@ -219,4 +255,24 @@ async def bedtools_genomecov(
     out = await results.get_file(f"{prefix}.{extension}")
     if out is None:
         raise FileNotFoundError(f"bedtools genomecov wrote no {prefix}.{extension}")
+    return out
+
+
+async def bedtools_getfasta(bed: File, fasta: File, prefix: str, args: str = "") -> File:
+    """The sequences of ``fasta`` under ``bed``'s intervals, as ``<prefix>.fa``."""
+    if fasta.name == f"{prefix}.fa":
+        raise ValueError("input and output names are the same; choose another prefix")
+    results = await bedtools_getfasta_cmd(bed=bed, fasta=fasta, prefix=prefix, args=args)
+    out = await results.get_file(f"{prefix}.fa")
+    if out is None:
+        raise FileNotFoundError(f"bedtools getfasta wrote no {prefix}.fa")
+    return out
+
+
+async def bedtools_maskfasta(bed: File, fasta: File, prefix: str, args: str = "") -> File:
+    """``fasta`` with ``bed``'s intervals masked (soft-masked with ``args="-soft"``), as ``<prefix>.fa``."""
+    results = await bedtools_maskfasta_cmd(bed=bed, fasta=fasta, prefix=prefix, args=args)
+    out = await results.get_file(f"{prefix}.fa")
+    if out is None:
+        raise FileNotFoundError(f"bedtools maskfasta wrote no {prefix}.fa")
     return out

@@ -11,8 +11,13 @@ Exposes:
   is ``<prefix>.<out_ext>``; ``out_ext`` defaults, as upstream, to ``fasta``
   for FASTA-named inputs and ``fastq`` otherwise, plus ``.gz`` for a gzipped
   input. seqkit compresses by the output's extension.
+- :func:`seqkit_seq` — ``seqkit seq`` over one FASTA/FASTQ file, with the
+  transformation in ``args`` (e.g. ``--min-len 100``). As upstream, the output
+  is ``<prefix>.fasta`` for a FASTA-named input and ``<prefix>.fastq``
+  otherwise, gzipped by ``gzip -c <gzip_args>`` (``<prefix>.<ext>.gz``) when
+  the input is; a prefix that would overwrite the input is an error.
 
-Both pass the task's CPUs as ``--threads``. ``args`` is split on whitespace
+All pass the task's CPUs as ``--threads``. ``args`` is split on whitespace
 without shell quote removal, so write ``-p A``, not ``-p 'A'``; patterns are
 not globbed, so regex characters (``*``, ``?``, ``[``) are safe, but a pattern
 can't contain spaces.
@@ -29,8 +34,9 @@ from flyte_bio.limits import TASK_LIMITS
 SEQKIT_IMAGE = "community.wave.seqera.io/library/seqkit:2.13.0--3bacfb68370dd835"
 DEFAULT_RESOURCES = flyte.Resources(cpu=2, memory="4Gi")
 
-# Input names that upstream treats as FASTA.
+# Input names that upstream treats as FASTA: seqkit replace's and seqkit seq's lists differ.
 FASTA_NAME = re.compile(r".+\.(fasta|fa|fas|fna|faa)(\.gz)?")
+SEQ_FASTA_NAME = re.compile(r".+\.(fasta|fa|fas|fna|fsa)(\.gz)?")
 
 # A list[File] is staged under the files' names and globbed alphabetically, so
 # ``names`` carries the caller's order (one name per line) into the script.
@@ -78,7 +84,33 @@ seqkit_replace_cmd = shell.create(
     """,
 )
 
-env = flyte.TaskEnvironment.from_task("seqkit", seqkit_stats_cmd.as_task(), seqkit_replace_cmd.as_task())
+seqkit_seq_cmd = shell.create(
+    name="seqkit_seq",
+    image=SEQKIT_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"fastx": File, "filename": str, "args": str, "gzip_args": str},
+    defaults={"args": "", "gzip_args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        set -o pipefail
+        IN=({{inputs.fastx}})
+        NAME={{inputs.filename}}
+        ARGS={{inputs.args}}
+        GZIP_ARGS={{inputs.gzip_args}}
+        OUT={{outputs.results}}
+        set -f
+        if [[ $NAME == *.gz ]]; then
+            seqkit seq --threads $TASK_CPUS $ARGS "${{IN[0]}}" | gzip -c $GZIP_ARGS > "$OUT/$NAME" || exit 1
+        else
+            seqkit seq --threads $TASK_CPUS $ARGS "${{IN[0]}}" > "$OUT/$NAME" || exit 1
+        fi
+    """,
+)
+
+env = flyte.TaskEnvironment.from_task(
+    "seqkit", seqkit_stats_cmd.as_task(), seqkit_replace_cmd.as_task(), seqkit_seq_cmd.as_task()
+)
 
 
 def file_name(file: File) -> str:
@@ -117,3 +149,14 @@ async def seqkit_replace(fastx: File, prefix: str = "sample", out_ext: str = "",
     filename = f"{prefix}.{out_ext or replace_extension(file_name(fastx))}"
     results = await seqkit_replace_cmd(fastx=fastx, filename=filename, args=args)
     return await pick(results, filename, "seqkit replace")
+
+
+async def seqkit_seq(fastx: File, prefix: str = "sample", args: str = "", gzip_args: str = "") -> File:
+    """``seqkit seq`` over ``fastx``: ``<prefix>.fasta`` or ``<prefix>.fastq``, plus ``.gz`` for a gzipped input."""
+    name = file_name(fastx)
+    extension = "fasta" if SEQ_FASTA_NAME.fullmatch(name) else "fastq"
+    filename = f"{prefix}.{extension}" + (".gz" if name.endswith(".gz") else "")
+    if filename == name:
+        raise ValueError("Input and output names are the same, set prefix to disambiguate!")
+    results = await seqkit_seq_cmd(fastx=fastx, filename=filename, args=args, gzip_args=gzip_args)
+    return await pick(results, filename, "seqkit seq")

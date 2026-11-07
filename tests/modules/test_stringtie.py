@@ -3,9 +3,24 @@
 Expected md5s are the upstream stringtie/stringtie snapshot values (no extra
 args, as upstream's test config). The transcripts GTF header records the
 command line, including ``-p <threads>``.
+
+The stringtie/merge cases are upstream's (modules commit 9a1cc9f, StringTie
+3.0.3). Their setup assembles upstream's mixed short- and long-read human
+BAMs with the stringtie/stringtie module at that commit (``--mix``, guided
+by the human GTF, 2 CPUs). That newer assembler isn't a flyte-bio task, so
+the setup step here is a test-only shell task on the merge image running
+upstream's command line. Upstream's two cases differ only in the reference's
+metadata, so they run the same merge and share one md5. The merged GTF's
+header records ``-p``: upstream's md5 is for 4 threads, so these tests pin
+4 CPUs (the merge's default) and salt the cache key, which ignores resources.
 """
 
-from flyte_bio.modules.stringtie import StringTieResult, stringtie
+import flyte
+from flyte.extras import shell
+from flyte.io import Dir, File
+
+from flyte_bio.limits import TASK_LIMITS
+from flyte_bio.modules.stringtie import MERGE_IMAGE, StringTieResult, stringtie, stringtie_merge_cmd
 from tests.framework import assert_md5, env, fixture
 
 BAM = "genomics/sarscov2/illumina/bam/test.paired_end.sorted.bam"
@@ -73,9 +88,79 @@ async def test_stringtie_reverse_reference() -> None:
     )
 
 
+# Upstream's stringtie/stringtie command for its merge tests' setup ("mix-reads-assembly", with a reference).
+merge_setup_assembly_cmd = shell.create(
+    name="test_stringtie_merge_setup_assembly",
+    image=MERGE_IMAGE,
+    resources=flyte.Resources(cpu=2, memory="4Gi"),
+    inputs={"short_reads": File, "long_reads": File, "gtf": File, "prefix": str},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        SR=({{inputs.short_reads}}); LR=({{inputs.long_reads}}); GTF=({{inputs.gtf}})
+        P={{inputs.prefix}}
+        W=$(mktemp -d); cd "$W"
+        for f in "${{SR[0]}}" "${{LR[0]}}" "${{GTF[0]}}"; do ln -s "$f" "$(basename "$f")"; done
+        stringtie \
+            -o "$P.transcripts.gtf" \
+            --mix \
+            -G "$(basename "${{GTF[0]}}")" \
+            -A "$P.gene.abundance.txt" \
+            -C "$P.coverage.gtf" \
+            -b "$P.ballgown" \
+            -p $TASK_CPUS \
+            "$(basename "${{SR[0]}}")" "$(basename "${{LR[0]}}")"
+        mv "$P.transcripts.gtf" {{outputs.results}}/
+    """,
+)
+env.add_dependency(flyte.TaskEnvironment.from_task("test_stringtie_merge_setup", merge_setup_assembly_cmd.as_task()))
+
+HUMAN = "genomics/homo_sapiens/"
+MERGED_MD5 = "ea6e012500cbc5b5a04e8569fd78cdfa"
+
+
+async def merge_setup() -> tuple[File, File]:
+    gtf = await fixture(HUMAN + "genome/genome.gtf")
+    results = await merge_setup_assembly_cmd(
+        short_reads=await fixture(HUMAN + "illumina/bam/test.paired_end.sorted.bam"),
+        long_reads=await fixture(HUMAN + "pacbio/bam/test_hifi_aligned_assembly.bam"),
+        gtf=gtf,
+        prefix="test",
+    )
+    transcripts = await results.get_file("test.transcripts.gtf")
+    assert transcripts is not None, "the setup assembly wrote no test.transcripts.gtf"
+    return transcripts, gtf
+
+
+async def merge_with_4_cpus() -> File:
+    transcripts, gtf = await merge_setup()
+    task = stringtie_merge_cmd.as_task().override(
+        resources=flyte.Resources(cpu=4, memory="4Gi"), cache=flyte.Cache(behavior="auto", salt="cpu=4")
+    )
+    results = await task(gtfs=[transcripts], annotation_gtf=gtf, prefix="test", args="")
+    merged = await results.get_file("test.gtf")
+    assert merged is not None, "stringtie --merge wrote no test.gtf"
+    return merged
+
+
+@env.task
+async def test_stringtie_merge_forward() -> None:
+    # upstream case: stringtie/merge "homo_sapiens - forward strandedness"
+    await assert_md5(await merge_with_4_cpus(), MERGED_MD5, label="merged gtf")
+
+
+@env.task
+async def test_stringtie_merge_reverse() -> None:
+    # upstream case: stringtie/merge "homo_sapiens - reverse strandedness" (same inputs; the strandedness
+    # is only the reference's metadata)
+    await assert_md5(await merge_with_4_cpus(), MERGED_MD5, label="merged gtf")
+
+
 tests = [
     test_stringtie_forward,
     test_stringtie_reverse,
     test_stringtie_forward_reference,
     test_stringtie_reverse_reference,
+    test_stringtie_merge_forward,
+    test_stringtie_merge_reverse,
 ]

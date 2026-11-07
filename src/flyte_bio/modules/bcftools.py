@@ -17,8 +17,20 @@ Exposes:
 - :func:`bcftools_mpileup` — call variants from a BAM: ``bcftools mpileup``
   piped into ``bcftools call``, the sample renamed, then ``bcftools stats`` of
   the calls.
+- :func:`bcftools_index` — index a bgzipped VCF or a BCF: ``<vcf name>.csi``,
+  or ``.tbi`` with ``--tbi`` in the args.
+- :func:`bcftools_concat` — concatenate VCFs of the same samples (e.g. per
+  chromosome) into one; inputs without an index are indexed first (``tabix``).
+- :func:`bcftools_reheader` — replace a VCF's header, rename its samples or
+  add contig lengths from a ``.fai``, piped into ``bcftools view``.
+- :func:`bcftools_consensus` — apply a VCF's variants to a reference FASTA,
+  optionally masking regions, into ``<prefix>.fa``.
+- :func:`bcftools_pluginsetgt` — set genotypes with the ``setGT`` plugin:
+  genotypes matching ``target_gt`` become ``new_gt``, optionally only in
+  regions or targets files.
 
-All but :func:`bcftools_mpileup` (whose ``args3`` play the part) take the output
+The VCF-writing tools other than :func:`bcftools_mpileup` (whose ``args3`` play
+the part) and :func:`bcftools_reheader` (whose ``args2`` do) take the output
 format from ``--output-type``/``-O`` in ``args``, as upstream, and write
 ``<prefix>.vcf``, ``.vcf.gz``, ``.bcf`` or ``.bcf.gz``; with ``--write-index``
 in the args the index lands beside it as ``<prefix>.<extension>.csi`` (or
@@ -340,6 +352,137 @@ bcftools_mpileup_cmd = shell.create(
     """,
 )
 
+bcftools_index_cmd = shell.create(
+    name="bcftools_index",
+    image=BCFTOOLS_TOOLS_IMAGE,
+    resources=TOOLS_RESOURCES,
+    inputs={"vcf": File, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        V=({{inputs.vcf}}); I=()
+        OUT={{outputs.results}}
+        ARGS={{inputs.args}}
+        {LINK_VCF}
+        bcftools index $ARGS --threads $TASK_CPUS "$NAME"
+        shopt -s nullglob
+        for F in *.csi *.tbi; do mv "$F" "$OUT"/; done
+    """,
+)
+
+# As upstream: the VCFs are concatenated in name order, and any without a
+# .tbi or .csi beside it (linked under its own name) is indexed with tabix.
+bcftools_concat_cmd = shell.create(
+    name="bcftools_concat",
+    image=BCFTOOLS_TOOLS_IMAGE,
+    resources=TOOLS_RESOURCES,
+    inputs={"vcfs": list[File], "indexes": list[File], **VCF_IO},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        shopt -s nullglob; VCFS=({{inputs.vcfs}}); IDX=({{inputs.indexes}}); shopt -u nullglob
+        P={{inputs.prefix}}; EXT={{inputs.extension}}; OUT={{outputs.results}}
+        set -f
+        ARGS={{inputs.args}}
+        {LINK_HELPERS}
+        W=$(mktemp -d); cd "$W"
+        for F in "${{VCFS[@]}}" "${{IDX[@]}}"; do link "$F" > /dev/null; done
+        mapfile -t NAMES < <(for F in "${{VCFS[@]}}"; do basename "$F"; done | LC_ALL=C sort)
+        for N in "${{NAMES[@]}}"; do
+            if [ ! -e "$N.tbi" ] && [ ! -e "$N.csi" ]; then tabix "$N"; fi
+        done
+        bcftools concat --output "$P.$EXT" $ARGS --threads $TASK_CPUS "${{NAMES[@]}}"
+        {COLLECT_OUTPUT}
+    """,
+)
+
+# As upstream: reheader (args) | view (args2), which sets the output format.
+bcftools_reheader_cmd = shell.create(
+    name="bcftools_reheader",
+    image=BCFTOOLS_TOOLS_IMAGE,
+    resources=TOOLS_RESOURCES,
+    inputs={"vcf": File, "header": File | None, "samples": File | None, "fai": File | None, "args2": str, **VCF_IO},
+    defaults={"args": "", "args2": "--output-type z"},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        set -o pipefail
+        V=({{inputs.vcf}}); I=()
+        shopt -s nullglob; H=({{inputs.header}}); S=({{inputs.samples}}); FAI=({{inputs.fai}}); shopt -u nullglob
+        P={{inputs.prefix}}; EXT={{inputs.extension}}; OUT={{outputs.results}}
+        set -f
+        ARGS={{inputs.args}}; ARGS2={{inputs.args2}}
+        {LINK_VCF}
+        EXTRA=()
+        if [ ${{#FAI[@]}} -gt 0 ]; then EXTRA+=(--fai "$(link "${{FAI[0]}}")"); fi
+        if [ ${{#H[@]}} -gt 0 ]; then EXTRA+=(--header "$(link "${{H[0]}}")"); fi
+        if [ ${{#S[@]}} -gt 0 ]; then EXTRA+=(--samples "$(link "${{S[0]}}")"); fi
+        bcftools reheader "${{EXTRA[@]}}" $ARGS --threads $TASK_CPUS "$NAME" \
+            | bcftools view $ARGS2 --output "$P.$EXT"
+        {COLLECT_OUTPUT}
+    """,
+)
+
+# As upstream, the FASTA is streamed in on stdin.
+bcftools_consensus_cmd = shell.create(
+    name="bcftools_consensus",
+    image=BCFTOOLS_TOOLS_IMAGE,
+    resources=TOOLS_RESOURCES,
+    inputs={"vcf": File, "index": File, "fasta": File, "mask": File | None, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        set -o pipefail
+        V=({{inputs.vcf}}); I=({{inputs.index}}); FA=({{inputs.fasta}})
+        shopt -s nullglob; M=({{inputs.mask}}); shopt -u nullglob
+        P={{inputs.prefix}}; OUT={{outputs.results}}
+        set -f
+        ARGS={{inputs.args}}
+        {LINK_VCF}
+        MASK=()
+        if [ ${{#M[@]}} -gt 0 ]; then MASK=(-m "$(link "${{M[0]}}")"); fi
+        cat "${{FA[0]}}" | bcftools consensus "$NAME" "${{MASK[@]}}" $ARGS > "$OUT/$P.fa"
+    """,
+)
+
+# As upstream: the plugin's own options follow `--`; the target and new
+# genotypes are dedicated inputs, args2 adds further plugin options.
+bcftools_pluginsetgt_cmd = shell.create(
+    name="bcftools_pluginsetgt",
+    image=BCFTOOLS_TOOLS_IMAGE,
+    resources=TOOLS_RESOURCES,
+    inputs={
+        "vcf": File,
+        "index": File | None,
+        "regions": File | None,
+        "targets": File | None,
+        "target_gt": str,
+        "new_gt": str,
+        "args2": str,
+        **VCF_IO,
+    },
+    defaults={"args": "", "args2": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        V=({{inputs.vcf}})
+        shopt -s nullglob; I=({{inputs.index}}); R=({{inputs.regions}}); T=({{inputs.targets}}); shopt -u nullglob
+        P={{inputs.prefix}}; EXT={{inputs.extension}}; OUT={{outputs.results}}
+        TARGET_GT={{inputs.target_gt}}; NEW_GT={{inputs.new_gt}}
+        set -f
+        ARGS={{inputs.args}}; ARGS2={{inputs.args2}}
+        {LINK_VCF}
+        SUBSET=()
+        if [ ${{#R[@]}} -gt 0 ]; then SUBSET+=(--regions-file "$(link "${{R[0]}}")"); fi
+        if [ ${{#T[@]}} -gt 0 ]; then SUBSET+=(--targets-file "$(link "${{T[0]}}")"); fi
+        bcftools plugin setGT --output "$P.$EXT" "${{SUBSET[@]}}" $ARGS --threads $TASK_CPUS "$NAME" \
+            -- --target-gt "$TARGET_GT" --new-gt "$NEW_GT" $ARGS2
+        {COLLECT_OUTPUT}
+    """,
+)
+
 bcftools_stats_env = flyte.TaskEnvironment.from_task("bcftools_stats", bcftools_stats_cmd.as_task())
 bcftools_tools_env = flyte.TaskEnvironment.from_task(
     "bcftools_tools",
@@ -350,6 +493,11 @@ bcftools_tools_env = flyte.TaskEnvironment.from_task(
     bcftools_annotate_cmd.as_task(),
     bcftools_merge_cmd.as_task(),
     bcftools_mpileup_cmd.as_task(),
+    bcftools_index_cmd.as_task(),
+    bcftools_concat_cmd.as_task(),
+    bcftools_reheader_cmd.as_task(),
+    bcftools_consensus_cmd.as_task(),
+    bcftools_pluginsetgt_cmd.as_task(),
 )
 env = flyte.TaskEnvironment(name="bcftools", depends_on=[bcftools_stats_env, bcftools_tools_env])
 
@@ -581,3 +729,106 @@ async def bcftools_mpileup(
     if save_mpileup and mpileup is None:
         raise FileNotFoundError(f"bcftools mpileup wrote no {prefix}.mpileup.gz")
     return BcftoolsMpileupResult(vcf=calls.vcf, index=calls.index, stats=stats, mpileup=mpileup, results=results)
+
+
+async def bcftools_index(vcf: File, args: str = "") -> File | None:
+    """Index ``vcf`` (bgzipped VCF or BCF): ``<vcf name>.csi``, or ``.tbi`` with ``--tbi`` in ``args``.
+
+    None when ``args`` ask for no index (``--stats``, ``--nrecords``).
+    """
+    results = await bcftools_index_cmd(vcf=vcf, args=args)
+    indexes = [f async for f in results.walk()]
+    if len(indexes) > 1:
+        raise FileNotFoundError(f"bcftools index wrote {len(indexes)} indexes, expected one")
+    return indexes[0] if indexes else None
+
+
+async def bcftools_concat(vcfs: list[File], indexes: list[File], prefix: str, args: str = "") -> BcftoolsResult:
+    """Concatenate ``vcfs`` (in name order) into ``<prefix>.<extension>``.
+
+    ``indexes`` are the VCFs' ``.tbi``/``.csi``, named after them; a VCF
+    without one is indexed first. Overlapping inputs need ``--allow-overlaps``.
+    """
+    extension = output_extension(args)
+    results = await bcftools_concat_cmd(vcfs=vcfs, indexes=indexes, prefix=prefix, extension=extension, args=args)
+    return await collect(results, prefix, extension, "concat")
+
+
+async def bcftools_reheader(
+    vcf: File,
+    prefix: str,
+    header: File | None = None,
+    samples: File | None = None,
+    fai: File | None = None,
+    args: str = "",
+    args2: str = "--output-type z",
+) -> BcftoolsResult:
+    """``vcf`` with a new header, into ``<prefix>.<extension>``.
+
+    ``header``, ``samples`` and ``fai`` are passed as ``--header``,
+    ``--samples`` and ``--fai``. ``args`` go to ``bcftools reheader``,
+    ``args2`` to the ``bcftools view`` it is piped into, whose
+    ``--output-type`` sets the format (default bgzipped VCF, as upstream).
+    """
+    extension = output_extension(args2)
+    results = await bcftools_reheader_cmd(
+        vcf=vcf,
+        header=header,
+        samples=samples,
+        fai=fai,
+        prefix=prefix,
+        extension=extension,
+        args=args,
+        args2=args2,
+    )
+    return await collect(results, prefix, extension, "reheader")
+
+
+async def bcftools_consensus(
+    vcf: File, index: File, fasta: File, prefix: str, mask: File | None = None, args: str = ""
+) -> File:
+    """``<prefix>.fa``: ``fasta`` with the variants of ``vcf`` (and its ``index``) applied.
+
+    ``mask`` (a BED or tab-delimited regions file) is passed as ``-m``: its
+    regions are replaced with ``N``.
+    """
+    results = await bcftools_consensus_cmd(vcf=vcf, index=index, fasta=fasta, mask=mask, prefix=prefix, args=args)
+    consensus = await results.get_file(f"{prefix}.fa")
+    if consensus is None:
+        raise FileNotFoundError(f"bcftools consensus wrote no {prefix}.fa")
+    return consensus
+
+
+async def bcftools_pluginsetgt(
+    vcf: File,
+    prefix: str,
+    target_gt: str,
+    new_gt: str,
+    index: File | None = None,
+    regions: File | None = None,
+    targets: File | None = None,
+    args: str = "",
+    args2: str = "",
+) -> BcftoolsResult:
+    """Set genotypes with ``bcftools plugin setGT``, into ``<prefix>.<extension>``.
+
+    Genotypes matching ``target_gt`` (``--target-gt``: e.g. ``a`` all, ``.`` missing, ``q`` with an
+    ``-i``/``-e`` expression) become ``new_gt`` (``--new-gt``: e.g. ``0``, ``p`` phased, ``./x``).
+    ``regions`` and ``targets`` are passed as ``--regions-file`` and ``--targets-file``; ``regions``
+    needs ``index``. ``args`` go to bcftools, ``args2`` to the plugin (after ``--``).
+    """
+    extension = output_extension(args)
+    check_output_name(vcf, prefix, extension)
+    results = await bcftools_pluginsetgt_cmd(
+        vcf=vcf,
+        index=index,
+        regions=regions,
+        targets=targets,
+        target_gt=target_gt,
+        new_gt=new_gt,
+        prefix=prefix,
+        extension=extension,
+        args=args,
+        args2=args2,
+    )
+    return await collect(results, prefix, extension, "plugin setGT")

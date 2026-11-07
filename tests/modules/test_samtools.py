@@ -10,14 +10,23 @@ compression, so they're checked run-to-green instead.
 The FASTQ conversions' cases compare what upstream snapshots: the first
 reads of each FASTQ (``samtools fastq``) and the decompressed FASTQs' md5s
 (``samtools collatefastq``).
+
+The convert and dict cases (upstream's samtools/convert and samtools/dict at
+modules commit 9a1cc9f, samtools 1.25) check what upstream snapshots: the
+output names, the converted BAM's read sequences' md5, and the dictionary's
+first line.
 """
 
+import asyncio
 import gzip
+import hashlib
 
 from flyte.io import File
 
 from flyte_bio.modules.samtools import (
     samtools_collatefastq,
+    samtools_convert,
+    samtools_dict,
     samtools_faidx,
     samtools_fastq,
     samtools_flagstat,
@@ -28,7 +37,15 @@ from flyte_bio.modules.samtools import (
     samtools_stats,
     samtools_view,
 )
-from tests.framework import assert_gunzipped_md5, assert_md5, assert_nonempty, assert_reads_md5, env, fixture
+from tests.framework import (
+    assert_gunzipped_md5,
+    assert_md5,
+    assert_nonempty,
+    assert_reads_md5,
+    env,
+    fixture,
+    reads_md5,
+)
 
 SORTED_BAM = "genomics/sarscov2/illumina/bam/test.paired_end.sorted.bam"
 PAIRED_BAM = "genomics/sarscov2/illumina/bam/test.paired_end.bam"
@@ -233,6 +250,61 @@ async def test_samtools_collatefastq_bam_interleaved() -> None:
     await assert_md5(out.interleaved, "4f2b93d492f0442fa89b02532c9b3530", label="collatefastq interleaved")
 
 
+async def cram_reads_md5(cram: File, fasta: File, fai: File) -> str:
+    """:func:`tests.framework.reads_md5` of a CRAM, decoded against its reference."""
+    sam = await samtools_view(bam=cram, fasta=fasta, fai=fai)
+    h = hashlib.md5()
+    async with sam.open("rb") as fh:
+        text = bytes(await fh.read()).decode()
+    for line in text.splitlines():
+        h.update(line.split("\t")[9].encode())
+    return h.hexdigest().lstrip("0")
+
+
+@env.task
+async def test_samtools_convert_bam_to_cram() -> None:
+    # upstream case: samtools/convert "sarscov2 - [bam, bai], [fasta, fai]" (names only); that the CRAM
+    # holds the BAM's reads is our check
+    bam, bai, fasta, fai = await asyncio.gather(
+        fixture(SORTED_BAM),
+        fixture(SORTED_BAM + ".bai"),
+        fixture("genomics/sarscov2/genome/genome.fasta"),
+        fixture("genomics/sarscov2/genome/genome.fasta.fai"),
+    )
+    out = await samtools_convert(bam, fasta, "test", index=bai, fai=fai)
+    assert_name(out.alignment, "test.cram")
+    assert_name(out.index, "test.cram.crai")
+    expected = await reads_md5(bam)
+    actual = await cram_reads_md5(out.alignment, fasta, fai)
+    assert actual == expected, f"CRAM reads md5 {actual}, expected the BAM's {expected}"
+
+
+@env.task
+async def test_samtools_convert_cram_to_bam() -> None:
+    # upstream case: samtools/convert "homo_sapiens - [cram, crai], [fasta, fai]"
+    cram, crai, fasta, fai = await asyncio.gather(
+        fixture(HUMAN_SORTED_CRAM),
+        fixture(HUMAN_SORTED_CRAM + ".crai"),
+        fixture(HUMAN_FASTA),
+        fixture(HUMAN_FASTA + ".fai"),
+    )
+    out = await samtools_convert(cram, fasta, "test", index=crai, fai=fai)
+    assert_name(out.alignment, "test.bam")
+    assert_name(out.index, "test.bam.bai")
+    await assert_reads_md5(out.alignment, "2f11e4fe3390b8ad0a1852616fd1da04", label="converted bam")
+
+
+@env.task
+async def test_samtools_dict_fasta() -> None:
+    # upstream case: samtools/dict "sarscov2 - fasta" (the first line); the @SQ line's name, length and
+    # md5 are our check (its UR records the staged FASTA's path)
+    out = await samtools_dict(await fixture("genomics/sarscov2/genome/genome.fasta"))
+    assert_name(out, "genome.fasta.dict")
+    lines = await head_lines(out, 2)
+    assert lines[0] == "@HD\tVN:1.0\tSO:unsorted", lines[0]
+    assert lines[1].startswith("@SQ\tSN:MT192765.1\tLN:29829\tM5:c95f3e5592d0ad9974e41e7f0ea14eb0\t"), lines[1]
+
+
 tests = [
     test_faidx,
     test_sort,
@@ -249,4 +321,7 @@ tests = [
     test_samtools_collatefastq_bam_single_end,
     test_samtools_collatefastq_cram,
     test_samtools_collatefastq_bam_interleaved,
+    test_samtools_convert_bam_to_cram,
+    test_samtools_convert_cram_to_bam,
+    test_samtools_dict_fasta,
 ]

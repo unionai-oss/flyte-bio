@@ -2,8 +2,10 @@
 
 Exposes :func:`bedclip`, which drops bedGraph records outside the
 chromosome bounds in a chrom.sizes file, and :func:`bedgraphtobigwig`, which
-converts a (clipped, sorted) bedGraph to bigWig. Outputs keep upstream's
-names: ``<prefix>.bedGraph`` and ``<prefix>.bigWig``.
+converts a (clipped, sorted) bedGraph to bigWig, and :func:`wigtobigwig`,
+which converts a wiggle file (plain or gzipped) to bigWig. Outputs keep
+upstream's names: ``<prefix>.bedGraph``, ``<prefix>.bigWig`` and
+``<prefix>.bw``.
 """
 
 import flyte
@@ -14,6 +16,7 @@ from flyte.io import Dir, File
 # `biocontainers/...` (Docker Hub) — use the quay.io mirrors.
 BEDCLIP_IMAGE = "quay.io/biocontainers/ucsc-bedclip:377--h0b8a92a_2"
 BEDGRAPHTOBIGWIG_IMAGE = "quay.io/biocontainers/ucsc-bedgraphtobigwig:469--h9b8f530_0"
+WIGTOBIGWIG_IMAGE = "community.wave.seqera.io/library/ucsc-wigtobigwig:482--4eb74e15915ee878"
 
 DEFAULT_RESOURCES = flyte.Resources(cpu=1, memory="4Gi")
 
@@ -39,11 +42,25 @@ bedgraphtobigwig_cmd = shell.create(
     """,
 )
 
+wigtobigwig_cmd = shell.create(
+    name="ucsc_wigtobigwig",
+    image=WIGTOBIGWIG_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"wig": File, "sizes": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        ARGS={inputs.args}
+        wigToBigWig $ARGS {inputs.wig} {inputs.sizes} {outputs.results}/{inputs.prefix}.bw
+    """,
+)
+
 
 # One image per tool, so one env each; `env` aggregates them.
 bedclip_env = flyte.TaskEnvironment.from_task("ucsc_bedclip", bedclip_cmd.as_task())
 bedgraphtobigwig_env = flyte.TaskEnvironment.from_task("ucsc_bedgraphtobigwig", bedgraphtobigwig_cmd.as_task())
-env = flyte.TaskEnvironment(name="ucsc", depends_on=[bedclip_env, bedgraphtobigwig_env])
+wigtobigwig_env = flyte.TaskEnvironment.from_task("ucsc_wigtobigwig", wigtobigwig_cmd.as_task())
+env = flyte.TaskEnvironment(name="ucsc", depends_on=[bedclip_env, bedgraphtobigwig_env, wigtobigwig_env])
 
 
 async def pick(results: Dir, name: str) -> File:
@@ -63,3 +80,8 @@ async def bedgraphtobigwig(bedgraph: File, sizes: File, prefix: str) -> File:
     return await pick(
         await bedgraphtobigwig_cmd(bedgraph=bedgraph, sizes=sizes, prefix=prefix), f"{prefix}.bigWig"
     )
+
+
+async def wigtobigwig(wig: File, sizes: File, prefix: str, args: str = "") -> File:
+    """Convert ``wig`` (plain or gzipped) to ``<prefix>.bw``."""
+    return await pick(await wigtobigwig_cmd(wig=wig, sizes=sizes, prefix=prefix, args=args), f"{prefix}.bw")
