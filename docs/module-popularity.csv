@@ -180,7 +180,7 @@ catpack/download,2,4,,mag seqsubmit
 catpack/prepare,2,4,,mag seqsubmit
 catpack/summarise,2,4,,mag seqsubmit
 cdhit/cdhitest,2,4,,genomeqc viralmetagenome
-cellranger/mkvdjref,2,4,,airrflow scrnaseq
+cellranger/mkvdjref,2,4,yes,airrflow scrnaseq
 checkm2/databasedownload,2,4,,mag seqsubmit
 checkm2/predict,2,4,,mag seqsubmit
 checkqc,2,4,,demultiplex seqinspector
@@ -194,7 +194,7 @@ custom/collectfeaturecounts,2,4,,magmap metatdenovo
 custom/collectstats,2,4,,magmap metatdenovo
 custom/gtffilter,2,4,yes,riboseq rnaseq
 custom/tx2gene,2,4,yes,riboseq rnaseq
-deepcell/mesmer,2,4,,mcmicro molkart
+deepcell/mesmer,2,4,yes,mcmicro molkart
 deeptools/plotprofile,2,4,,atacseq chipseq
 diamond/blastx,2,4,,funcprofiler taxprofiler
 eggnogmapper,2,4,,funcprofiler metatdenovo
@@ -231,8 +231,8 @@ hmmer/eslalimask,2,4,,ampliseq phyloplace
 hmmer/eslreformat,2,4,,ampliseq phyloplace
 hmmer/formattsv,2,4,,ampliseq phyloplace
 homer/annotatepeaks,2,4,,atacseq chipseq
-ilastik/multicut,2,4,,mcmicro molkart
-ilastik/pixelclassification,2,4,,mcmicro molkart
+ilastik/multicut,2,4,yes,mcmicro molkart
+ilastik/pixelclassification,2,4,yes,mcmicro molkart
 interproscan,2,4,yes,funcscan proteinannotator
 ivar/consensus,2,4,,viralmetagenome viralrecon
 ivar/variants,2,4,,viralmetagenome viralrecon
@@ -270,9 +270,9 @@ picard/liftovervcf,2,4,,raredisease variantbenchmarking
 picard/mergesamfiles,2,4,,atacseq chipseq
 preseq/ccurve,2,4,,callingcards nascent
 prinseqplusplus,2,4,,taxprofiler viralmetagenome
-pydamage/analyze,2,4,,coproid mag
+pydamage/analyze,2,4,yes,coproid mag
 qualimap/bamqc,2,4,,hgtseq methylseq
-quartonotebook,2,4,,coproid differentialabundance
+quartonotebook,2,4,yes,coproid differentialabundance
 racon,2,4,,bacass crisprseq
 rgi/cardannotation,2,4,,funcprofiler funcscan
 ribodetector,2,4,,riboseq rnaseq
@@ -294,15 +294,15 @@ seqtk/seq,2,4,,crisprseq metatdenovo
 seqtk/subseq,2,4,,ampliseq phyloplace
 sourmash/index,2,4,,createtaxdb magmap
 spring/decompress,2,4,,raredisease sarek
-sratools/fasterqdump,2,4,,fetchngs pathogensurveillance
-stardist,2,4,,molkart spatialaxe
+sratools/fasterqdump,2,4,yes,fetchngs pathogensurveillance
+stardist,2,4,yes,molkart spatialaxe
 stranger,2,4,,longraredisease raredisease
 strelka/somatic,2,4,,rnadnavar sarek
 summarizedexperiment/summarizedexperiment,2,4,yes,riboseq rnaseq
 svdb/merge,2,4,,raredisease sarek
 sylph/profile,2,4,,rnaseq taxprofiler
 sylphtax/taxprof,2,4,,rnaseq taxprofiler
-thermorawfileparser,2,4,,mhcquant ribomsqc
+thermorawfileparser,2,4,yes,mhcquant ribomsqc
 tiara/tiara,2,4,,genomeqc mag
 tiddit/sv,2,4,,raredisease sarek
 trgt/genotype,2,4,,longraredisease pacvar
@@ -314,7 +314,7 @@ unicycler,2,4,,bacass viralrecon
 vcf2maf,2,4,,rnadnavar tumourevo
 vcflib/vcffilter,2,4,,pathogensurveillance sarek
 vcftools,2,4,yes,rnadnavar sarek
-xz/decompress,2,4,,coproid viralmetagenome
+xz/decompress,2,4,yes,coproid viralmetagenome
 aardvark/compare,1,5,,variantbenchmarking
 abacas,1,5,,viralrecon
 abricate/run,1,5,,funcscan
@@ -331,8 +331,8 @@ ampir,1,5,,funcscan
 amplify/predict,1,5,,funcscan
 amrfinderplus/run,1,5,,funcscan
 amrfinderplus/update,1,5,,funcscan
-amulety/embed,1,5,,airrflow
-amulety/translate,1,5,,airrflow
+amulety/embed,1,5,yes,airrflow
+amulety/translate,1,5,yes,airrflow
 anndata/barcodes,1,5,yes,scrnaseq
 annotsv/annotsv,1,5,,longraredisease
 annotsv/installannotations,1,5,,longraredisease
@@ -414,7 +414,7 @@ cellranger/mkfastq,1,5,,demultiplex
 cellranger/mkgtf,1,5,,scrnaseq
 cellranger/mkref,1,5,,scrnaseq
 cellranger/multi,1,5,,scrnaseq
-cellranger/vdj,1,5,,airrflow
+cellranger/vdj,1,5,yes,airrflow
 cellrangerarc/count,1,5,,scrnaseq
 cellrangerarc/mkgtf,1,5,,scrnaseq
 cellrangerarc/mkref,1,5,,scrnaseq
@@ -474,12 +474,12 @@ custom/orfmerge,1,5,,riboseq
 custom/orfnormalise,1,5,,riboseq
 custom/resolvetaxonomy,1,5,,phyloplace
 custom/rsemmergecounts,1,5,,rnaseq
-custom/sratoolsncbisettings,1,5,,fetchngs
+custom/sratoolsncbisettings,1,5,yes,fetchngs
 custom/tabulartogseachip,1,5,,differentialabundance
 custom/tabulartogseacls,1,5,,differentialabundance
 custom/tabulartogseagct,1,5,,differentialabundance
 cutesv,1,5,,longraredisease
-damageprofiler,1,5,,coproid
+damageprofiler,1,5,yes,coproid
 dastool/dastool,1,5,,mag
 dastool/fastatocontig2bin,1,5,,mag
 datavzrd,1,5,,variantbenchmarking
@@ -504,7 +504,7 @@ dexseq/dtu,1,5,,rnasplice
 dexseq/exon,1,5,,rnasplice
 dexseq/prepareannotation,1,5,,rnasplice
 diamond/blastp,1,5,,metatdenovo
-diamond/cluster,1,5,,reportho
+diamond/cluster,1,5,yes,reportho
 diamond/makedb,1,5,,createtaxdb
 dotseq/dotseq,1,5,,riboseq
 dragonflye,1,5,,bacass
@@ -518,7 +518,7 @@ famsa/guidetree,1,5,,multiplesequencealign
 fargene,1,5,,funcscan
 fastavalidator,1,5,,multiplesequencealign
 fastplong,1,5,,genomeassembler
-fastqdl,1,5,,fetchngs
+fastqdl,1,5,yes,fetchngs
 fastqe,1,5,,seqinspector
 fastqscreen/fastqscreen,1,5,,seqinspector
 fastqutils/info,1,5,yes,bamtofastq
@@ -708,8 +708,8 @@ methyldackel/mbias,1,5,,methylseq
 mgikit/demultiplex,1,5,,demultiplex
 mgnifam/generatefamilies,1,5,,proteinfamilies
 mifaser,1,5,,funcprofiler
-mindagap/duplicatefinder,1,5,,molkart
-mindagap/mindagap,1,5,,molkart
+mindagap/duplicatefinder,1,5,yes,molkart
+mindagap/mindagap,1,5,yes,molkart
 minia,1,5,,viralrecon
 miniasm,1,5,,bacass
 minimac4/compressref,1,5,,phaseimpute
@@ -807,7 +807,7 @@ pbjasmine,1,5,,methylong
 pbsv/call,1,5,,pacvar
 pbsv/discover,1,5,,pacvar
 pbtk/pbmerge,1,5,,pacvar
-pcgr/getref,1,5,,variantprioritization
+pcgr/getref,1,5,yes,variantprioritization
 pear,1,5,,crisprseq
 peddy,1,5,,raredisease
 phantompeakqualtools,1,5,,chipseq
@@ -840,7 +840,7 @@ qcatch,1,5,yes,scrnaseq
 qsv/cat,1,5,,mag
 qualimap/bamqccram,1,5,,methylseq
 qualimap/rnaseq,1,5,yes,rnaseq
-quarto/notebook,1,5,,provenancereport
+quarto/notebook,1,5,yes,provenancereport
 quilt/quilt,1,5,,phaseimpute
 ragtag/patch,1,5,,genomeassembler
 ragtag/scaffold,1,5,,genomeassembler
@@ -892,7 +892,7 @@ s4pred/runmodel,1,5,yes,proteinannotator
 saltshaker/call,1,5,,raredisease
 saltshaker/classify,1,5,,raredisease
 saltshaker/plot,1,5,,raredisease
-sam2lca/analyze,1,5,,coproid
+sam2lca/analyze,1,5,yes,coproid
 sambamba/depth,1,5,,raredisease
 samblaster,1,5,,rnadnavar
 samshee,1,5,,demultiplex
@@ -930,7 +930,7 @@ seqkit/sliding,1,5,,pathogensurveillance
 seqkit/sort,1,5,,genomeqc
 seqkit/translate,1,5,,riboseq
 seqtk/cutn,1,5,,pairgenomealign
-seqtk/trim,1,5,,demo
+seqtk/trim,1,5,yes,demo
 sequali,1,5,,seqinspector
 seqwish/induce,1,5,,pangenome
 sgdemux,1,5,,demultiplex
@@ -949,12 +949,12 @@ sniffles,1,5,,longraredisease
 snpsift/annmem,1,5,,sarek
 snpsift/annmemcreate,1,5,,sarek
 souporcell,1,5,,hadge
-sourcepredict,1,5,,coproid
+sourcepredict,1,5,yes,coproid
 sourmash/compare,1,5,,pathogensurveillance
 sourmash/gather,1,5,,magmap
-spaceranger/count,1,5,,sopa
+spaceranger/count,1,5,yes,sopa
 sparsesignatures,1,5,,tumourevo
-sratools/prefetch,1,5,,fetchngs
+sratools/prefetch,1,5,yes,fetchngs
 star/indexversion,1,5,,rnavar
 starfusion/build,1,5,,rnafusion
 starfusion/detect,1,5,,rnafusion
@@ -998,7 +998,7 @@ transdecoder/longorf,1,5,,metatdenovo
 transdecoder/predict,1,5,,metatdenovo
 trgt/plot,1,5,,pacvar
 trnascanse,1,5,,seqsubmit
-trust4,1,5,,airrflow
+trust4,1,5,yes,airrflow
 truvari/bench,1,5,,variantbenchmarking
 ucsc/bigwigaverageoverbed,1,5,,hicar
 ucsc/liftover,1,5,,variantbenchmarking
