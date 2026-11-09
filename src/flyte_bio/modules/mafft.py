@@ -1,7 +1,9 @@
 """mafft — multiple sequence alignment with MAFFT.
 
-Exposes :func:`mafft_align`, which aligns the sequences in ``fasta`` and writes
-the alignment to ``<prefix>.fas``, or ``<prefix>.fas.gz`` (compressed with
+Exposes :func:`mafft_align` and :func:`mafft_guidetree`.
+
+:func:`mafft_align` aligns the sequences in ``fasta`` and writes the
+alignment to ``<prefix>.fas``, or ``<prefix>.fas.gz`` (compressed with
 pigz) with ``compress``. Any of the optional inputs adds sequences to the
 alignment with the MAFFT option of the same name: ``add`` (``--add``),
 ``add_fragments`` (``--addfragments``), ``add_full`` (``--addfull``),
@@ -11,6 +13,11 @@ As upstream, every input may be gzipped (each is read through ``unpigz -cdf``,
 which passes uncompressed files through unchanged), and an input named
 ``<prefix>.fas`` is an error. MAFFT's own options (``--auto``, ``--maxiterate``)
 go in ``args``.
+
+:func:`mafft_guidetree` writes the guide tree MAFFT builds for ``fasta``
+(``--retree 0 --treeout``) to ``<prefix>.dnd``. As upstream, the numeric
+``<n>_`` prefixes MAFFT adds to the leaf names are removed, so other tools can
+read the tree.
 """
 
 import flyte
@@ -24,6 +31,8 @@ MAFFT_IMAGE = (
     "quay.io/biocontainers/mulled-v2-12eba4a074f913c639117640936668f5a6a01da6:"
     "425707898cf4f85051b77848be253b88f1d2298a-0"
 )
+# Upstream's guide-tree image is a newer MAFFT (7.525) without pigz.
+GUIDETREE_IMAGE = "quay.io/biocontainers/mafft:7.525--h031d066_1"
 # Upstream labels this process_high; large alignments may need more.
 DEFAULT_RESOURCES = flyte.Resources(cpu=4, memory="8Gi")
 
@@ -89,7 +98,37 @@ mafft_align_cmd = shell.create(
     """,
 )
 
-env = flyte.TaskEnvironment.from_task("mafft", mafft_align_cmd.as_task())
+mafft_guidetree_cmd = shell.create(
+    name="mafft_guidetree",
+    image=GUIDETREE_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"fasta": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        FA=({{inputs.fasta}})
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        W=$(mktemp -d); cd "$W"
+
+        # MAFFT writes the tree next to its input (<input>.tree), so the input
+        # is linked into the working directory.
+        NAME=$(basename "${{FA[0]}}")
+        ln -s "${{FA[0]}}" "$NAME"
+        mafft --thread $TASK_CPUS --retree 0 $ARGS --treeout "$NAME" > log.txt || exit 1
+        mv ./*.tree "$P.dnd.tmp"
+
+        # remove all prefixes added by mafft which make the output incompatible with other tools
+        awk '{{gsub(/^[0-9]+_/, ""); print}}' "$P.dnd.tmp" > "$OUT/$P.dnd"
+    """,
+)
+
+# One image per environment: the guide tree's MAFFT differs from the aligner's.
+mafft_align_env = flyte.TaskEnvironment.from_task("mafft_align", mafft_align_cmd.as_task())
+mafft_guidetree_env = flyte.TaskEnvironment.from_task("mafft_guidetree", mafft_guidetree_cmd.as_task())
+env = flyte.TaskEnvironment(name="mafft", depends_on=[mafft_align_env, mafft_guidetree_env])
 
 
 async def mafft_align(
@@ -119,4 +158,13 @@ async def mafft_align(
     found = await results.get_file(name)
     if found is None:
         raise FileNotFoundError(f"mafft wrote no {name}")
+    return found
+
+
+async def mafft_guidetree(fasta: File, prefix: str = "sample", args: str = "") -> File:
+    """The guide tree MAFFT builds for ``fasta``, its leaf names unprefixed: ``<prefix>.dnd``."""
+    results = await mafft_guidetree_cmd(fasta=fasta, prefix=prefix, args=args)
+    found = await results.get_file(f"{prefix}.dnd")
+    if found is None:
+        raise FileNotFoundError(f"mafft wrote no {prefix}.dnd")
     return found

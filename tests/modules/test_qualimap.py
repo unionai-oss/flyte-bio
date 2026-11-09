@@ -9,9 +9,15 @@ Qualimap 2.3), with its test config's ``-p non-strand-specific``. Upstream
 snapshots only the report's file names (its contents record dates and
 paths); this test checks the same names and that ``genome_results.txt``
 summarises the staged BAM.
+
+The bamqccram case is upstream's qualimap/bamqccram test (same commit), with
+its test config's ``-p non-strand-specific``: the same report files, from a
+CRAM streamed to Qualimap as ``/dev/stdin``.
 """
 
-from flyte_bio.modules.qualimap import qualimap_bamqc, qualimap_rnaseq
+from flyte.io import Dir
+
+from flyte_bio.modules.qualimap import qualimap_bamqc, qualimap_bamqccram, qualimap_rnaseq
 from tests.framework import assert_md5, env, fixture
 
 
@@ -83,11 +89,7 @@ BAMQC_RAW_DATA = [
 ]
 
 
-@env.task
-async def test_qualimap_bamqc() -> None:
-    # upstream case: qualimap/bamqc "homo_sapiens [bam]"
-    bam = await fixture("genomics/homo_sapiens/illumina/bam/test.paired_end.sorted.bam")
-    results = await qualimap_bamqc(bam, prefix="test", single_end=False, args="-p non-strand-specific")
+async def check_bamqc_report(results: Dir, bam_name: str) -> None:
     root = results.path.rstrip("/") + "/"
     found = sorted([f.path.removeprefix(root) async for f in results.walk()])
     expected = sorted(
@@ -104,7 +106,7 @@ async def test_qualimap_bamqc() -> None:
     async with genome_results.open("rb") as fh:
         text = bytes(await fh.read()).decode()
     for wanted in [
-        "bam file = test.paired_end.sorted.bam",
+        f"bam file = {bam_name}",
         ">>>>>>> Reference",
         "number of reads",
         "mean coverageData",
@@ -112,4 +114,29 @@ async def test_qualimap_bamqc() -> None:
         assert wanted in text, f"genome_results.txt lacks {wanted!r}"
 
 
-tests = [test_qualimap_rnaseq, test_qualimap_bamqc]
+@env.task
+async def test_qualimap_bamqc() -> None:
+    # upstream case: qualimap/bamqc "homo_sapiens [bam]"
+    bam = await fixture("genomics/homo_sapiens/illumina/bam/test.paired_end.sorted.bam")
+    results = await qualimap_bamqc(bam, prefix="test", single_end=False, args="-p non-strand-specific")
+    await check_bamqc_report(results, "test.paired_end.sorted.bam")
+
+
+@env.task
+async def test_qualimap_bamqccram() -> None:
+    # upstream case: qualimap/bamqccram "homo_sapiens [cram]"
+    cram = "genomics/homo_sapiens/illumina/cram/test.paired_end.sorted.cram"
+    genome = "genomics/homo_sapiens/genome/genome.fasta"
+    results = await qualimap_bamqccram(
+        await fixture(cram),
+        await fixture(cram + ".crai"),
+        await fixture(genome),
+        await fixture(genome + ".fai"),
+        prefix="test",
+        single_end=False,
+        args="-p non-strand-specific",
+    )
+    await check_bamqc_report(results, "/dev/stdin")
+
+
+tests = [test_qualimap_rnaseq, test_qualimap_bamqc, test_qualimap_bamqccram]

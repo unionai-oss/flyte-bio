@@ -13,6 +13,8 @@ Currently exposed:
 - :func:`bedtools_maskfasta` — a FASTA with a BED's intervals masked.
 - :func:`bedtools_bamtobed` — a BAM's alignments as BED intervals.
 - :func:`bedtools_complement` — the intervals of a genome a BED doesn't cover.
+- :func:`bedtools_makewindows` — fixed-size windows over a BED's intervals or
+  over a genome (a ``.fai`` or chromosome sizes file).
 
 The module-level :data:`env` is a single :class:`flyte.TaskEnvironment`
 containing every bedtools task. All commands share the same biocontainer
@@ -271,6 +273,26 @@ bedtools_complement_cmd = shell.create(
     """,
 )
 
+# As upstream, a .bed or .tab input is a BED of intervals (-b); anything else
+# is a genome file such as a .fai (-g).
+bedtools_makewindows_cmd = shell.create(
+    name="bedtools_makewindows",
+    image=FASTA_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"regions": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        REGIONS=({inputs.regions})
+        ARGS={inputs.args}
+        case "${REGIONS[0]}" in
+            *.bed | *.tab) INPUT=(-b "${REGIONS[0]}") ;;
+            *) INPUT=(-g "${REGIONS[0]}") ;;
+        esac
+        bedtools makewindows "${INPUT[@]}" $ARGS > {outputs.results}/{inputs.prefix}.bed || exit 1
+    """,
+)
+
 # `env` stays the one to depend on: it pulls in the newer image's env too.
 fasta_env = flyte.TaskEnvironment.from_task(
     "bedtools_fasta",
@@ -278,6 +300,7 @@ fasta_env = flyte.TaskEnvironment.from_task(
     bedtools_maskfasta_cmd.as_task(),
     bedtools_bamtobed_cmd.as_task(),
     bedtools_complement_cmd.as_task(),
+    bedtools_makewindows_cmd.as_task(),
 )
 env.add_dependency(fasta_env)
 
@@ -330,4 +353,19 @@ async def bedtools_complement(bed: File, sizes: File, prefix: str, args: str = "
     out = await results.get_file(f"{prefix}.bed")
     if out is None:
         raise FileNotFoundError(f"bedtools complement wrote no {prefix}.bed")
+    return out
+
+
+async def bedtools_makewindows(regions: File, prefix: str, args: str = "") -> File:
+    """Windows over ``regions``, as ``<prefix>.bed``; set their size with ``-w`` (or ``-n``) in ``args``.
+
+    ``regions`` is a BED of intervals (``.bed`` or ``.tab``) or a genome file
+    of chromosome lengths, such as a ``.fai``.
+    """
+    if regions.name == f"{prefix}.bed":
+        raise ValueError("Input and output names are the same, set prefix to disambiguate!")
+    results = await bedtools_makewindows_cmd(regions=regions, prefix=prefix, args=args)
+    out = await results.get_file(f"{prefix}.bed")
+    if out is None:
+        raise FileNotFoundError(f"bedtools makewindows wrote no {prefix}.bed")
     return out

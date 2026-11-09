@@ -1,7 +1,8 @@
 """Tests for flyte_bio.modules.mafft.
 
 The cases and expected md5s are upstream's mafft/align tests (modules commit
-9a1cc9f, MAFFT 7.520). nf-test hashes ``.gz`` outputs decompressed.
+9a1cc9f, MAFFT 7.520) and its mafft/guidetree test (MAFFT 7.525). nf-test
+hashes ``.gz`` outputs decompressed.
 """
 
 import asyncio
@@ -11,13 +12,14 @@ from pathlib import Path
 
 from flyte.io import File
 
-from flyte_bio.modules.mafft import mafft_align
+from flyte_bio.modules.mafft import mafft_align, mafft_guidetree
 from tests.framework import assert_gunzipped_md5, assert_md5, env, fixture
 
 SCAFFOLDS = "genomics/sarscov2/illumina/fasta/scaffolds.fasta"
 GENOME = "genomics/sarscov2/genome/genome.fasta"
 INFORMATIVE_SITES = "genomics/sarscov2/genome/alignment/informative_sites.fas"
 ALL_SITES = "genomics/sarscov2/genome/alignment/all_sites.fas"
+CONTIGS = "genomics/sarscov2/illumina/fasta/contigs.fasta"
 SCAFFOLDS_MD5 = "23426611f4a0df532b6708f072bd445b"
 
 
@@ -100,6 +102,13 @@ async def test_mafft_add_all_sites_fragments_informative_sites() -> None:
     await assert_gunzipped_md5(out, "aed7f866c3a20dc9d2f2b4ad73515961", label="--add --addfragments")
 
 
+@env.task
+async def test_mafft_guidetree_contigs() -> None:
+    tree = await mafft_guidetree(await fixture(CONTIGS), prefix="test")
+    assert file_name(tree) == "test.dnd", f"output named {file_name(tree)}"
+    await assert_md5(tree, "e376b2b428c095b1d41c26bc0e3789ba", label="test.dnd")
+
+
 tests = [
     test_mafft_scaffolds_uncompressed,
     test_mafft_scaffolds_compressed,
@@ -110,4 +119,5 @@ tests = [
     test_mafft_add_profile_informative_sites,
     test_mafft_add_long_informative_sites,
     test_mafft_add_all_sites_fragments_informative_sites,
+    test_mafft_guidetree_contigs,
 ]

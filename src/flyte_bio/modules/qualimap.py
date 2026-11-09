@@ -12,6 +12,10 @@ Exposes:
   samples add ``--collect-overlap-pairs``, as upstream; threads follow the
   task's CPUs. Pass the protocol in ``args`` (``-p non-strand-specific``, ...),
   as upstream's ``ext.args``.
+- :func:`qualimap_bamqccram`, which writes the same BAM QC report directory
+  for a CRAM, decoded with ``samtools view -T <fasta>`` and streamed to
+  ``qualimap bamqc -bam /dev/stdin`` (so the report names the BAM
+  ``/dev/stdin``), as upstream.
 
 Qualimap records the BAM and GTF paths it was given in
 ``rnaseq_qc_results.txt``. As upstream's staging does, the inputs are
@@ -30,6 +34,8 @@ from flyte_bio.limits import JAVA_HEAP_MB, TASK_LIMITS
 QUALIMAP_IMAGE = "quay.io/biocontainers/qualimap:2.3--hdfd78af_0"
 # bamqc is pinned upstream to a newer build of the same release.
 QUALIMAP_BAMQC_IMAGE = "community.wave.seqera.io/library/qualimap:2.3--e70af3f76915782f"
+# bamqccram's image adds samtools, to decode the CRAM.
+QUALIMAP_SAMTOOLS_IMAGE = "community.wave.seqera.io/library/qualimap_samtools:36c0048b499c176d"
 
 QUALIMAP_MEMORY_MB = 8192
 DEFAULT_RESOURCES = flyte.Resources(cpu=2, memory=f"{QUALIMAP_MEMORY_MB}Mi")
@@ -127,10 +133,64 @@ qualimap_bamqc_cmd = shell.create(
     """,
 )
 
-# One image per environment: bamqc's differs from rnaseq's, so `env` has two.
+# The CRAM is decoded against the FASTA (linked next to its .fai) and streamed
+# to Qualimap; upstream's label is process_medium, as for bamqc.
+qualimap_bamqccram_cmd = shell.create(
+    name="qualimap_bamqccram",
+    image=QUALIMAP_SAMTOOLS_IMAGE,
+    resources=BAMQC_RESOURCES,
+    inputs={
+        "cram": File,
+        "crai": File,
+        "gff": File | None,
+        "fasta": File,
+        "fai": File,
+        "prefix": str,
+        "single_end": bool,
+        "args": str,
+    },
+    defaults={"single_end": False, "args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        set -o pipefail
+        CRAM=({{inputs.cram}}); CRAI=({{inputs.crai}}); FA=({{inputs.fasta}}); FAI=({{inputs.fai}})
+        shopt -s nullglob; GFF=({{inputs.gff}}); shopt -u nullglob
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        for F in "${{CRAM[0]}}" "${{CRAI[0]}}" "${{FA[0]}}" "${{FAI[0]}}"; do ln -s "$F" "$(basename "$F")"; done
+        REGIONS=()
+        if [ ${{#GFF[@]}} -gt 0 ]; then
+            ln -s "${{GFF[0]}}" "$(basename "${{GFF[0]}}")"
+            REGIONS=(--gff "$(basename "${{GFF[0]}}")")
+        fi
+        PAIRS=()
+        [ {{inputs.single_end}} = true ] || PAIRS=(--collect-overlap-pairs)
+        unset DISPLAY
+        mkdir -p tmp
+        export _JAVA_OPTIONS=-Djava.io.tmpdir=./tmp
+        samtools view -hb -T "$(basename "${{FA[0]}}")" "$(basename "${{CRAM[0]}}")" |
+        qualimap \
+            --java-mem-size={JAVA_HEAP_MB}M \
+            bamqc \
+            $ARGS \
+            -bam /dev/stdin \
+            "${{REGIONS[@]}}" \
+            "${{PAIRS[@]}}" \
+            -outdir "$P" \
+            -nt $TASK_CPUS
+        cp -r "$P"/. {{outputs.results}}/
+    """,
+)
+
+# One image per environment: bamqc's and bamqccram's differ from rnaseq's, so `env` has three.
 qualimap_rnaseq_env = flyte.TaskEnvironment.from_task("qualimap_rnaseq", qualimap_rnaseq_cmd.as_task())
 qualimap_bamqc_env = flyte.TaskEnvironment.from_task("qualimap_bamqc", qualimap_bamqc_cmd.as_task())
-env = flyte.TaskEnvironment(name="qualimap", depends_on=[qualimap_rnaseq_env, qualimap_bamqc_env])
+qualimap_bamqccram_env = flyte.TaskEnvironment.from_task("qualimap_bamqccram", qualimap_bamqccram_cmd.as_task())
+env = flyte.TaskEnvironment(
+    name="qualimap", depends_on=[qualimap_rnaseq_env, qualimap_bamqc_env, qualimap_bamqccram_env]
+)
 
 
 async def qualimap_rnaseq(
@@ -165,3 +225,19 @@ async def qualimap_bamqc(
 ) -> Dir:
     """Run ``qualimap bamqc`` on ``bam`` (within ``gff``'s regions, if given); returns the report directory."""
     return await qualimap_bamqc_cmd(bam=bam, gff=gff, prefix=prefix, single_end=single_end, args=args)
+
+
+async def qualimap_bamqccram(
+    cram: File,
+    crai: File,
+    fasta: File,
+    fai: File,
+    prefix: str,
+    gff: File | None = None,
+    single_end: bool = False,
+    args: str = "",
+) -> Dir:
+    """Run ``qualimap bamqc`` on ``cram``, decoded against ``fasta`` (within ``gff``'s regions, if given)."""
+    return await qualimap_bamqccram_cmd(
+        cram=cram, crai=crai, gff=gff, fasta=fasta, fai=fai, prefix=prefix, single_end=single_end, args=args
+    )

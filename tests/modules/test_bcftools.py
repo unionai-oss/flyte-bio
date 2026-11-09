@@ -4,8 +4,8 @@ Upstream's bcftools/stats snapshot records the report's first six lines,
 which include the command line bcftools records.
 
 The other cases and expected values are upstream's bcftools/sort, norm, view,
-filter, annotate, mpileup, merge, index, concat, reheader, consensus and
-pluginsetgt tests
+filter, annotate, mpileup, merge, index, concat, reheader, consensus,
+pluginsetgt, query, convert and pluginsplit tests
 (modules commit 9a1cc9f, bcftools 1.25). Their snapshots hash outputs three ways, all reproduced here:
 
 - a plain md5 (``assert_md5``), or for ``.gz`` outputs the md5 of the
@@ -32,12 +32,15 @@ from flyte_bio.modules.bcftools import (
     bcftools_annotate,
     bcftools_concat,
     bcftools_consensus,
+    bcftools_convert,
     bcftools_filter,
     bcftools_index,
     bcftools_merge,
     bcftools_mpileup,
     bcftools_norm,
     bcftools_pluginsetgt,
+    bcftools_pluginsplit,
+    bcftools_query,
     bcftools_reheader,
     bcftools_sort,
     bcftools_stats,
@@ -548,6 +551,113 @@ async def test_bcftools_pluginsetgt_vcf() -> None:
         await check(result, "out_vcf.vcf.gz", label, gunzipped_md5=phased, index=f"out_vcf.vcf.gz.{suffix}")
 
 
+@env.task
+async def test_bcftools_query_vcf() -> None:
+    # upstream cases: bcftools/query "sarscov2 - [vcf, tbi], [], [], []" and "... vcf, tsv, []",
+    # with the test config's -f '%CHROM %POS %REF %ALT[%SAMPLE=%GT]'
+    vcf, tbi, regions, targets = await asyncio.gather(
+        fixture(VCF + "test.vcf.gz"),
+        fixture(VCF + "test.vcf.gz.tbi"),
+        fixture(VCF + "test3.vcf.gz"),
+        fixture(VCF + "test2.targets.tsv.gz"),
+    )
+    query_format = "%CHROM %POS %REF %ALT[%SAMPLE=%GT]"
+    plain, subset = await asyncio.gather(
+        bcftools_query(vcf, "out", index=tbi, format=query_format),
+        bcftools_query(vcf, "out", index=tbi, regions=regions, targets=targets, format=query_format),
+    )
+    for label, output, md5 in (
+        ("[vcf, tbi]", plain, "87a2ab194e1ee3219b44e58429ec3307"),
+        ("regions and targets", subset, "75a6bd0084e2e1838cf7baba11b99d19"),
+    ):
+        assert output.name == "out.txt", f"{label}: output is {output.name}"
+        await assert_md5(output, md5, label=f"query {label}")
+
+
+@env.task
+async def test_bcftools_convert_gvcf() -> None:
+    # upstream cases: bcftools/convert "homo_sapiens - vcf1, tbi, [], fasta - to bcf", "... - to hap"
+    # and "homo_sapiens - vcf1, tbi, bed, fasta - to gvcf"
+    gvcf, tbi, fasta, bed = await asyncio.gather(
+        fixture(HS + "illumina/gvcf/test.genome.vcf.gz"),
+        fixture(HS + "illumina/gvcf/test.genome.vcf.gz.tbi"),
+        fixture(HS + "genome/genome.fasta"),
+        fixture(HS + "genome/genome.bed"),
+    )
+    to_bcf, to_hap, to_vcf = await asyncio.gather(
+        bcftools_convert(
+            gvcf, "test3", index=tbi, fasta=fasta, args="--no-version --gvcf2vcf --output-type b5 --write-index=tbi"
+        ),
+        bcftools_convert(gvcf, "test3", index=tbi, fasta=fasta, args="--no-version --haplegendsample test"),
+        bcftools_convert(
+            gvcf, "test3", index=tbi, fasta=fasta, bed=bed, args="--no-version --gvcf2vcf --write-index=csi"
+        ),
+    )
+    # bcftools indexes a BCF with a .csi whatever --write-index asks for, as upstream's snapshot shows.
+    for label, result, name, md5 in (
+        ("to bcf", to_bcf, "test3.bcf.gz", "3e26eb6a474996a4ecd6fb874ff4dc97"),
+        ("to gvcf", to_vcf, "test3.vcf.gz", "ef40139c7f15d8df22c0cc5cb409ef88"),
+    ):
+        assert result.vcf is not None and result.vcf.name == name, f"{label}: output is {result.vcf}"
+        assert result.index is not None and result.index.name == f"{name}.csi", f"{label}: index is {result.index}"
+        await assert_gunzipped_md5(result.vcf, md5, label=f"convert {label}")
+    assert to_hap.hap is not None and to_hap.legend is not None and to_hap.samples is not None
+    await assert_gunzipped_md5(to_hap.hap, "1ecdaca6b10a55409ffd245fea63014f", label="test.hap.gz")
+    await assert_gunzipped_md5(to_hap.legend, "2b537fa86c2d86b175ebbd2007e05371", label="test.legend.gz")
+    await assert_md5(to_hap.samples, "2606935b2fe508d5fd14afc249c141c0", label="test.samples")
+
+
+SPLIT_VCF = HS + "illumina/gatk/paired_mutect2_calls/test_test2_paired_mutect2_calls.vcf.gz"
+# Upstream's samples and groups files: each sample kept under its own name, in its own file.
+SPLIT_SAMPLES = "normal\t-\tnormal\ntumour\t-\ttumour\n"
+
+
+@env.task
+async def test_bcftools_pluginsplit_vcf() -> None:
+    # upstream cases: bcftools/pluginsplit "homo_sapiens - [ vcf, tbi ], samples, [], [], []",
+    # "... [], groups, regions, targets" and its "- tbi" variant (with the test config's args)
+    vcf, tbi, regions, targets, samples, groups = await asyncio.gather(
+        fixture(SPLIT_VCF),
+        fixture(SPLIT_VCF + ".tbi"),
+        fixture(HS + "genome/genome.bed"),
+        fixture(HS + "genome/genome.multi_intervals.bed"),
+        write_text("samples.txt", SPLIT_SAMPLES),
+        write_text("groups.txt", SPLIT_SAMPLES),
+    )
+    by_samples, by_groups, indexed = await asyncio.gather(
+        bcftools_pluginsplit(vcf, index=tbi, samples=samples),
+        bcftools_pluginsplit(vcf, index=tbi, groups=groups, regions=regions, targets=targets),
+        bcftools_pluginsplit(
+            vcf, index=tbi, groups=groups, regions=regions, targets=targets, args="--write-index=tbi --output-type z"
+        ),
+    )
+    for label, result, md5s in (
+        ("samples", by_samples, ["69cfc4bf92bf3e2847081a2026a4d3bb", "08fa5c8d5561c2a8d7c300cb0eea1042"]),
+        ("groups", by_groups, ["78e962c3a724790b27041f28a4180600", "3008a0a06a2f319897fa04ea0018fcdd"]),
+    ):
+        names = [f.name for f in result.vcfs]
+        assert names == ["normal.vcf", "tumour.vcf"], f"{label}: wrote {names}"
+        for output, md5 in zip(result.vcfs, md5s, strict=True):
+            await assert_md5(output, md5, label=f"split {label} {output.name}")
+    names = [f.name for f in indexed.vcfs + indexed.indexes]
+    assert names == ["normal.vcf.gz", "tumour.vcf.gz", "normal.vcf.gz.tbi", "tumour.vcf.gz.tbi"], names
+
+
+@env.task
+async def test_bcftools_pluginsplit_no_samples() -> None:
+    # upstream case: bcftools/pluginsplit "homo_sapiens - [ vcf, tbi ], [], [], [], [], - error no sample"
+    vcf = await fixture(HS + "genome/vcf/dbsnp_146.hg38.vcf.gz")
+    tbi = await fixture(HS + "genome/vcf/dbsnp_146.hg38.vcf.gz.tbi")
+    try:
+        await bcftools_pluginsplit(vcf, index=tbi, args="--write-index=tbi --output-type z")
+    except Exception as e:  # the task fails: the VCF has no samples
+        # Upstream also matches bcftools' "No samples to split: input/dbsnp_146.hg38.vcf.gz"; a shell
+        # task's stderr isn't part of the error the cluster reports, so only the failure is checked.
+        print(f"bcftools plugin split failed as expected: {e}")
+    else:
+        raise AssertionError("bcftools plugin split accepted a VCF without samples")
+
+
 tests = [
     test_bcftools_stats,
     test_bcftools_filter_expression,
@@ -565,4 +675,8 @@ tests = [
     test_bcftools_reheader_vcf,
     test_bcftools_consensus_fasta,
     test_bcftools_pluginsetgt_vcf,
+    test_bcftools_query_vcf,
+    test_bcftools_convert_gvcf,
+    test_bcftools_pluginsplit_vcf,
+    test_bcftools_pluginsplit_no_samples,
 ]

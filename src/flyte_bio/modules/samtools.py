@@ -35,6 +35,13 @@ Exposes the subset of the samtools suite the RNA-seq pipeline leans on:
 - :func:`samtools_mpileup` — the pileup of an alignment (optionally against
   its reference, within intervals or, with ``-r`` in ``args``, a region of an
   indexed alignment), as ``<prefix>.mpileup.gz``.
+- :func:`samtools_coverage` — per-reference coverage statistics of an
+  alignment, as ``<prefix>.txt`` (a CRAM needs its reference and ``.fai``).
+- :func:`samtools_depth` — per-position depth of an alignment (optionally at
+  a BED's positions), as ``<prefix>.tsv``; as upstream, ``--threads`` is the
+  task's CPUs minus 1.
+- :func:`samtools_reheader` — a BAM with its header rewritten by a shell
+  command (``--command``), as ``<prefix>.bam``.
 
 fixmate, markdup and import write SAM, BAM or CRAM following ``--output-fmt`` in
 ``args`` (BAM by default). As upstream, calmd and markdup get ``-@`` of the
@@ -608,6 +615,97 @@ samtools_mpileup_cmd = shell.create(
 )
 
 
+# The alignment and its index (and the reference and its .fai) are linked
+# side by side under their own names.
+LINK_ALIGNMENT = r"""
+        W=$(mktemp -d); cd "$W"
+        NAME=$(basename "${IN[0]}"); ln -s "${IN[0]}" "$NAME"
+        if [ ${#IDX[@]} -gt 0 ]; then ln -s "${IDX[0]}" "$(basename "${IDX[0]}")"; fi
+        REF=()
+        if [ ${#FA[@]} -gt 0 ]; then
+            FA_NAME=$(basename "${FA[0]}"); ln -s "${FA[0]}" "$FA_NAME"; REF=(--reference "$FA_NAME")
+            if [ ${#FAI[@]} -gt 0 ]; then ln -s "${FAI[0]}" "$FA_NAME.fai"; fi
+        fi
+"""
+
+samtools_coverage_cmd = shell.create(
+    name="samtools_coverage",
+    image=SAMTOOLS_FASTQ_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={
+        "alignment": File,
+        "index": File | None,
+        "fasta": File | None,
+        "fai": File | None,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        IN=({{inputs.alignment}})
+        shopt -s nullglob; IDX=({{inputs.index}}); FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); shopt -u nullglob
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        {LINK_ALIGNMENT}
+        samtools coverage $ARGS -o "$P.txt" "${{REF[@]}}" "$NAME" || exit 1
+        mv "$P.txt" {{outputs.results}}/
+    """,
+)
+
+samtools_depth_cmd = shell.create(
+    name="samtools_depth",
+    image=SAMTOOLS_FASTQ_IMAGE,
+    resources=FASTQ_RESOURCES,
+    inputs={
+        "alignment": File,
+        "index": File | None,
+        "intervals": File | None,
+        "fasta": File | None,
+        "fai": File | None,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        IN=({{inputs.alignment}})
+        shopt -s nullglob
+        IDX=({{inputs.index}}); BED=({{inputs.intervals}}); FA=({{inputs.fasta}}); FAI=({{inputs.fai}})
+        shopt -u nullglob
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        {LINK_ALIGNMENT}
+        POSITIONS=()
+        if [ ${{#BED[@]}} -gt 0 ]; then POSITIONS=(-b "${{BED[0]}}"); fi
+        samtools depth --threads $(( TASK_CPUS - 1 )) $ARGS "${{POSITIONS[@]}}" -o "$P.tsv" "${{REF[@]}}" "$NAME" \
+            || exit 1
+        mv "$P.tsv" {{outputs.results}}/
+    """,
+)
+
+# The header command is a dedicated input: it is shell text with spaces and quotes.
+samtools_reheader_cmd = shell.create(
+    name="samtools_reheader",
+    image=SAMTOOLS_FASTQ_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"bam": File, "command": str, "prefix": str, "args": str},
+    defaults={"command": "", "args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        BAM=({inputs.bam})
+        COMMAND={inputs.command}
+        ARGS={inputs.args}
+        W=$(mktemp -d); cd "$W"
+        NAME=$(basename "${BAM[0]}"); ln -s "${BAM[0]}" "$NAME"
+        RECIPE=()
+        if [ -n "$COMMAND" ]; then RECIPE=(--command "$COMMAND"); fi
+        samtools reheader $ARGS "${RECIPE[@]}" "$NAME" > {outputs.results}/{inputs.prefix}.bam || exit 1
+    """,
+)
+
+
 samtools_tools_env = flyte.TaskEnvironment.from_task(
     "samtools_tools",
     samtools_faidx.as_task(),
@@ -628,6 +726,9 @@ samtools_fastq_env = flyte.TaskEnvironment.from_task(
     samtools_fixmate_cmd.as_task(),
     samtools_markdup_cmd.as_task(),
     samtools_import_cmd.as_task(),
+    samtools_coverage_cmd.as_task(),
+    samtools_depth_cmd.as_task(),
+    samtools_reheader_cmd.as_task(),
 )
 samtools_collatefastq_env = flyte.TaskEnvironment.from_task(
     "samtools_collatefastq",
@@ -896,4 +997,68 @@ async def samtools_mpileup(
     found = await results.get_file(f"{prefix}.mpileup.gz")
     if found is None:
         raise FileNotFoundError(f"samtools mpileup wrote no {prefix}.mpileup.gz")
+    return found
+
+
+async def samtools_coverage(
+    alignment: File,
+    prefix: str,
+    index: File | None = None,
+    fasta: File | None = None,
+    fai: File | None = None,
+    args: str = "",
+) -> File:
+    """Per-reference coverage statistics of ``alignment``: ``<prefix>.txt``.
+
+    A CRAM needs its reference ``fasta`` and ``fai``, as upstream.
+    """
+    if alignment.name.endswith(".cram") and (fasta is None or fai is None):
+        raise ValueError(
+            "CRAM input file provided but no reference FASTA and/or FAI index for said reference, "
+            "both are required for CRAM input."
+        )
+    results = await samtools_coverage_cmd(
+        alignment=alignment, index=index, fasta=fasta, fai=fai, prefix=prefix, args=args
+    )
+    found = await results.get_file(f"{prefix}.txt")
+    if found is None:
+        raise FileNotFoundError(f"samtools coverage wrote no {prefix}.txt")
+    return found
+
+
+async def samtools_depth(
+    alignment: File,
+    prefix: str,
+    index: File | None = None,
+    intervals: File | None = None,
+    fasta: File | None = None,
+    fai: File | None = None,
+    args: str = "",
+) -> File:
+    """The depth at each position of ``alignment``: ``<prefix>.tsv``.
+
+    ``intervals`` is a BED of the positions to report (``-b``); ``fasta``
+    (``--reference``, with its ``fai``) decodes a CRAM.
+    """
+    results = await samtools_depth_cmd(
+        alignment=alignment, index=index, intervals=intervals, fasta=fasta, fai=fai, prefix=prefix, args=args
+    )
+    found = await results.get_file(f"{prefix}.tsv")
+    if found is None:
+        raise FileNotFoundError(f"samtools depth wrote no {prefix}.tsv")
+    return found
+
+
+async def samtools_reheader(bam: File, prefix: str, command: str = "", args: str = "") -> File:
+    """``bam`` with its header rewritten: ``<prefix>.bam``.
+
+    ``command`` is shell text that reads the header on stdin and writes the
+    new one (``--command``), e.g. ``"grep -v ^@RG"``.
+    """
+    if bam.name == f"{prefix}.bam":
+        raise ValueError('Input and output names are the same, use "prefix" to disambiguate!')
+    results = await samtools_reheader_cmd(bam=bam, command=command, prefix=prefix, args=args)
+    found = await results.get_file(f"{prefix}.bam")
+    if found is None:
+        raise FileNotFoundError(f"samtools reheader wrote no {prefix}.bam")
     return found

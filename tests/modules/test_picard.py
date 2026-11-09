@@ -27,6 +27,17 @@ picard/collecthsmetrics cases are upstream's at the same commit (Picard
   name and reads md5.
 - SortSam (picard/sortsam at the same commit): the sorted BAM's name and
   reads md5, with the test config's ``<id>.sorted`` prefix.
+- CollectWgsMetrics (picard/collectwgsmetrics at the same commit, its own
+  Picard 3.5.0 + R image): upstream snapshots only whether the metrics contain
+  ``coverage    high_quality_coverage_count`` (spaces), which is ``false``, as
+  the table is tab-separated. These tests check that, plus that the file is a
+  Picard WGS-metrics report of this command with the tab-separated histogram.
+- CollectInsertSizeMetrics: the metrics file's lines 6-9 (the metrics table)
+  and the histogram's name.
+- CollectRnaSeqMetrics: that the metrics name CollectRnaSeqMetrics and that no
+  chart is written, with the refFlat from ucsc/gtftogenepred and the test
+  config's args, as upstream.
+- BedToIntervalList: the interval list's md5.
 """
 
 import asyncio
@@ -37,8 +48,12 @@ from flyte.io import File
 from flyte_bio.modules.picard import (
     CollectMultipleMetricsResult,
     picard_addorreplacereadgroups,
+    picard_bedtointervallist,
     picard_collecthsmetrics,
+    picard_collectinsertsizemetrics,
     picard_collectmultiplemetrics,
+    picard_collectrnaseqmetrics,
+    picard_collectwgsmetrics,
     picard_createsequencedictionary,
     picard_filtersamreads,
     picard_markduplicates,
@@ -46,7 +61,8 @@ from flyte_bio.modules.picard import (
     picard_sortsam,
 )
 from flyte_bio.modules.samtools import samtools_view
-from tests.framework import assert_nonempty, assert_reads_md5, env, fixture
+from flyte_bio.modules.ucsc import gtftogenepred
+from tests.framework import assert_md5, assert_nonempty, assert_reads_md5, env, fixture
 
 SC2 = "genomics/sarscov2/"
 COLLECTMULTIPLEMETRICS_METRICS = [
@@ -298,6 +314,100 @@ async def test_picard_filtersamreads() -> None:
             assert result.bai is None, f"{label}: unexpected {result.bai}"
 
 
+async def check_collectwgsmetrics(metrics: File) -> None:
+    assert metrics.name == "test.CollectWgsMetrics.coverage_metrics", metrics.name
+    async with metrics.open("rb") as fh:
+        text = bytes(await fh.read()).decode()
+    # Upstream's whole snapshot: this (space-separated) string is not in the tab-separated table.
+    assert ("coverage    high_quality_coverage_count" in text) is False, "unexpected space-separated header"
+    lines = text.splitlines()
+    assert lines[1].startswith("# CollectWgsMetrics ") and "--REFERENCE_SEQUENCE genome.fasta" in lines[1], lines[1]
+    assert "## METRICS CLASS\tpicard.analysis.WgsMetrics" in lines, "no WGS metrics table"
+    histogram = lines.index("## HISTOGRAM\tjava.lang.Integer") if "## HISTOGRAM\tjava.lang.Integer" in lines else -1
+    assert histogram > 0 and lines[histogram + 1].split("\t")[:2] == ["coverage", "high_quality_coverage_count"], (
+        f"no coverage histogram: {lines[histogram : histogram + 2]}"
+    )
+
+
+@env.task
+async def test_picard_collectwgsmetrics() -> None:
+    # upstream case: picard/collectwgsmetrics "test-picard-collectwgsmetrics"
+    bam, bai = await sorted_bam()
+    fasta = await fixture(SC2 + "genome/genome.fasta")
+    fai = await fixture(SC2 + "genome/genome.fasta.fai")
+    await check_collectwgsmetrics(await picard_collectwgsmetrics(bam, fasta, prefix="test", bai=bai, fai=fai))
+
+
+@env.task
+async def test_picard_collectwgsmetrics_with_interval() -> None:
+    # upstream case: picard/collectwgsmetrics "test-picard-collectwgsmetrics-with-interval" (no BAM index)
+    bam = await fixture(SC2 + "illumina/bam/test.paired_end.sorted.bam")
+    fasta = await fixture(SC2 + "genome/genome.fasta")
+    fai = await fixture(SC2 + "genome/genome.fasta.fai")
+    intervals = await fixture(SC2 + "genome/picard/baits.interval_list")
+    metrics = await picard_collectwgsmetrics(bam, fasta, prefix="test", fai=fai, intervals=intervals)
+    await check_collectwgsmetrics(metrics)
+    header = (await text_lines(metrics))[1]
+    assert "--INTERVALS baits.interval_list" in header, header
+
+
+INSERT_SIZE_HEADER = (
+    "MEDIAN_INSERT_SIZE\tMODE_INSERT_SIZE\tMEDIAN_ABSOLUTE_DEVIATION\tMIN_INSERT_SIZE\tMAX_INSERT_SIZE\t"
+    "MEAN_INSERT_SIZE\tSTANDARD_DEVIATION\tREAD_PAIRS\tPAIR_ORIENTATION\tWIDTH_OF_10_PERCENT\tWIDTH_OF_20_PERCENT\t"
+    "WIDTH_OF_30_PERCENT\tWIDTH_OF_40_PERCENT\tWIDTH_OF_50_PERCENT\tWIDTH_OF_60_PERCENT\tWIDTH_OF_70_PERCENT\t"
+    "WIDTH_OF_80_PERCENT\tWIDTH_OF_90_PERCENT\tWIDTH_OF_95_PERCENT\tWIDTH_OF_99_PERCENT\tSAMPLE\tLIBRARY\tREAD_GROUP"
+)
+
+
+@env.task
+async def test_picard_collectinsertsizemetrics() -> None:
+    # upstream case: picard/collectinsertsizemetrics "test-picard-collectinsertsizemetrics"
+    bam = await fixture(SC2 + "illumina/bam/test.paired_end.bam")
+    result = await picard_collectinsertsizemetrics(bam, prefix="test")
+    expected = [
+        "## METRICS CLASS\tpicard.analysis.InsertSizeMetrics",
+        INSERT_SIZE_HEADER,
+        "209\t159\t46\t77\t364\t207.659794\t66.769018\t97\tFR\t25\t49\t59\t77\t93\t123\t145\t183\t223\t255\t311\t\t\t",
+        "",
+    ]
+    lines = (await text_lines(result.metrics))[5:9]
+    assert lines == expected, lines
+    assert result.histogram.name == "test.pdf", result.histogram.name
+    async with result.histogram.open("rb") as fh:
+        assert bytes(await fh.read(5)) == b"%PDF-", "histogram is not a PDF"
+
+
+@env.task
+async def test_picard_collectrnaseqmetrics() -> None:
+    # upstream case: picard/collectrnaseqmetrics "sarscov2 - fasta - gtf" (refFlat from ucsc/gtftogenepred)
+    gtf = await fixture(SC2 + "genome/genome.gtf")
+    genepred = await gtftogenepred(gtf, prefix="test", args="-genePredExt -geneNameAsName2 -ignoreGroupsWithoutExons")
+    assert genepred.refflat is not None
+    bam = await fixture(SC2 + "illumina/bam/test.paired_end.sorted.bam")
+    fasta = await fixture(SC2 + "genome/genome.fasta")
+    result = await picard_collectrnaseqmetrics(
+        bam,
+        genepred.refflat,
+        prefix="test",
+        fasta=fasta,
+        args="--STRAND_SPECIFICITY FIRST_READ_TRANSCRIPTION_STRAND",
+    )
+    assert result.metrics.name == "test.rna_metrics", result.metrics.name
+    text = "\n".join(await text_lines(result.metrics))
+    assert "CollectRnaSeqMetrics" in text, "metrics don't name CollectRnaSeqMetrics"
+    assert result.pdfs == [], [f.name for f in result.pdfs]
+
+
+@env.task
+async def test_picard_bedtointervallist() -> None:
+    # upstream case: picard/bedtointervallist "test-picard-bedtointervallist"
+    bed = await fixture(SC2 + "genome/bed/test.bed")
+    sequence_dict = await fixture(SC2 + "genome/genome.dict")
+    intervals = await picard_bedtointervallist(bed, sequence_dict, prefix="test")
+    assert intervals.name == "test.intervallist", intervals.name
+    await assert_md5(intervals, "e51101c9357fb2d59fd30e370eefa39c", label="interval list")
+
+
 tests = [
     test_markduplicates_sorted_bam,
     test_picard_collectmultiplemetrics,
@@ -314,4 +424,9 @@ tests = [
     test_picard_mergesamfiles_bams,
     test_picard_sortsam_queryname,
     test_picard_filtersamreads,
+    test_picard_collectwgsmetrics,
+    test_picard_collectwgsmetrics_with_interval,
+    test_picard_collectinsertsizemetrics,
+    test_picard_collectrnaseqmetrics,
+    test_picard_bedtointervallist,
 ]

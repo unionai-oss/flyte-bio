@@ -9,9 +9,13 @@ The ktUpdateTaxonomy case is upstream's krona/ktupdatetaxonomy test (same
 commit). NCBI's taxonomy changes daily, so upstream checks only the
 database's name; this test also checks it's a KronaTools taxonomy, rooted at
 taxon 1.
+
+The ktImportText case is upstream's krona/ktimporttext test (same commit),
+which charts a Kraken2 report as text and checks the chart's name only; this
+test also checks it's a Krona chart.
 """
 
-from flyte_bio.modules.krona import krona_ktimporttaxonomy, krona_ktupdatetaxonomy
+from flyte_bio.modules.krona import krona_ktimporttaxonomy, krona_ktimporttext, krona_ktupdatetaxonomy
 from tests.framework import env, fixture
 
 METAGENOME = "genomics/sarscov2/metagenome/"
@@ -39,4 +43,14 @@ async def test_krona_ktupdatetaxonomy() -> None:
     assert root[0] == "1" and root[-1] == "root", f"taxonomy.tab starts with {root}"
 
 
-tests = [test_krona_ktimporttaxonomy_kraken_report, test_krona_ktupdatetaxonomy]
+@env.task
+async def test_krona_ktimporttext_kraken_report() -> None:
+    # upstream case: krona/ktimporttext "sarscov2 - metagenome - kraken report"
+    html = await krona_ktimporttext(await fixture(METAGENOME + "test_1.kraken2.report.txt"), prefix="test")
+    assert html.name == "test.html", html.name
+    async with html.open("rb") as fh:
+        text = bytes(await fh.read()).decode()
+    assert "<krona" in text, "test.html isn't a Krona chart"
+
+
+tests = [test_krona_ktimporttaxonomy_kraken_report, test_krona_ktupdatetaxonomy, test_krona_ktimporttext_kraken_report]

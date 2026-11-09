@@ -3,6 +3,9 @@
 The case is upstream's vcflib/vcffilter test (modules commit 9a1cc9f, vcflib
 1.0.14), with its test config's ``-f "DP > 4"``. Upstream snapshots nft-vcf's
 ``variantsMD5`` (the md5 of the record lines), as this test does.
+
+The vcffixup cases are upstream's vcflib/vcffixup tests at the same commit:
+the outputs' names, and the bgzipped VCF's ``variantsMD5``.
 """
 
 import gzip
@@ -10,7 +13,7 @@ import hashlib
 
 from flyte.io import File
 
-from flyte_bio.modules.vcflib import vcflib_vcffilter
+from flyte_bio.modules.vcflib import vcflib_vcffilter, vcflib_vcffixup
 from tests.framework import env, fixture
 
 VCF = "genomics/sarscov2/illumina/vcf/test.vcf.gz"
@@ -35,4 +38,17 @@ async def test_vcflib_vcffilter_depth() -> None:
     assert variants == "86a26a6b691c05bc7f6e74772b44543d", f"variantsMD5 {variants}"
 
 
-tests = [test_vcflib_vcffilter_depth]
+@env.task
+async def test_vcflib_vcffixup() -> None:
+    # upstream cases: vcflib/vcffixup "test-vcflib-vcffixup - vcf.gz - no index" and "... - bcf.gz - csi"
+    vcf, tbi = await fixture(VCF), await fixture(VCF + ".tbi")
+    as_vcf = await vcflib_vcffixup(vcf, tbi=tbi, prefix="test.fixed", args2="-Oz")
+    assert as_vcf.vcf.name == "test.fixed.vcf.gz" and as_vcf.index is None, f"wrote {as_vcf.vcf.name}"
+    variants = await vcflib_variants_md5(as_vcf.vcf)
+    assert variants == "129354635f189827c91335aab65b084", f"variantsMD5 {variants}"
+    as_bcf = await vcflib_vcffixup(vcf, tbi=tbi, prefix="test.fixed", args2="-Ob --write-index=csi")
+    names = (as_bcf.vcf.name, as_bcf.index.name if as_bcf.index else None)
+    assert names == ("test.fixed.bcf.gz", "test.fixed.bcf.gz.csi"), f"wrote {names}"
+
+
+tests = [test_vcflib_vcffilter_depth, test_vcflib_vcffixup]

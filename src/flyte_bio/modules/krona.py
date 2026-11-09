@@ -9,14 +9,18 @@ Exposes:
   ``args`` or a task override). It returns the single ``taxonomy.tab`` File,
   ready for :func:`krona_ktimporttaxonomy`.
 - :func:`krona_ktimporttaxonomy`, which runs ``ktImportTaxonomy`` on
-one classification (a Kraken2 report, a BLAST table, ...) and writes the
-interactive chart ``<prefix>.html``. ``taxonomy`` is KronaTools' taxonomy
-database, a ``taxonomy.tab`` (``updateTaxonomy.sh`` builds one); it's staged
-as ``taxonomy.tab`` in a directory of its own, as upstream.
+  one classification (a Kraken2 report, a BLAST table, ...) and writes the
+  interactive chart ``<prefix>.html``. ``taxonomy`` is KronaTools' taxonomy
+  database, a ``taxonomy.tab`` (``updateTaxonomy.sh`` builds one); it's staged
+  as ``taxonomy.tab`` in a directory of its own, as upstream.
+- :func:`krona_ktimporttext`, which runs ``ktImportText`` on one text file of
+  counts and lineages (a count, then the lineage's names, tab-separated: as
+  ``kaiju2krona`` and ``kreport2krona.py`` write) and writes the interactive
+  chart ``<prefix>.html``. It needs no taxonomy database.
 
-``args`` carries ktImportTaxonomy's options, as upstream's ``ext.args``: for a
-Kraken2 report, ``-t 5 -m 3`` reads the taxon ID from column 5 and the count
-from column 3.
+``args`` carries ktImportTaxonomy's (or ktImportText's) options, as
+upstream's ``ext.args``: for a Kraken2 report, ``-t 5 -m 3`` reads the taxon
+ID from column 5 and the count from column 3.
 """
 
 import flyte
@@ -58,6 +62,28 @@ krona_ktimporttaxonomy_cmd = shell.create(
     """,
 )
 
+krona_ktimporttext_cmd = shell.create(
+    name="krona_ktimporttext",
+    image=KRONA_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"report": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        REPORT=({inputs.report})
+        P={inputs.prefix}
+        ARGS={inputs.args}
+        OUT={outputs.results}
+        W=$(mktemp -d); cd "$W"
+        ktImportText \
+            $ARGS \
+            -o "$P.html" \
+            "${REPORT[0]}" \
+            || exit 1
+        mv "$P.html" "$OUT"/
+    """,
+)
+
 krona_ktupdatetaxonomy_cmd = shell.create(
     name="krona_ktupdatetaxonomy",
     image=KRONA_MAKE_IMAGE,
@@ -77,7 +103,9 @@ krona_ktupdatetaxonomy_cmd = shell.create(
 )
 
 # One image per environment: ktUpdateTaxonomy.sh's adds make, so `env` has two.
-krona_tools_env = flyte.TaskEnvironment.from_task("krona_tools", krona_ktimporttaxonomy_cmd.as_task())
+krona_tools_env = flyte.TaskEnvironment.from_task(
+    "krona_tools", krona_ktimporttaxonomy_cmd.as_task(), krona_ktimporttext_cmd.as_task()
+)
 krona_make_env = flyte.TaskEnvironment.from_task("krona_make", krona_ktupdatetaxonomy_cmd.as_task())
 env = flyte.TaskEnvironment(name="krona", depends_on=[krona_tools_env, krona_make_env])
 
@@ -97,4 +125,13 @@ async def krona_ktimporttaxonomy(report: File, taxonomy: File, prefix: str = "sa
     html = await results.get_file(f"{prefix}.html")
     if html is None:
         raise FileNotFoundError(f"ktImportTaxonomy wrote no {prefix}.html")
+    return html
+
+
+async def krona_ktimporttext(report: File, prefix: str = "sample", args: str = "") -> File:
+    """The Krona chart ``<prefix>.html`` of the text file of counts and lineages ``report``."""
+    results = await krona_ktimporttext_cmd(report=report, prefix=prefix, args=args)
+    html = await results.get_file(f"{prefix}.html")
+    if html is None:
+        raise FileNotFoundError(f"ktImportText wrote no {prefix}.html")
     return html

@@ -27,9 +27,20 @@ Exposes:
   ``filter`` (``includeAligned``, ``excludeAligned``, ``includeReadList``,
   ``excludeReadList``, …) into ``<prefix>.bam`` (with ``<prefix>.bai`` when
   ``args`` has ``--CREATE_INDEX true`` and the BAM is coordinate-sorted).
+- :func:`picard_collectwgsmetrics`, which writes whole-genome coverage
+  metrics, ``<prefix>.CollectWgsMetrics.coverage_metrics``, for a BAM against
+  its reference, optionally over an interval list.
+- :func:`picard_collectinsertsizemetrics`, which writes a paired-end BAM's
+  insert-size metrics, ``<prefix>.txt``, and histogram, ``<prefix>.pdf``.
+- :func:`picard_collectrnaseqmetrics`, which writes RNA-seq alignment
+  metrics, ``<prefix>.rna_metrics``, against a refFlat annotation (and a
+  ``<prefix>`` chart PDF when ``args`` sets ``--CHART_OUTPUT``).
+- :func:`picard_bedtointervallist`, which converts a BED to a Picard interval
+  list, ``<prefix>.intervallist``, with a sequence dictionary.
 
-Upstream pins a newer Picard (3.5.0) for every tool but MarkDuplicates, so
-those share a second environment and ``env`` aggregates both.
+Upstream pins a newer Picard (3.5.0) for every tool but MarkDuplicates and
+CollectWgsMetrics, so those share a second environment. CollectWgsMetrics
+uses a Picard + R image of its own, a third. ``env`` aggregates all three.
 
 Outputs are written under their natural names (``<prefix>.bam``,
 ``<prefix>.metrics.txt``) inside an output Dir. The reference FASTA and its
@@ -48,6 +59,7 @@ from flyte_bio.limits import JAVA_HEAP_MB, TASK_LIMITS
 
 PICARD_IMAGE = "community.wave.seqera.io/library/picard:3.4.0--e9963040df0a9bf6"
 COLLECTMULTIPLEMETRICS_IMAGE = "community.wave.seqera.io/library/picard:3.5.0--be20f299a1924f0d"
+COLLECTWGSMETRICS_IMAGE = "community.wave.seqera.io/library/picard_r-base:5659104ba2ac5868"
 
 PICARD_MEMORY_MB = 8192
 DEFAULT_RESOURCES = flyte.Resources(cpu=2, memory=f"{PICARD_MEMORY_MB}Mi")
@@ -346,10 +358,162 @@ picard_filtersamreads_cmd = shell.create(
 )
 
 
-# One image per environment: every tool but MarkDuplicates uses the newer Picard, so `env` aggregates two.
+# As upstream, the BAM and its index (when given) sit side by side, as do the
+# reference and its .fai.
+picard_collectwgsmetrics_cmd = shell.create(
+    name="picard_collectwgsmetrics",
+    image=COLLECTWGSMETRICS_IMAGE,
+    resources=COLLECTMULTIPLEMETRICS_RESOURCES,
+    inputs={
+        "bam": File,
+        "bai": File | None,
+        "fasta": File,
+        "fai": File | None,
+        "intervals": File | None,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        BAM=({{inputs.bam}}); FA=({{inputs.fasta}})
+        shopt -s nullglob
+        BAI=({{inputs.bai}}); FAI=({{inputs.fai}}); INTERVALS=({{inputs.intervals}})
+        shopt -u nullglob
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        for f in "${{BAM[0]}}" "${{BAI[@]}}" "${{FA[0]}}" "${{FAI[@]}}" "${{INTERVALS[@]}}"; do
+            ln -s "$f" "$(basename "$f")"
+        done
+        INTERVAL=()
+        if [ ${{#INTERVALS[@]}} -gt 0 ]; then INTERVAL=(--INTERVALS "$(basename "${{INTERVALS[0]}}")"); fi
+        picard \
+            -Xmx{JAVA_HEAP_MB}M \
+            CollectWgsMetrics \
+            $ARGS \
+            --INPUT "$(basename "${{BAM[0]}}")" \
+            --OUTPUT "$P.CollectWgsMetrics.coverage_metrics" \
+            --REFERENCE_SEQUENCE "$(basename "${{FA[0]}}")" \
+            "${{INTERVAL[@]}}" || exit 1
+        mv "$P.CollectWgsMetrics.coverage_metrics" {{outputs.results}}/
+    """,
+)
+
+
+picard_collectinsertsizemetrics_cmd = shell.create(
+    name="picard_collectinsertsizemetrics",
+    image=COLLECTMULTIPLEMETRICS_IMAGE,
+    resources=COLLECTMULTIPLEMETRICS_RESOURCES,
+    inputs={"bam": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        BAM=({{inputs.bam}})
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        ln -s "${{BAM[0]}}" "$(basename "${{BAM[0]}}")"
+        picard \
+            -Xmx{JAVA_HEAP_MB}M \
+            CollectInsertSizeMetrics \
+            --INPUT "$(basename "${{BAM[0]}}")" \
+            --OUTPUT "$P.txt" \
+            --Histogram_FILE "$P.pdf" \
+            $ARGS || exit 1
+        mv "$P.txt" "$P.pdf" {{outputs.results}}/
+    """,
+)
+
+
+# The reference and the rRNA intervals are optional, as upstream.
+picard_collectrnaseqmetrics_cmd = shell.create(
+    name="picard_collectrnaseqmetrics",
+    image=COLLECTMULTIPLEMETRICS_IMAGE,
+    resources=COLLECTMULTIPLEMETRICS_RESOURCES,
+    inputs={
+        "bam": File,
+        "ref_flat": File,
+        "fasta": File | None,
+        "rrna_intervals": File | None,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        BAM=({{inputs.bam}}); REF_FLAT=({{inputs.ref_flat}})
+        shopt -s nullglob; FA=({{inputs.fasta}}); RRNA=({{inputs.rrna_intervals}}); shopt -u nullglob
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        for f in "${{BAM[0]}}" "${{REF_FLAT[0]}}" "${{FA[@]}}" "${{RRNA[@]}}"; do
+            ln -s "$f" "$(basename "$f")"
+        done
+        OPTIONAL=()
+        if [ ${{#FA[@]}} -gt 0 ]; then OPTIONAL+=(--REFERENCE_SEQUENCE "$(basename "${{FA[0]}}")"); fi
+        if [ ${{#RRNA[@]}} -gt 0 ]; then OPTIONAL+=(--RIBOSOMAL_INTERVALS "$(basename "${{RRNA[0]}}")"); fi
+        picard \
+            -Xmx{JAVA_HEAP_MB}M \
+            CollectRnaSeqMetrics \
+            $ARGS \
+            "${{OPTIONAL[@]}}" \
+            --REF_FLAT "$(basename "${{REF_FLAT[0]}}")" \
+            --INPUT "$(basename "${{BAM[0]}}")" \
+            --OUTPUT "$P.rna_metrics" || exit 1
+        shopt -s nullglob
+        mv "$P.rna_metrics" ./*.pdf {{outputs.results}}/
+    """,
+)
+
+
+picard_bedtointervallist_cmd = shell.create(
+    name="picard_bedtointervallist",
+    image=COLLECTMULTIPLEMETRICS_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"bed": File, "sequence_dict": File, "arguments_file": File | None, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        BED=({{inputs.bed}}); DICT=({{inputs.sequence_dict}})
+        shopt -s nullglob; ARGUMENTS_FILE=({{inputs.arguments_file}}); shopt -u nullglob
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        for f in "${{BED[0]}}" "${{DICT[0]}}" "${{ARGUMENTS_FILE[@]}}"; do
+            ln -s "$f" "$(basename "$f")"
+        done
+        ARGS_FILE=()
+        if [ ${{#ARGUMENTS_FILE[@]}} -gt 0 ]; then
+            ARGS_FILE=(--arguments_file "$(basename "${{ARGUMENTS_FILE[0]}}")")
+        fi
+        picard \
+            -Xmx{JAVA_HEAP_MB}M \
+            BedToIntervalList \
+            --INPUT "$(basename "${{BED[0]}}")" \
+            --OUTPUT "$P.intervallist" \
+            --SEQUENCE_DICTIONARY "$(basename "${{DICT[0]}}")" \
+            --TMP_DIR . \
+            "${{ARGS_FILE[@]}}" \
+            $ARGS || exit 1
+        mv "$P.intervallist" {{outputs.results}}/
+    """,
+)
+
+
+# One image per environment: every tool but MarkDuplicates and CollectWgsMetrics uses the newer Picard, so `env`
+# aggregates three.
 picard_markduplicates_env = flyte.TaskEnvironment.from_task(
     "picard_markduplicates",
     picard_markduplicates_cmd.as_task(),
+)
+picard_collectwgsmetrics_env = flyte.TaskEnvironment.from_task(
+    "picard_collectwgsmetrics",
+    picard_collectwgsmetrics_cmd.as_task(),
 )
 picard_collectmultiplemetrics_env = flyte.TaskEnvironment.from_task(
     "picard_collectmultiplemetrics",
@@ -360,8 +524,14 @@ picard_collectmultiplemetrics_env = flyte.TaskEnvironment.from_task(
     picard_mergesamfiles_cmd.as_task(),
     picard_sortsam_cmd.as_task(),
     picard_filtersamreads_cmd.as_task(),
+    picard_collectinsertsizemetrics_cmd.as_task(),
+    picard_collectrnaseqmetrics_cmd.as_task(),
+    picard_bedtointervallist_cmd.as_task(),
 )
-env = flyte.TaskEnvironment(name="picard", depends_on=[picard_markduplicates_env, picard_collectmultiplemetrics_env])
+env = flyte.TaskEnvironment(
+    name="picard",
+    depends_on=[picard_markduplicates_env, picard_collectmultiplemetrics_env, picard_collectwgsmetrics_env],
+)
 
 
 @dataclass
@@ -550,3 +720,79 @@ async def picard_filtersamreads(
     return FilterSamReadsResult(
         bam=await pick_file(results, f"{prefix}.bam", "FilterSamReads"), bai=await results.get_file(f"{prefix}.bai")
     )
+
+
+async def picard_collectwgsmetrics(
+    bam: File,
+    fasta: File,
+    prefix: str,
+    bai: File | None = None,
+    fai: File | None = None,
+    intervals: File | None = None,
+    args: str = "",
+) -> File:
+    """Whole-genome coverage metrics of ``bam``: ``<prefix>.CollectWgsMetrics.coverage_metrics``.
+
+    ``intervals``, a Picard interval list, restricts the metrics to its regions.
+    """
+    results = await picard_collectwgsmetrics_cmd(
+        bam=bam, bai=bai, fasta=fasta, fai=fai, intervals=intervals, prefix=prefix, args=args
+    )
+    return await pick_file(results, f"{prefix}.CollectWgsMetrics.coverage_metrics", "CollectWgsMetrics")
+
+
+@dataclass
+class CollectInsertSizeMetricsResult:
+    metrics: File  # <prefix>.txt
+    histogram: File  # <prefix>.pdf
+
+
+async def picard_collectinsertsizemetrics(bam: File, prefix: str, args: str = "") -> CollectInsertSizeMetricsResult:
+    """Insert-size metrics of a paired-end ``bam``: ``<prefix>.txt`` and the histogram ``<prefix>.pdf``."""
+    results = await picard_collectinsertsizemetrics_cmd(bam=bam, prefix=prefix, args=args)
+    return CollectInsertSizeMetricsResult(
+        metrics=await pick_file(results, f"{prefix}.txt", "CollectInsertSizeMetrics"),
+        histogram=await pick_file(results, f"{prefix}.pdf", "CollectInsertSizeMetrics"),
+    )
+
+
+@dataclass
+class CollectRnaSeqMetricsResult:
+    metrics: File  # <prefix>.rna_metrics
+    pdfs: list[File]  # the chart, when args sets --CHART_OUTPUT
+
+
+async def picard_collectrnaseqmetrics(
+    bam: File,
+    ref_flat: File,
+    prefix: str,
+    fasta: File | None = None,
+    rrna_intervals: File | None = None,
+    args: str = "",
+) -> CollectRnaSeqMetricsResult:
+    """RNA-seq alignment metrics of ``bam`` against the ``ref_flat`` annotation: ``<prefix>.rna_metrics``.
+
+    The strand (``--STRAND_SPECIFICITY``) goes in ``args``; ``rrna_intervals`` is a Picard interval list of
+    the rRNA genes.
+    """
+    results = await picard_collectrnaseqmetrics_cmd(
+        bam=bam, ref_flat=ref_flat, fasta=fasta, rrna_intervals=rrna_intervals, prefix=prefix, args=args
+    )
+    files = sorted([f async for f in results.walk()], key=lambda f: f.name)
+    return CollectRnaSeqMetricsResult(
+        metrics=await pick_file(results, f"{prefix}.rna_metrics", "CollectRnaSeqMetrics"),
+        pdfs=[f for f in files if f.name.endswith(".pdf")],
+    )
+
+
+async def picard_bedtointervallist(
+    bed: File, sequence_dict: File, prefix: str, arguments_file: File | None = None, args: str = ""
+) -> File:
+    """``bed`` as a Picard interval list with ``sequence_dict``'s header: ``<prefix>.intervallist``.
+
+    ``arguments_file`` is a file of further Picard arguments (``--arguments_file``).
+    """
+    results = await picard_bedtointervallist_cmd(
+        bed=bed, sequence_dict=sequence_dict, arguments_file=arguments_file, prefix=prefix, args=args
+    )
+    return await pick_file(results, f"{prefix}.intervallist", "BedToIntervalList")

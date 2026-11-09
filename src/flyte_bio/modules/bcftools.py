@@ -28,6 +28,15 @@ Exposes:
 - :func:`bcftools_pluginsetgt` — set genotypes with the ``setGT`` plugin:
   genotypes matching ``target_gt`` become ``new_gt``, optionally only in
   regions or targets files.
+- :func:`bcftools_query` — extract fields from a VCF/BCF in a user-defined
+  format (``-f``), into ``<prefix>.txt``.
+- :func:`bcftools_convert` — convert a VCF/BCF (e.g. a gVCF to a VCF with
+  ``--gvcf2vcf``) into ``<prefix>.<extension>``, or into IMPUTE2
+  haplotypes, legend and samples files with ``--haplegendsample <name>``
+  (``<name>.hap.gz``, ``<name>.legend.gz``, ``<name>.samples``).
+- :func:`bcftools_pluginsplit` — split a VCF into one file per sample (or
+  group of samples) with the ``split`` plugin, named after the samples (or
+  the names a samples or groups file gives).
 
 The VCF-writing tools other than :func:`bcftools_mpileup` (whose ``args3`` play
 the part) and :func:`bcftools_reheader` (whose ``args2`` do) take the output
@@ -483,6 +492,113 @@ bcftools_pluginsetgt_cmd = shell.create(
     """,
 )
 
+# As upstream: the format (-f) is a dedicated input, as it usually has spaces.
+bcftools_query_cmd = shell.create(
+    name="bcftools_query",
+    image=BCFTOOLS_TOOLS_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={
+        "vcf": File,
+        "index": File | None,
+        "regions": File | None,
+        "targets": File | None,
+        "samples": File | None,
+        "format": str,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"format": "", "args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        V=({{inputs.vcf}})
+        shopt -s nullglob
+        I=({{inputs.index}}); R=({{inputs.regions}}); T=({{inputs.targets}}); S=({{inputs.samples}})
+        shopt -u nullglob
+        P={{inputs.prefix}}; OUT={{outputs.results}}
+        FORMAT={{inputs.format}}
+        set -f
+        ARGS={{inputs.args}}
+        {LINK_VCF}
+        SUBSET=()
+        if [ ${{#R[@]}} -gt 0 ]; then SUBSET+=(--regions-file "$(link "${{R[0]}}")"); fi
+        if [ ${{#T[@]}} -gt 0 ]; then SUBSET+=(--targets-file "$(link "${{T[0]}}")"); fi
+        if [ ${{#S[@]}} -gt 0 ]; then SUBSET+=(--samples-file "$(link "${{S[0]}}")"); fi
+        FMT=()
+        if [ -n "$FORMAT" ]; then FMT=(-f "$FORMAT"); fi
+        bcftools query "${{SUBSET[@]}}" "${{FMT[@]}}" $ARGS "$NAME" > "$OUT/$P.txt" || exit 1
+    """,
+)
+
+# As upstream; with --haplegendsample in the args there is no --output, and
+# bcftools writes <name>.hap.gz, .legend.gz and .samples itself. Every file
+# bcftools writes (the inputs are symlinks) is an output.
+bcftools_convert_cmd = shell.create(
+    name="bcftools_convert",
+    image=BCFTOOLS_TOOLS_IMAGE,
+    resources=TOOLS_RESOURCES,
+    inputs={"vcf": File, "index": File | None, "fasta": File | None, "bed": File | None, **VCF_IO},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        V=({{inputs.vcf}})
+        shopt -s nullglob; I=({{inputs.index}}); FA=({{inputs.fasta}}); B=({{inputs.bed}}); shopt -u nullglob
+        P={{inputs.prefix}}; EXT={{inputs.extension}}; OUT={{outputs.results}}
+        set -f
+        ARGS={{inputs.args}}
+        {LINK_VCF}
+        EXTRA=()
+        if [ ${{#B[@]}} -gt 0 ]; then EXTRA+=(--regions-file "$(link "${{B[0]}}")"); fi
+        OUTPUT=()
+        if [[ " $ARGS " != *" --haplegendsample "* ]]; then OUTPUT=(--output "$P.$EXT"); fi
+        REF=()
+        if [ ${{#FA[@]}} -gt 0 ]; then REF=(--fasta-ref "$(link "${{FA[0]}}")"); fi
+        bcftools convert $ARGS "${{EXTRA[@]}}" "${{OUTPUT[@]}}" --threads $TASK_CPUS "${{REF[@]}}" "$NAME" || exit 1
+        find . -maxdepth 1 -type f -exec mv {{}} "$OUT"/ \;
+    """,
+)
+
+# As upstream, the VCF and its index are staged under input/ and the
+# per-sample files written to the working directory.
+bcftools_pluginsplit_cmd = shell.create(
+    name="bcftools_pluginsplit",
+    image=BCFTOOLS_TOOLS_IMAGE,
+    resources=TOOLS_RESOURCES,
+    inputs={
+        "vcf": File,
+        "index": File | None,
+        "samples": File | None,
+        "groups": File | None,
+        "regions": File | None,
+        "targets": File | None,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        V=({{inputs.vcf}})
+        shopt -s nullglob
+        I=({{inputs.index}}); S=({{inputs.samples}}); G=({{inputs.groups}})
+        R=({{inputs.regions}}); T=({{inputs.targets}})
+        shopt -u nullglob
+        OUT={{outputs.results}}
+        set -f
+        ARGS={{inputs.args}}
+        {LINK_HELPERS}
+        W=$(mktemp -d); cd "$W"
+        mkdir input
+        NAME=input/$(basename "${{V[0]}}"); ln -s "${{V[0]}}" "$NAME"
+        if [ ${{#I[@]}} -gt 0 ]; then link_index "$NAME" "${{I[0]}}"; fi
+        EXTRA=()
+        if [ ${{#S[@]}} -gt 0 ]; then EXTRA+=(--samples-file "$(link "${{S[0]}}")"); fi
+        if [ ${{#G[@]}} -gt 0 ]; then EXTRA+=(--groups-file "$(link "${{G[0]}}")"); fi
+        if [ ${{#R[@]}} -gt 0 ]; then EXTRA+=(--regions-file "$(link "${{R[0]}}")"); fi
+        if [ ${{#T[@]}} -gt 0 ]; then EXTRA+=(--targets-file "$(link "${{T[0]}}")"); fi
+        bcftools plugin split $ARGS "$NAME" "${{EXTRA[@]}}" --output . || exit 1
+        find . -maxdepth 1 -type f -exec mv {{}} "$OUT"/ \;
+    """,
+)
+
 bcftools_stats_env = flyte.TaskEnvironment.from_task("bcftools_stats", bcftools_stats_cmd.as_task())
 bcftools_tools_env = flyte.TaskEnvironment.from_task(
     "bcftools_tools",
@@ -498,6 +614,9 @@ bcftools_tools_env = flyte.TaskEnvironment.from_task(
     bcftools_reheader_cmd.as_task(),
     bcftools_consensus_cmd.as_task(),
     bcftools_pluginsetgt_cmd.as_task(),
+    bcftools_query_cmd.as_task(),
+    bcftools_convert_cmd.as_task(),
+    bcftools_pluginsplit_cmd.as_task(),
 )
 env = flyte.TaskEnvironment(name="bcftools", depends_on=[bcftools_stats_env, bcftools_tools_env])
 
@@ -832,3 +951,124 @@ async def bcftools_pluginsetgt(
         args2=args2,
     )
     return await collect(results, prefix, extension, "plugin setGT")
+
+
+async def bcftools_query(
+    vcf: File,
+    prefix: str,
+    index: File | None = None,
+    regions: File | None = None,
+    targets: File | None = None,
+    samples: File | None = None,
+    format: str = "",
+    args: str = "",
+) -> File:
+    """``<prefix>.txt``: the fields of ``vcf`` that ``format`` (``-f``, e.g. ``"%CHROM %POS[ %GT]\\n"``) names.
+
+    ``format`` is passed whole, so unlike ``args`` it can contain spaces.
+    ``regions``, ``targets`` and ``samples`` are passed as ``--regions-file``,
+    ``--targets-file`` and ``--samples-file``; ``regions`` needs ``index``.
+    """
+    results = await bcftools_query_cmd(
+        vcf=vcf,
+        index=index,
+        regions=regions,
+        targets=targets,
+        samples=samples,
+        format=format,
+        prefix=prefix,
+        args=args,
+    )
+    output = await results.get_file(f"{prefix}.txt")
+    if output is None:
+        raise FileNotFoundError(f"bcftools query wrote no {prefix}.txt")
+    return output
+
+
+def convert_extension(args: str) -> str:
+    """bcftools convert's output extension, read from ``args`` as upstream does ("" for IMPUTE2 output)."""
+    extension = output_extension(args, default="")
+    if extension:
+        return extension
+    if "--haplegendsample" in args or "-h" in args:
+        return ""
+    return "vcf.gz"
+
+
+@dataclass
+class BcftoolsConvertResult:
+    vcf: File | None  # <prefix>.vcf, .vcf.gz, .bcf or .bcf.gz; None with --haplegendsample
+    index: File | None  # <prefix>.<extension>.csi or .tbi, with --write-index in the args
+    hap: File | None  # <name>.hap.gz, with --haplegendsample <name>
+    legend: File | None  # <name>.legend.gz
+    samples: File | None  # <name>.samples
+    results: Dir  # everything bcftools wrote
+
+
+async def bcftools_convert(
+    vcf: File,
+    prefix: str,
+    index: File | None = None,
+    fasta: File | None = None,
+    bed: File | None = None,
+    args: str = "",
+) -> BcftoolsConvertResult:
+    """Convert ``vcf`` into ``<prefix>.<extension>`` (by default a bgzipped VCF, as upstream).
+
+    ``fasta`` is passed as ``--fasta-ref`` (which ``--gvcf2vcf`` needs) and
+    ``bed`` as ``--regions-file`` (which needs ``index``). With
+    ``--haplegendsample <name>`` in ``args`` bcftools writes IMPUTE2's
+    ``<name>.hap.gz``, ``<name>.legend.gz`` and ``<name>.samples`` instead.
+    """
+    extension = convert_extension(args)
+    check_output_name(vcf, prefix, extension)
+    results = await bcftools_convert_cmd(
+        vcf=vcf, index=index, fasta=fasta, bed=bed, prefix=prefix, extension=extension, args=args
+    )
+    words = args.split()
+    if "--haplegendsample" in words:
+        name = words[words.index("--haplegendsample") + 1].split(",")[0]
+        hap, legend, samples = (
+            await results.get_file(f"{name}.hap.gz"),
+            await results.get_file(f"{name}.legend.gz"),
+            await results.get_file(f"{name}.samples"),
+        )
+        if hap is None or legend is None or samples is None:
+            raise FileNotFoundError(f"bcftools convert wrote no {name}.hap.gz, {name}.legend.gz and {name}.samples")
+        return BcftoolsConvertResult(vcf=None, index=None, hap=hap, legend=legend, samples=samples, results=results)
+    converted = await collect(results, prefix, extension, "convert")
+    return BcftoolsConvertResult(
+        vcf=converted.vcf, index=converted.index, hap=None, legend=None, samples=None, results=results
+    )
+
+
+@dataclass
+class BcftoolsSplitResult:
+    vcfs: list[File]  # one VCF/BCF per sample or group, in name order
+    indexes: list[File]  # their .csi or .tbi, with --write-index in the args
+    results: Dir  # everything the plugin wrote
+
+
+async def bcftools_pluginsplit(
+    vcf: File,
+    index: File | None = None,
+    samples: File | None = None,
+    groups: File | None = None,
+    regions: File | None = None,
+    targets: File | None = None,
+    args: str = "",
+) -> BcftoolsSplitResult:
+    """Split ``vcf`` into one file per sample with ``bcftools plugin split``.
+
+    ``samples`` and ``groups`` (``--samples-file``, ``--groups-file``) choose
+    and rename the outputs; ``regions`` and ``targets`` restrict the records
+    (``regions`` needs ``index``). The output format follows ``--output-type``
+    in ``args``.
+    """
+    results = await bcftools_pluginsplit_cmd(
+        vcf=vcf, index=index, samples=samples, groups=groups, regions=regions, targets=targets, args=args
+    )
+    files = sorted([f async for f in results.walk()], key=lambda f: f.name)
+    vcfs = [f for f in files if f.name.endswith((".vcf", ".vcf.gz", ".bcf", ".bcf.gz"))]
+    indexes = [f for f in files if f.name.endswith((".csi", ".tbi"))]
+    return BcftoolsSplitResult(vcfs=vcfs, indexes=indexes, results=results)

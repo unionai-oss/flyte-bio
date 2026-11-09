@@ -34,6 +34,8 @@ Exposes:
   ``<name>.tsv``, ``<name>_h.tsv``, ``<name>_seq.tsv`` and ``<name>_aln.tsv``:
   the input Dir with ``<name>_db``, ``<name>_db_h``, ``<name>_db_seq``,
   ``<name>_db_seq_h`` and ``<name>_db_aln`` databases added.
+- :func:`mmseqs_easysearch` — search a FASTA's sequences against a target
+  database in one step (``easy-search``): the hits as ``<prefix>.tsv``.
 
 As upstream, createindex and tsv2exprofiledb return their input directory
 with the new files beside the database, which is copied into the output (so
@@ -273,6 +275,27 @@ mmseqs_tsv2exprofiledb_cmd = shell.create(
     """,
 )
 
+mmseqs_easysearch_cmd = shell.create(
+    name="mmseqs_easysearch",
+    image=MMSEQS_IMAGE,
+    resources=CLUSTER_RESOURCES,
+    inputs={"fasta": File, "db_target": Dir, "db_pattern": str, "prefix": str, "args": str},
+    defaults={"db_pattern": DEFAULT_PATTERN, "args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        {DATABASE_BASE}
+        FASTA=({{inputs.fasta}})
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        TARGET=$(database_base {{inputs.db_target}} {{inputs.db_pattern}}) || exit 1
+        W=$(mktemp -d); cd "$W"
+
+        mmseqs easy-search "${{FASTA[0]}}" "$TARGET" "$OUT/$P.tsv" tmp1 $ARGS --threads $TASK_CPUS || exit 1
+    """,
+)
+
 # One image per environment: mmseqs databases needs wget too.
 mmseqs_env = flyte.TaskEnvironment.from_task(
     "mmseqs_tools",
@@ -283,6 +306,7 @@ mmseqs_env = flyte.TaskEnvironment.from_task(
     mmseqs_taxonomy_cmd.as_task(),
     mmseqs_createindex_cmd.as_task(),
     mmseqs_tsv2exprofiledb_cmd.as_task(),
+    mmseqs_easysearch_cmd.as_task(),
 )
 mmseqs_download_env = flyte.TaskEnvironment.from_task("mmseqs_download", mmseqs_databases_cmd.as_task())
 env = flyte.TaskEnvironment(name="mmseqs", depends_on=[mmseqs_env, mmseqs_download_env])
@@ -362,3 +386,20 @@ async def mmseqs_createindex(db: Dir, db_pattern: str = DEFAULT_PATTERN, args: s
 async def mmseqs_tsv2exprofiledb(database: Dir, args: str = "") -> Dir:
     """``database`` with the expandable profile database of its ``<name>*.tsv`` files added: ``<name>_db*``."""
     return await mmseqs_tsv2exprofiledb_cmd(database=database, args=args)
+
+
+async def mmseqs_easysearch(
+    fasta: File,
+    db_target: Dir,
+    prefix: str = "sample",
+    db_pattern: str = DEFAULT_PATTERN,
+    args: str = "",
+) -> File:
+    """Search ``fasta`` against the database in ``db_target`` (found by ``db_pattern``): ``<prefix>.tsv``."""
+    results = await mmseqs_easysearch_cmd(
+        fasta=fasta, db_target=db_target, db_pattern=db_pattern, prefix=prefix, args=args
+    )
+    found = await results.get_file(f"{prefix}.tsv")
+    if found is None:
+        raise FileNotFoundError(f"mmseqs easy-search wrote no {prefix}.tsv")
+    return found

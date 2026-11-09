@@ -1,10 +1,11 @@
 """Tests for flyte_bio.modules.mmseqs.
 
 The cases and expected md5s are upstream's mmseqs/createdb, mmseqs/cluster,
-mmseqs/linclust, mmseqs/createtsv, mmseqs/createindex and
-mmseqs/tsv2exprofiledb tests (modules commit 9a1cc9f, MMseqs2 18.8cc5c). The
+mmseqs/linclust, mmseqs/createtsv, mmseqs/createindex,
+mmseqs/tsv2exprofiledb and mmseqs/easysearch tests (modules commit 9a1cc9f, MMseqs2 18.8cc5c). The
 clustering tests run on 2 CPUs, as upstream's did: a clustering result has one
-data file per thread, and upstream lists ``.0`` and ``.1``.
+data file per thread, and upstream lists ``.0`` and ``.1``. So does the
+easy-search test, whose hits' order follows the thread count.
 """
 
 import asyncio
@@ -23,6 +24,7 @@ from flyte_bio.modules.mmseqs import (
     mmseqs_createindex,
     mmseqs_createtsv,
     mmseqs_databases,
+    mmseqs_easysearch_cmd,
     mmseqs_linclust_cmd,
     mmseqs_taxonomy,
     mmseqs_tsv2exprofiledb,
@@ -241,6 +243,26 @@ async def test_mmseqs_tsv2exprofiledb_sarscov2() -> None:
     await check_dir(result, EXPROFILE_NAMES, md5s, "tsv2exprofiledb")
 
 
+@env.task
+async def test_mmseqs_easysearch_contigs() -> None:
+    # upstream case: mmseqs/easysearch "sarscov2 - illumina - contigs - fasta",
+    # with the test directory's ext.args
+    target = await mmseqs_createdb(await fixture("genomics/sarscov2/illumina/fasta/contigs.fasta"), prefix="test_query")
+    scaffolds = await fixture("genomics/sarscov2/illumina/fasta/scaffolds.fasta")
+    # Upstream's snapshot is of a 2-thread search; on 4 the same hits come out in another order.
+    results = await two_cpu_task(mmseqs_easysearch_cmd)(
+        fasta=scaffolds,
+        db_target=target,
+        db_pattern="*.dbtype",
+        prefix="test_scaffolds",
+        args="--remove-tmp-files 1 --search-type 2",
+    )
+    hits = await results.get_file("test_scaffolds.tsv")
+    assert hits is not None, "mmseqs easy-search wrote no test_scaffolds.tsv"
+    assert hits.name == "test_scaffolds.tsv", hits.name
+    await assert_md5(hits, "98a6e138ad41ed04366808799fd6a4b8", label="test_scaffolds.tsv")
+
+
 tests = [
     test_mmseqs_createdb_contigs,
     test_mmseqs_createdb_gzipped_proteome,
@@ -250,4 +272,5 @@ tests = [
     test_mmseqs_createtsv_taxonomy,
     test_mmseqs_createindex_sarscov2,
     test_mmseqs_tsv2exprofiledb_sarscov2,
+    test_mmseqs_easysearch_contigs,
 ]

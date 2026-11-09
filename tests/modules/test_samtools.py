@@ -27,6 +27,11 @@ sequences' md5.
 The bam2fq and mpileup cases are upstream's at the same commit: the
 decompressed FASTQs' and pileups' md5s (bam2fq's split case snapshots its
 other and singleton files by name only).
+
+The coverage, depth and reheader cases are upstream's at the same commit
+(samtools 1.25), with their snapshots' md5s; coverage's two error cases
+(a CRAM without its FASTA or its .fai) fail in the wrapper, as upstream's
+module does before running.
 """
 
 import asyncio
@@ -40,6 +45,8 @@ from flyte_bio.modules.samtools import (
     samtools_calmd,
     samtools_collatefastq,
     samtools_convert,
+    samtools_coverage,
+    samtools_depth,
     samtools_dict,
     samtools_faidx,
     samtools_fastq,
@@ -51,6 +58,7 @@ from flyte_bio.modules.samtools import (
     samtools_markdup,
     samtools_merge,
     samtools_mpileup,
+    samtools_reheader,
     samtools_sort,
     samtools_stats,
     samtools_trimheader,
@@ -487,6 +495,72 @@ async def test_samtools_mpileup() -> None:
         await assert_gunzipped_md5(out, md5, label=f"mpileup {label}")
 
 
+@env.task
+async def test_samtools_coverage() -> None:
+    # upstream cases: samtools/coverage "test_samtools_coverage_bam" and "test_samtools_coverage_cram"
+    bam, bai, cram, crai, fasta, fai = await asyncio.gather(
+        fixture(SORTED_BAM),
+        fixture(SORTED_BAM + ".bai"),
+        fixture(HUMAN_SORTED_CRAM),
+        fixture(HUMAN_SORTED_CRAM + ".crai"),
+        fixture(HUMAN_FASTA),
+        fixture(HUMAN_FASTA + ".fai"),
+    )
+    from_bam, from_cram = await asyncio.gather(
+        samtools_coverage(bam, "test", index=bai),
+        samtools_coverage(cram, "test", index=crai, fasta=fasta, fai=fai),
+    )
+    assert_name(from_bam, "test.txt")
+    await assert_md5(from_bam, "99a521b3bf53b6acf8055a44a571ea84", label="coverage bam")
+    await assert_md5(from_cram, "ce896534bac51cfcc97e5508ae907e99", label="coverage cram")
+
+
+@env.task
+async def test_samtools_coverage_cram_without_reference() -> None:
+    # upstream cases: samtools/coverage "test_samtools_coverage_cram_no_fasta" and "..._no_fai"
+    cram, crai, fasta, fai = await asyncio.gather(
+        fixture(HUMAN_SORTED_CRAM),
+        fixture(HUMAN_SORTED_CRAM + ".crai"),
+        fixture("genomics/sarscov2/genome/genome.fasta"),
+        fixture("genomics/sarscov2/genome/genome.fasta.fai"),
+    )
+    for label, reference in (("no fasta", {"fai": fai}), ("no fai", {"fasta": fasta})):
+        try:
+            await samtools_coverage(cram, "test", index=crai, **reference)
+        except ValueError as e:
+            assert "no reference FASTA" in str(e), f"{label}: unexpected error {e}"
+        else:
+            raise AssertionError(f"samtools coverage accepted a CRAM with {label}")
+
+
+@env.task
+async def test_samtools_depth() -> None:
+    # upstream cases: samtools/depth "test-samtools-depth" and "test-samtools-depth-intervals"
+    bam, intervals = await asyncio.gather(
+        fixture("genomics/homo_sapiens/illumina/bam/test.paired_end.recalibrated.sorted.bam"),
+        fixture("genomics/homo_sapiens/genome/chr21/sequence/multi_intervals.bed"),
+    )
+    everywhere, at_intervals = await asyncio.gather(
+        samtools_depth(bam, "test"), samtools_depth(bam, "test", intervals=intervals)
+    )
+    assert_name(everywhere, "test.tsv")
+    await assert_md5(everywhere, "722d2c060944d6b96ae5ae00d8074657", label="depth")
+    await assert_md5(at_intervals, "a89e2f8e1b66356c7500599fcadb8784", label="depth intervals")
+
+
+@env.task
+async def test_samtools_reheader_bam() -> None:
+    # upstream cases: samtools/reheader "homo_sapiens - chrdel" and "homo_sapiens - rgdel"
+    bam = await fixture(HUMAN_SORTED_BAM)
+    chrdel, rgdel = await asyncio.gather(
+        samtools_reheader(bam, "test_reheaded", command=r'sed -E "s/^(@SQ.*)(\tSN:)chr/\1\2/"'),
+        samtools_reheader(bam, "test_reheaded", command="grep -v ^@RG"),
+    )
+    assert_name(chrdel, "test_reheaded.bam")
+    await assert_md5(chrdel, "a89a52d5d858d5f0c9c7881dcf9cf20d", label="reheader chrdel")
+    await assert_md5(rgdel, "e0276cbfc32ab6acebe7f3a3c03da7ae", label="reheader rgdel")
+
+
 tests = [
     test_faidx,
     test_sort,
@@ -517,4 +591,8 @@ tests = [
     test_samtools_bam2fq_bam,
     test_samtools_bam2fq_bam_split,
     test_samtools_mpileup,
+    test_samtools_coverage,
+    test_samtools_coverage_cram_without_reference,
+    test_samtools_depth,
+    test_samtools_reheader_bam,
 ]

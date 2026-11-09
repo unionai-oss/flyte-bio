@@ -12,6 +12,7 @@ from flyte_bio.modules.bedtools import (
     bedtools_complement,
     bedtools_getfasta,
     bedtools_intersect,
+    bedtools_makewindows,
     bedtools_maskfasta,
     bedtools_sort,
 )
@@ -82,6 +83,21 @@ async def test_bedtools_complement_bed() -> None:
     await assert_md5(out, "d71df7e47aec0661c27b71e483e727f9", label="bedtools complement")
 
 
+@env.task
+async def test_bedtools_makewindows() -> None:
+    # upstream cases: bedtools/makewindows "test-bedtools-makewindows-bed" and "...-fai"
+    # (modules commit 9a1cc9f), with the test config's -w 50
+    bed = await fixture("genomics/sarscov2/genome/bed/test.bed")
+    fai = await fixture("genomics/sarscov2/genome/genome.fasta.fai")
+    for label, regions, md5 in (
+        ("bed", bed, "0cf6ed2b6f470cd44a247da74ca4fe4e"),
+        ("fai", fai, "622d1f62786fe4239b76c53168f21c54"),
+    ):
+        out = await bedtools_makewindows(regions, prefix="test2", args="-w 50")
+        assert out.name == "test2.bed", out.name
+        await assert_md5(out, md5, label=f"bedtools makewindows {label}")
+
+
 tests = [
     test_intersect_bed_bed,
     test_sort_bed,
@@ -89,4 +105,5 @@ tests = [
     test_bedtools_maskfasta,
     test_bedtools_bamtobed_bam,
     test_bedtools_complement_bed,
+    test_bedtools_makewindows,
 ]
