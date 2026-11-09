@@ -3,6 +3,7 @@
 import asyncio
 import gzip
 import hashlib
+import re
 import tarfile
 import tempfile
 import zlib
@@ -16,6 +17,7 @@ from flyte_bio.modules.gatk4 import (
     gatk4_applybqsr,
     gatk4_baserecalibrator,
     gatk4_bedtointervallist,
+    gatk4_calculatecontamination,
     gatk4_cnnscorevariants,
     gatk4_collectreadcounts,
     gatk4_combinegvcfs,
@@ -27,14 +29,17 @@ from flyte_bio.modules.gatk4 import (
     gatk4_filtermutectcalls,
     gatk4_filtervarianttranches,
     gatk4_gatherbqsrreports,
+    gatk4_gatherpileupsummaries,
     gatk4_genomicsdbimport,
     gatk4_genomicsdbimport_interval_list,
     gatk4_genomicsdbimport_update,
     gatk4_germlinecnvcaller,
+    gatk4_getpileupsummaries,
     gatk4_haplotypecaller,
     gatk4_indexfeaturefile,
     gatk4_intervallisttobed,
     gatk4_intervallisttools,
+    gatk4_learnreadorientationmodel,
     gatk4_markduplicates,
     gatk4_mergemutectstats,
     gatk4_mergevcfs,
@@ -43,6 +48,7 @@ from flyte_bio.modules.gatk4 import (
     gatk4_splitintervals,
     gatk4_splitncigarreads,
     gatk4_variantfiltration,
+    gatk4_variantrecalibrator,
 )
 from flyte_bio.modules.samtools import samtools_view
 from tests.framework import assert_md5, assert_nonempty, assert_reads_md5, env, fixture, reads_md5
@@ -867,6 +873,145 @@ async def test_gatk4_splitintervals() -> None:
             await assert_md5(f, md5, label=f"{label} {f.name}")
 
 
+@env.task
+async def test_gatk4_getpileupsummaries() -> None:
+    # upstream cases: gatk4/getpileupsummaries "human - bam" (no reference) and "human - cram"
+    interval_list = await fixture(CHR21 + ".interval_list")
+    (bam, bai), (variants, variants_tbi), (fasta, fai, dict_) = await asyncio.gather(
+        recalibrated_bam("test"), indexed_fixture(GNOMAD), chr21_reference()
+    )
+    cram = HS + "illumina/cram/test.paired_end.recalibrated.sorted.cram"
+    cram_file, crai = await asyncio.gather(fixture(cram), fixture(cram + ".crai"))
+    common = {"variants": variants, "variants_tbi": variants_tbi, "prefix": "test", "intervals": interval_list}
+    from_bam, from_cram = await asyncio.gather(
+        gatk4_getpileupsummaries(bam, bai, **common),
+        gatk4_getpileupsummaries(cram_file, crai, fasta=fasta, fai=fai, dict=dict_, **common),
+    )
+    for table, label in ((from_bam, "bam"), (from_cram, "cram")):
+        assert table.name == "test.pileups.table", f"{label}: {table.name}"
+        await assert_md5(table, "2d7ce4a54df6b9249e12d60737a67dac", label=label)
+
+
+@env.task
+async def test_gatk4_gatherpileupsummaries() -> None:
+    # upstream case: gatk4/gatherpileupsummaries "test-gatk4-gatherpileupsummaries" (ext.prefix "<id>.out")
+    table, dict_ = await asyncio.gather(fixture(HS + "illumina/gatk/test.pileups.table"), fixture(CHR21 + ".dict"))
+    gathered = await gatk4_gatherpileupsummaries([table], dict_, prefix="test.out")
+    assert gathered.name == "test.out.pileups.table", gathered.name
+    await assert_md5(gathered, "8e0ca6f66e112bd2f7ec1d31a2d62469")
+
+
+async def first_line(file: File) -> str:
+    async with file.open("rb") as fh:
+        return bytes(await fh.read()).decode().splitlines()[0]
+
+
+@env.task
+async def test_gatk4_calculatecontamination() -> None:
+    # upstream cases: gatk4/calculatecontamination "human - pileup-table", "... - matched-pair" and
+    # "... - segmentation" (each snapshot records the tables' first lines)
+    tumour, normal = await asyncio.gather(
+        fixture(HS + "illumina/gatk/test2.pileups.table"), fixture(HS + "illumina/gatk/test.pileups.table")
+    )
+    single, matched, segmented = await asyncio.gather(
+        gatk4_calculatecontamination(tumour, prefix="test"),
+        gatk4_calculatecontamination(tumour, prefix="test", matched=normal),
+        gatk4_calculatecontamination(
+            tumour, prefix="test", matched=normal, args="--tumor-segmentation test.segmentation.table"
+        ),
+    )
+    for result, label in ((single, "pileup-table"), (matched, "matched-pair"), (segmented, "segmentation")):
+        assert result.contamination.name == "test.contamination.table", f"{label}: {result.contamination.name}"
+        line = await first_line(result.contamination)
+        assert line == "sample\tcontamination\terror", f"{label}: {line!r}"
+    assert single.segmentation is None and matched.segmentation is None, "unrequested segmentation table"
+    assert segmented.segmentation is not None, "segmentation: no segmentation table"
+    assert segmented.segmentation.name == "test.segmentation.table", segmented.segmentation.name
+    line = await first_line(segmented.segmentation)
+    assert line == "#<METADATA>SAMPLE=tumour", f"segmentation: {line!r}"
+
+
+# Lines 3 to 7 of the artifact priors (nf-test's linesGzip of the archive, lines split as Java does).
+ARTIFACT_PRIOR_LINES = [
+    (
+        "CTT\tAAG\t2.7114986684474486E-6\t3.2076972826656866E-5\t2.6085822355549755E-6\t0.0\t2.6371799896540086E-6"
+        "\t3.3869355267901446E-6\t2.6085822355549755E-6\t0.0\t0.9995881552107633\t4.6590850211691583E-5"
+        "\t2.8848017683240004E-4\t3.0744010710100574E-5\t38334\t116"
+    ),
+    "GTT\tAAC\t0.1\t0.1\t0.1\t0.0\t0.1\t0.1\t0.1\t0.0\t0.1\t0.1\t0.1\t0.1\t0\t0",
+    (
+        "TAT\tATA\t0.0\t5.548307163536064E-6\t5.144357865084592E-6\t6.205892051757818E-6\t0.0\t5.907388162200423E-6"
+        "\t5.176730417709638E-6\t6.083872804985981E-6\t0.9924019419831304\t3.946972069386949E-5"
+        "\t0.007516612822150651\t7.908925559851714E-6\t19439\t95"
+    ),
+    (
+        "AAA\tTTT\t0.0\t1.7634470563520664E-6\t2.8327478284981175E-6\t1.8084237600021914E-6\t0.0\t1.7692606885284446E-6"
+        "\t2.263339968296726E-6\t1.8660094002474611E-6\t0.9990845693211764\t1.8004690536795885E-5"
+        "\t8.701192700921183E-4\t1.5003489492700572E-5\t56708\t130"
+    ),
+    (
+        "CAA\tTTG\t0.0\t3.4445551925564533E-6\t3.435193155024585E-6\t5.139879646597498E-6\t0.0\t3.4674461103560476E-6"
+        "\t3.428570449688764E-6\t6.343168047383713E-6\t0.9945238954147358\t1.3629167993931722E-4"
+        "\t0.0052793454402581125\t3.5208652465150646E-5\t29263\t197"
+    ),
+]
+
+
+@env.task
+async def test_gatk4_learnreadorientationmodel() -> None:
+    # upstream case: gatk4/learnreadorientationmodel "test-gatk4-learnreadorientationmodel"
+    # (ext.prefix "<id>.artifact-prior"; the snapshot records lines 3 to 7 of the gunzipped archive)
+    f1r2 = await fixture(HS + "illumina/gatk/paired_mutect2_calls/test_test2_paired_mutect2_calls.f1r2.tar.gz")
+    priors = await gatk4_learnreadorientationmodel([f1r2], prefix="test.artifact-prior")
+    assert priors.name == "test.artifact-prior.tar.gz", priors.name
+    async with priors.open("rb") as fh:
+        text = gzip.decompress(bytes(await fh.read())).decode("latin-1")
+    lines = re.split(r"\r\n|\r|\n", text)[3:8]
+    assert lines == ARTIFACT_PRIOR_LINES, f"artifact priors lines 3-7: {lines}"
+
+
+@env.task
+async def test_gatk4_variantrecalibrator() -> None:
+    # upstream cases: gatk4/variantrecalibrator "homo sapiens - vcf - allele specificity" and
+    # "... - no allele specificity" (the recal VCF and its index are snapshotted by name, the tranches by md5)
+    calls = HS + "illumina/gatk/haplotypecaller_calls/test2_haplotc.ann.vcf.gz"
+    names = ["hapmap_3.3.hg38", "1000G_omni2.5.hg38", "1000G_phase1.snps.hg38", "dbsnp_138.hg38"]
+    (vcf, tbi), resources, (fasta, fai, dict_) = await asyncio.gather(
+        indexed_fixture(calls),
+        asyncio.gather(*(indexed_fixture(f"{GERMLINE}{name}.vcf.gz") for name in names)),
+        chr21_reference(),
+    )
+    labels = [
+        "--resource:hapmap,known=false,training=true,truth=true,prior=15.0 hapmap_3.3.hg38.vcf.gz",
+        "--resource:omni,known=false,training=true,truth=false,prior=12.0 1000G_omni2.5.hg38.vcf.gz",
+        "--resource:1000G,known=false,training=true,truth=false,prior=10.0 1000G_phase1.snps.hg38.vcf.gz",
+        "--resource:dbsnp,known=true,training=false,truth=false,prior=2.0 dbsnp_138.hg38.vcf.gz",
+    ]
+    common = {
+        "vcf": vcf,
+        "tbi": tbi,
+        "resources": [r[0] for r in resources],
+        "resources_tbi": [r[1] for r in resources],
+        "labels": labels,
+        "prefix": "test",
+        "fasta": fasta,
+        "fai": fai,
+        "dict": dict_,
+    }
+    allele_specific, plain = await asyncio.gather(
+        gatk4_variantrecalibrator(args="-mode SNP -an QD -an MQ -an FS -AS", **common),
+        gatk4_variantrecalibrator(args="-mode SNP -an QD -an MQ -an FS -an SOR", **common),
+    )
+    for result, label, md5 in (
+        (allele_specific, "allele specificity", "ad52fa69325c758f458a30ee5b43d6b5"),
+        (plain, "no allele specificity", "c029e52fd63a893e1154cc9144a19eeb"),
+    ):
+        assert result.recal.name == "test.recal" and result.idx.name == "test.recal.idx", f"{label}: {result}"
+        assert result.tranches.name == "test.tranches", f"{label}: {result.tranches.name}"
+        assert result.plots is None, f"{label}: unexpected {result.plots}"
+        await assert_md5(result.tranches, md5, label=f"{label} tranches")
+
+
 tests = [
     test_createsequencedictionary,
     test_intervallisttobed,
@@ -899,4 +1044,9 @@ tests = [
     test_gatk4_createsomaticpanelofnormals,
     test_gatk4_indexfeaturefile,
     test_gatk4_splitintervals,
+    test_gatk4_getpileupsummaries,
+    test_gatk4_gatherpileupsummaries,
+    test_gatk4_calculatecontamination,
+    test_gatk4_learnreadorientationmodel,
+    test_gatk4_variantrecalibrator,
 ]

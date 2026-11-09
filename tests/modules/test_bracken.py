@@ -6,12 +6,21 @@ each case first classifies the reads with kraken2 against the test
 Kraken2/Bracken database, then runs Bracken on that report with the test's
 ``ext.args``: ``-l S -t 10 -r 150``, or ``-l G -t 10 -r 150`` for the genus
 case.
+
+The build case is upstream's bracken/build test (same commit): the
+SARS-CoV-2 genome and proteome added to a Kraken2 library over the test
+protein taxonomy, built with kraken2 without cleaning (and, as that test,
+without ``--protein``), then with ``bracken-build``'s defaults. As upstream,
+it checks the database directory's listing.
 """
+
+import tarfile
 
 from flyte.io import Dir, File
 
-from flyte_bio.modules.bracken import bracken
-from flyte_bio.modules.kraken2 import kraken2
+from flyte_bio.modules.bracken import bracken, bracken_build
+from flyte_bio.modules.gunzip import gunzip
+from flyte_bio.modules.kraken2 import kraken2, kraken2_add, kraken2_build
 from tests.framework import assert_md5, env, fixture, fixture_dir
 
 FASTQ = "genomics/sarscov2/illumina/fastq/"
@@ -52,8 +61,47 @@ async def test_bracken_paired_end() -> None:
     await check(True, SPECIES_ARGS, "4a21ae14ff8a0311d55f139af5247838", "ca0fbeedc4353b5fdd081688823a33df")
 
 
+METAGENOME = "genomics/sarscov2/metagenome/"
+BUILT_DATABASE = [
+    "database.kraken",
+    "database100mers.kmer_distrib",
+    "database100mers.kraken",
+    "hash.k2d",
+    "library",
+    "opts.k2d",
+    "seqid2taxid.map",
+    "taxo.k2d",
+    "taxonomy",
+]
+
+
+@env.task
+async def test_bracken_build() -> None:
+    # upstream case: bracken/build "bracken - db"
+    library = await kraken2_add(
+        [
+            await fixture("genomics/sarscov2/genome/genome.fasta"),
+            await fixture("genomics/sarscov2/genome/proteome.fasta"),
+        ],
+        taxonomy_names=await fixture(METAGENOME + "prot_names.dmp"),
+        taxonomy_nodes=await fixture(METAGENOME + "prot_nodes.dmp"),
+        accession2taxid=await gunzip(await fixture(METAGENOME + "prot.accession2taxid.gz")),
+        prefix="test",
+    )
+    kraken2_db = await kraken2_build(library, clean=False)
+    assert kraken2_db.archive is not None, "kraken2_build(clean=False) wrote no archive"
+    result = await bracken_build(kraken2_db.archive)
+    with tarfile.open(await result.archive.download()) as tar:
+        names = tar.getnames()
+    top = sorted({name.split("/")[1] for name in names if name.count("/") >= 1})
+    assert top == BUILT_DATABASE, f"bracken-database: {top}"
+    distrib = await result.db.get_file("database100mers.kmer_distrib")
+    assert distrib is not None, "bracken_build's db has no database100mers.kmer_distrib"
+
+
 tests = [
     test_bracken_single_end,
     test_bracken_paired_end_genus,
     test_bracken_paired_end,
+    test_bracken_build,
 ]

@@ -27,6 +27,14 @@ Exposes the subset of the samtools suite the RNA-seq pipeline leans on:
 - :func:`samtools_trimheader` — an indexed BAM whose header keeps only the
   references with reads (mapped or unmapped, from ``samtools idxstats``), as
   ``<prefix>.bam``. ``args`` goes to the final ``samtools view``.
+- :func:`samtools_bam2fq` — an alignment's reads as gzipped FASTQ, split
+  into ``<prefix>_1``, ``<prefix>_2``, ``<prefix>_other`` and
+  ``<prefix>_singleton`` (``.fq.gz``), or interleaved into
+  ``<prefix>_interleaved.fq.gz`` (bgzipped). As upstream, ``-@`` is the
+  task's CPUs.
+- :func:`samtools_mpileup` — the pileup of an alignment (optionally against
+  its reference, within intervals or, with ``-r`` in ``args``, a region of an
+  indexed alignment), as ``<prefix>.mpileup.gz``.
 
 fixmate, markdup and import write SAM, BAM or CRAM following ``--output-fmt`` in
 ``args`` (BAM by default). As upstream, calmd and markdup get ``-@`` of the
@@ -44,8 +52,9 @@ and ``collate`` and its ``fastq`` the task's CPUs each.
 
 Each upstream module pins its own samtools build, so the FASTQ conversions
 have their own environments (convert, dict, calmd, fixmate, markdup and
-import share fastq's samtools 1.25, and trimheader has its own image with
-gawk); :data:`env` aggregates them.
+import share fastq's samtools 1.25, bam2fq and mpileup share collatefastq's
+image, and trimheader has its own image with gawk); :data:`env` aggregates
+them.
 """
 
 from dataclasses import dataclass
@@ -526,6 +535,79 @@ samtools_trimheader_cmd = shell.create(
 )
 
 
+# As upstream: split writes the mates, the reads flagged neither or both
+# READ1 and READ2, and the singletons to their own gzipped files; otherwise
+# the reads are written interleaved and bgzipped.
+samtools_bam2fq_cmd = shell.create(
+    name="samtools_bam2fq",
+    image=SAMTOOLS_COLLATEFASTQ_IMAGE,
+    resources=FASTQ_RESOURCES,
+    inputs={"alignment": File, "prefix": str, "split": bool, "args": str},
+    defaults={"split": False, "args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        IN=({{inputs.alignment}})
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        set -o pipefail
+        W=$(mktemp -d); cd "$W"
+        if [ {{inputs.split}} = true ]; then
+            samtools bam2fq $ARGS -@ $TASK_CPUS \
+                -1 "$OUT/${{P}}_1.fq.gz" -2 "$OUT/${{P}}_2.fq.gz" \
+                -0 "$OUT/${{P}}_other.fq.gz" -s "$OUT/${{P}}_singleton.fq.gz" \
+                "${{IN[0]}}" || exit 1
+        else
+            samtools bam2fq $ARGS -@ $TASK_CPUS "${{IN[0]}}" | bgzip > "$OUT/${{P}}_interleaved.fq.gz" || exit 1
+        fi
+    """,
+)
+
+# As upstream: the reference and the intervals (`-l`) are optional; the
+# alignment is linked beside its index (needed for a region, `-r` in args),
+# and the pileup is bgzipped.
+samtools_mpileup_cmd = shell.create(
+    name="samtools_mpileup",
+    image=SAMTOOLS_COLLATEFASTQ_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={
+        "alignment": File,
+        "index": File | None,
+        "intervals": File | None,
+        "fasta": File | None,
+        "fai": File | None,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        IN=({{inputs.alignment}})
+        shopt -s nullglob
+        IDX=({{inputs.index}}); BED=({{inputs.intervals}}); FA=({{inputs.fasta}}); FAI=({{inputs.fai}})
+        shopt -u nullglob
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        NAME=$(basename "${{IN[0]}}"); ln -s "${{IN[0]}}" "$NAME"
+        if [ ${{#IDX[@]}} -gt 0 ]; then ln -s "${{IDX[0]}}" "$(basename "${{IDX[0]}}")"; fi
+        OPTIONAL=()
+        if [ ${{#FA[@]}} -gt 0 ]; then
+            FA_LINK=$(basename "${{FA[0]}}"); ln -s "${{FA[0]}}" "$FA_LINK"
+            if [ ${{#FAI[@]}} -gt 0 ]; then ln -s "${{FAI[0]}}" "$FA_LINK.fai"; fi
+            OPTIONAL+=(--fasta-ref "$FA_LINK")
+        fi
+        INTERVALS=()
+        if [ ${{#BED[@]}} -gt 0 ]; then INTERVALS=(-l "${{BED[0]}}"); fi
+        samtools mpileup "${{OPTIONAL[@]}}" --output "$P.mpileup" $ARGS "${{INTERVALS[@]}}" "$NAME" || exit 1
+        bgzip "$P.mpileup" || exit 1
+        mv "$P.mpileup.gz" {{outputs.results}}/
+    """,
+)
+
+
 samtools_tools_env = flyte.TaskEnvironment.from_task(
     "samtools_tools",
     samtools_faidx.as_task(),
@@ -548,7 +630,10 @@ samtools_fastq_env = flyte.TaskEnvironment.from_task(
     samtools_import_cmd.as_task(),
 )
 samtools_collatefastq_env = flyte.TaskEnvironment.from_task(
-    "samtools_collatefastq", samtools_collatefastq_cmd.as_task()
+    "samtools_collatefastq",
+    samtools_collatefastq_cmd.as_task(),
+    samtools_bam2fq_cmd.as_task(),
+    samtools_mpileup_cmd.as_task(),
 )
 samtools_trimheader_env = flyte.TaskEnvironment.from_task("samtools_trimheader", samtools_trimheader_cmd.as_task())
 env = flyte.TaskEnvironment(
@@ -763,3 +848,52 @@ async def samtools_trimheader(bam: File, bai: File, prefix: str, args: str = "")
     if out is None:
         raise FileNotFoundError(f"samtools trimheader wrote no {prefix}.bam")
     return out
+
+
+@dataclass
+class SamtoolsBam2fqResult:
+    fastq: list[File]  # <prefix>_1.fq.gz and <prefix>_2.fq.gz when split, else <prefix>_interleaved.fq.gz
+    other: File | None  # <prefix>_other.fq.gz, when split
+    singleton: File | None  # <prefix>_singleton.fq.gz, when split
+
+
+async def samtools_bam2fq(alignment: File, prefix: str, split: bool = False, args: str = "") -> SamtoolsBam2fqResult:
+    """The reads of ``alignment`` as gzipped FASTQ: split by mate, or interleaved."""
+    results = await samtools_bam2fq_cmd(alignment=alignment, prefix=prefix, split=split, args=args)
+
+    async def pick(name: str) -> File:
+        found = await results.get_file(name)
+        if found is None:
+            raise FileNotFoundError(f"samtools bam2fq wrote no {name}")
+        return found
+
+    if not split:
+        return SamtoolsBam2fqResult(fastq=[await pick(f"{prefix}_interleaved.fq.gz")], other=None, singleton=None)
+    return SamtoolsBam2fqResult(
+        fastq=[await pick(f"{prefix}_1.fq.gz"), await pick(f"{prefix}_2.fq.gz")],
+        other=await pick(f"{prefix}_other.fq.gz"),
+        singleton=await pick(f"{prefix}_singleton.fq.gz"),
+    )
+
+
+async def samtools_mpileup(
+    alignment: File,
+    prefix: str,
+    index: File | None = None,
+    intervals: File | None = None,
+    fasta: File | None = None,
+    fai: File | None = None,
+    args: str = "",
+) -> File:
+    """The pileup of ``alignment``: ``<prefix>.mpileup.gz``.
+
+    ``index`` is needed for a region (``-r`` in ``args``); ``intervals`` is a
+    BED of positions (``-l``).
+    """
+    results = await samtools_mpileup_cmd(
+        alignment=alignment, index=index, intervals=intervals, fasta=fasta, fai=fai, prefix=prefix, args=args
+    )
+    found = await results.get_file(f"{prefix}.mpileup.gz")
+    if found is None:
+        raise FileNotFoundError(f"samtools mpileup wrote no {prefix}.mpileup.gz")
+    return found

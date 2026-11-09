@@ -29,6 +29,7 @@ picard/collecthsmetrics cases are upstream's at the same commit (Picard
   reads md5, with the test config's ``<id>.sorted`` prefix.
 """
 
+import asyncio
 import hashlib
 
 from flyte.io import File
@@ -39,6 +40,7 @@ from flyte_bio.modules.picard import (
     picard_collecthsmetrics,
     picard_collectmultiplemetrics,
     picard_createsequencedictionary,
+    picard_filtersamreads,
     picard_markduplicates,
     picard_mergesamfiles,
     picard_sortsam,
@@ -267,6 +269,35 @@ async def test_picard_sortsam_queryname() -> None:
     await assert_reads_md5(sorted_bam, "b9847fed94d2b7286e18caaa099658ce", label="sorted bam")
 
 
+@env.task
+async def test_picard_filtersamreads() -> None:
+    # upstream cases: picard/filtersamreads "sarscov2 - bam" (after SortSam by queryname), "sarscov2 - bam -
+    # readlist" and "... - readlist - fasta" (ext.prefix "<id>.filtered", ext.args "--CREATE_INDEX true")
+    bam, readlist, fasta = await asyncio.gather(
+        fixture(SC2 + "illumina/bam/test.single_end.sorted.bam"),
+        fixture(SC2 + "illumina/picard/test.single_end.bam.readlist.txt"),
+        fixture(SC2 + "genome/genome.fasta"),
+    )
+    queryname_sorted = await picard_sortsam(bam, "queryname", prefix="test.sorted")
+    common = {"prefix": "test.filtered", "args": "--CREATE_INDEX true"}
+    aligned, listed, listed_fasta = await asyncio.gather(
+        picard_filtersamreads(queryname_sorted, "includeAligned", **common),
+        picard_filtersamreads(bam, "includeReadList", readlist=readlist, **common),
+        picard_filtersamreads(bam, "includeReadList", readlist=readlist, fasta=fasta, **common),
+    )
+    for result, label, md5, indexed in (
+        (aligned, "bam", "b9847fed94d2b7286e18caaa099658ce", False),
+        (listed, "readlist", "3c2a0fcd376bd70060073cb361fe91c1", True),
+        (listed_fasta, "readlist - fasta", "3c2a0fcd376bd70060073cb361fe91c1", True),
+    ):
+        assert result.bam.name == "test.filtered.bam", f"{label}: {result.bam.name}"
+        await assert_reads_md5(result.bam, md5, label=label)
+        if indexed:
+            assert result.bai is not None and result.bai.name == "test.filtered.bai", f"{label}: {result.bai}"
+        else:
+            assert result.bai is None, f"{label}: unexpected {result.bai}"
+
+
 tests = [
     test_markduplicates_sorted_bam,
     test_picard_collectmultiplemetrics,
@@ -282,4 +313,5 @@ tests = [
     test_picard_collecthsmetrics_samebed,
     test_picard_mergesamfiles_bams,
     test_picard_sortsam_queryname,
+    test_picard_filtersamreads,
 ]

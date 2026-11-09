@@ -23,6 +23,10 @@ Exposes:
 - :func:`picard_sortsam`, which sorts a BAM by ``sort_order``
   (``queryname``, ``coordinate``, ``duplicate`` or ``unsorted``) into
   ``<prefix>.bam``.
+- :func:`picard_filtersamreads`, which keeps or drops a BAM's reads by
+  ``filter`` (``includeAligned``, ``excludeAligned``, ``includeReadList``,
+  ``excludeReadList``, …) into ``<prefix>.bam`` (with ``<prefix>.bai`` when
+  ``args`` has ``--CREATE_INDEX true`` and the BAM is coordinate-sorted).
 
 Upstream pins a newer Picard (3.5.0) for every tool but MarkDuplicates, so
 those share a second environment and ``env`` aggregates both.
@@ -303,6 +307,45 @@ picard_sortsam_cmd = shell.create(
 )
 
 
+# As upstream: the read list is passed only to the read-list filters
+# (includeReadList, excludeReadList), and the reference is optional.
+picard_filtersamreads_cmd = shell.create(
+    name="picard_filtersamreads",
+    image=COLLECTMULTIPLEMETRICS_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={
+        "bam": File,
+        "readlist": File | None,
+        "fasta": File | None,
+        "filter": str,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        BAM=({{inputs.bam}})
+        shopt -s nullglob; READLIST=({{inputs.readlist}}); FA=({{inputs.fasta}}); shopt -u nullglob
+        FILTER={{inputs.filter}}
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        OPTIONAL=()
+        if [ ${{#FA[@]}} -gt 0 ]; then OPTIONAL+=(--REFERENCE_SEQUENCE "${{FA[0]}}"); fi
+        if [[ "$FILTER" == *ReadList ]]; then OPTIONAL+=(--READ_LIST_FILE "${{READLIST[0]}}"); fi
+        picard \
+            -Xmx{JAVA_HEAP_MB}M \
+            FilterSamReads \
+            "${{OPTIONAL[@]}}" \
+            --INPUT "${{BAM[0]}}" \
+            --OUTPUT {{outputs.results}}/"$P.bam" \
+            --FILTER "$FILTER" \
+            $ARGS || exit 1
+    """,
+)
+
+
 # One image per environment: every tool but MarkDuplicates uses the newer Picard, so `env` aggregates two.
 picard_markduplicates_env = flyte.TaskEnvironment.from_task(
     "picard_markduplicates",
@@ -316,6 +359,7 @@ picard_collectmultiplemetrics_env = flyte.TaskEnvironment.from_task(
     picard_collecthsmetrics_cmd.as_task(),
     picard_mergesamfiles_cmd.as_task(),
     picard_sortsam_cmd.as_task(),
+    picard_filtersamreads_cmd.as_task(),
 )
 env = flyte.TaskEnvironment(name="picard", depends_on=[picard_markduplicates_env, picard_collectmultiplemetrics_env])
 
@@ -475,3 +519,34 @@ async def picard_sortsam(bam: File, sort_order: str, prefix: str, args: str = ""
         raise ValueError('Input and output names are the same, use "prefix" to disambiguate!')
     results = await picard_sortsam_cmd(bam=bam, sort_order=sort_order, prefix=prefix, args=args)
     return await pick_file(results, f"{prefix}.bam", "SortSam")
+
+
+@dataclass
+class FilterSamReadsResult:
+    bam: File  # <prefix>.bam
+    bai: File | None  # <prefix>.bai, when args has --CREATE_INDEX true (coordinate-sorted BAMs only)
+
+
+async def picard_filtersamreads(
+    bam: File,
+    filter: str,
+    prefix: str,
+    readlist: File | None = None,
+    fasta: File | None = None,
+    args: str = "",
+) -> FilterSamReadsResult:
+    """``bam`` filtered by ``filter``: ``<prefix>.bam``.
+
+    The read-list filters (``includeReadList``, ``excludeReadList``) need
+    ``readlist``, a file of read names.
+    """
+    if bam.name == f"{prefix}.bam":
+        raise ValueError('Input and output names are the same, use "prefix" to disambiguate!')
+    if filter.endswith("ReadList") and readlist is None:
+        raise ValueError(f"picard FilterSamReads --FILTER {filter} needs a read list")
+    results = await picard_filtersamreads_cmd(
+        bam=bam, readlist=readlist, fasta=fasta, filter=filter, prefix=prefix, args=args
+    )
+    return FilterSamReadsResult(
+        bam=await pick_file(results, f"{prefix}.bam", "FilterSamReads"), bai=await results.get_file(f"{prefix}.bai")
+    )

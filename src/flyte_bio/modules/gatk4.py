@@ -39,6 +39,20 @@ Exposes:
 - :func:`gatk4_splitncigarreads` — split RNA-seq reads at their ``N`` CIGAR
   operations (spliced alignments), optionally within intervals, writing
   ``<prefix>.bam``.
+- :func:`gatk4_getpileupsummaries` — read counts of an alignment at common
+  germline sites, ``<prefix>.pileups.table``.
+- :func:`gatk4_gatherpileupsummaries` — gather per-interval pileup tables into
+  ``<prefix>.pileups.table``.
+- :func:`gatk4_calculatecontamination` — a tumour's cross-sample
+  contamination (optionally against its matched normal),
+  ``<prefix>.contamination.table``, and its segmentation,
+  ``<prefix>.segmentation.table``, when ``args`` ask for it.
+- :func:`gatk4_learnreadorientationmodel` — orientation-bias priors,
+  ``<prefix>.tar.gz``, from Mutect2's f1r2 archives.
+- :func:`gatk4_variantrecalibrator` — a VQSR recalibration model,
+  ``<prefix>.recal`` (+ ``.idx``) and ``<prefix>.tranches``, from labelled
+  known-sites resources; it runs in upstream's image with R, for the
+  optional plotting script.
 
 Panel-of-normals and germline CNV references:
 
@@ -103,6 +117,8 @@ GATK4_LITE_PYTHON_IMAGE = "community.wave.seqera.io/library/gatk4-lite_python:fb
 GATK4_MAIN_IMAGE = "community.wave.seqera.io/library/gatk4-main:4.7.0.0--6f748daadc3eeb06"
 # The gCNV tools need GATK's python kernel (gcnvkernel), which upstream gets from this image.
 GATK4_GCNV_IMAGE = "community.wave.seqera.io/library/gatk4-main_gcnvkernel:600cef9dfbee0739"
+# VariantRecalibrator's upstream image adds R (ggplot2, gplots, gsalib), for its plotting script.
+GATK4_LITE_R_IMAGE = "community.wave.seqera.io/library/gatk4-lite_r-base_r-ggplot2_r-gplots_r-gsalib:c2ff597f2b22489d"
 
 DEFAULT_MEMORY_MB = 6144
 DEFAULT_RESOURCES = flyte.Resources(cpu=1, memory=f"{DEFAULT_MEMORY_MB}Mi")
@@ -1197,8 +1213,179 @@ gatk4_splitintervals_cmd = shell.create(
     """,
 )
 
+# As upstream: the variants (with their .tbi beside them) are the sites, and
+# also the intervals when none are given; the reference (with its .fai and
+# .dict beside it), needed for CRAM, is optional. The alignment and its index
+# are linked under their own names, so GATK pairs them.
+gatk4_getpileupsummaries_cmd = shell.create(
+    name="gatk4_getpileupsummaries",
+    image=GATK4_LITE_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={
+        "alignment": File,
+        "index": File,
+        "intervals": File | None,
+        "fasta": File | None,
+        "fai": File | None,
+        "dict": File | None,
+        "variants": File,
+        "variants_tbi": File,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
+        ALN=({{inputs.alignment}}); IDX=({{inputs.index}}); V=({{inputs.variants}}); T=({{inputs.variants_tbi}})
+        shopt -s nullglob
+        BED=({{inputs.intervals}}); FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); D=({{inputs.dict}})
+        shopt -u nullglob
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        ln -s "${{ALN[0]}}" "$(basename "${{ALN[0]}}")"; ln -s "${{IDX[0]}}" "$(basename "${{IDX[0]}}")"
+        REFERENCE=()
+        REF_FA="${{FA[0]:-}}"; REF_FAI="${{FAI[0]:-}}"; REF_DICT="${{D[0]:-}}"; REF_GZI=""
+        if [ -n "$REF_FA" ]; then
+            {LINK_REFERENCE}
+            REFERENCE=(--reference "$REF")
+        else
+            link_vcf() {{
+                ln -s "$1" "$(basename "$1")"
+                if [ -n "${{2:-}}" ]; then ln -s "$2" "$(basename "$1").${{2##*.}}"; fi
+            }}
+        fi
+        link_vcf "${{V[0]}}" "${{T[0]}}"
+        VARIANTS=$(basename "${{V[0]}}")
+        INTERVALS="$VARIANTS"
+        if [ ${{#BED[@]}} -gt 0 ]; then INTERVALS=$(basename "${{BED[0]}}"); ln -s "${{BED[0]}}" "$INTERVALS"; fi
+        gatk --java-options "$JAVA_OPTIONS" GetPileupSummaries \
+            --input "$(basename "${{ALN[0]}}")" --variant "$VARIANTS" \
+            --output {{outputs.results}}/{{inputs.prefix}}.pileups.table \
+            "${{REFERENCE[@]}}" --intervals "$INTERVALS" --tmp-dir . $ARGS || exit 1
+    """,
+)
+
+# As upstream: every table is an --I, ordered by the dictionary.
+gatk4_gatherpileupsummaries_cmd = shell.create(
+    name="gatk4_gatherpileupsummaries",
+    image=GATK4_LITE_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"pileups": list[File], "dict": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
+        TABLES=({{inputs.pileups}}); D=({{inputs.dict}})
+        ARGS={{inputs.args}}
+        INPUTS=(); for t in "${{TABLES[@]}}"; do INPUTS+=(--I "$t"); done
+        W=$(mktemp -d); cd "$W"
+        gatk --java-options "$JAVA_OPTIONS" GatherPileupSummaries \
+            "${{INPUTS[@]}}" --O {{outputs.results}}/{{inputs.prefix}}.pileups.table \
+            --sequence-dictionary "${{D[0]}}" --tmp-dir . $ARGS || exit 1
+    """,
+)
+
+# As upstream: the matched normal's pileups are optional, and a segmentation
+# table is written when args ask for one (--tumor-segmentation
+# <prefix>.segmentation.table), into the working directory, from which it is kept.
+gatk4_calculatecontamination_cmd = shell.create(
+    name="gatk4_calculatecontamination",
+    image=GATK4_LITE_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"pileup": File, "matched": File | None, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
+        PILEUP=({{inputs.pileup}})
+        shopt -s nullglob; MATCHED=({{inputs.matched}}); shopt -u nullglob
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        OPTIONAL=()
+        if [ ${{#MATCHED[@]}} -gt 0 ]; then OPTIONAL+=(--matched-normal "${{MATCHED[0]}}"); fi
+        gatk --java-options "$JAVA_OPTIONS" CalculateContamination \
+            --input "${{PILEUP[0]}}" --output "$P.contamination.table" \
+            "${{OPTIONAL[@]}}" --tmp-dir . $ARGS || exit 1
+        shopt -s nullglob
+        mv ./*.contamination.table ./*.segmentation.table {{outputs.results}}/
+    """,
+)
+
+# As upstream: every f1r2 archive is an --input.
+gatk4_learnreadorientationmodel_cmd = shell.create(
+    name="gatk4_learnreadorientationmodel",
+    image=GATK4_LITE_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"f1r2": list[File], "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
+        ARCHIVES=({{inputs.f1r2}})
+        ARGS={{inputs.args}}
+        INPUTS=(); for a in "${{ARCHIVES[@]}}"; do INPUTS+=(--input "$a"); done
+        W=$(mktemp -d); cd "$W"
+        gatk --java-options "$JAVA_OPTIONS" LearnReadOrientationModel \
+            "${{INPUTS[@]}}" --output {{outputs.results}}/{{inputs.prefix}}.tar.gz --tmp-dir . $ARGS || exit 1
+    """,
+)
+
+# As upstream: the resources are linked under their own names beside their
+# .tbi files, so the labels (`--resource:<name>,<attributes> <file name>`) can
+# name them; the reference is optional. The recalibration VCF is
+# <prefix>.recal (with GATK's .idx), the tranches <prefix>.tranches, and the
+# plotting script, when args ask for one (--rscript-file <prefix>plots.R), is kept.
+gatk4_variantrecalibrator_cmd = shell.create(
+    name="gatk4_variantrecalibrator",
+    image=GATK4_LITE_R_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={
+        "vcf": File,
+        "tbi": File,
+        "resources": list[File],
+        "resources_tbi": list[File],
+        "labels": str,
+        "fasta": File | None,
+        "fai": File | None,
+        "dict": File | None,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
+        V=({{inputs.vcf}}); T=({{inputs.tbi}}); RES=({{inputs.resources}}); RES_TBI=({{inputs.resources_tbi}})
+        shopt -s nullglob; FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); D=({{inputs.dict}}); shopt -u nullglob
+        P={{inputs.prefix}}
+        LABELS={{inputs.labels}}
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        REFERENCE=()
+        REF_FA="${{FA[0]:-}}"; REF_FAI="${{FAI[0]:-}}"; REF_DICT="${{D[0]:-}}"; REF_GZI=""
+        if [ -n "$REF_FA" ]; then
+            {LINK_REFERENCE}
+            REFERENCE=(--reference "$REF")
+        fi
+        ln -s "${{V[0]}}" "$(basename "${{V[0]}}")"; ln -s "${{T[0]}}" "$(basename "${{V[0]}}").tbi"
+        for r in "${{RES[@]}}" "${{RES_TBI[@]}}"; do ln -s "$r" "$(basename "$r")"; done
+        gatk --java-options "$JAVA_OPTIONS" VariantRecalibrator \
+            --variant "$(basename "${{V[0]}}")" --output "$P.recal" --tranches-file "$P.tranches" \
+            "${{REFERENCE[@]}}" --tmp-dir . $LABELS $ARGS || exit 1
+        shopt -s nullglob
+        mv "$P.recal" ./*.idx "$P.tranches" ./*plots.R {{outputs.results}}/
+    """,
+)
+
 # One image per environment: MarkDuplicates', CNNScoreVariants', the lite tools', IntervalListTools', the full
-# GATK's and the gCNV tools' differ, so `env` has seven.
+# GATK's, the gCNV tools' and VariantRecalibrator's differ, so `env` has eight.
 gatk4_env = flyte.TaskEnvironment.from_task(
     "gatk4_tools",
     gatk4_createsequencedictionary_cmd.as_task(),
@@ -1229,12 +1416,17 @@ gatk4_lite_env = flyte.TaskEnvironment.from_task(
     gatk4_createsomaticpanelofnormals_cmd.as_task(),
     gatk4_indexfeaturefile_cmd.as_task(),
     gatk4_splitintervals_cmd.as_task(),
+    gatk4_getpileupsummaries_cmd.as_task(),
+    gatk4_gatherpileupsummaries_cmd.as_task(),
+    gatk4_calculatecontamination_cmd.as_task(),
+    gatk4_learnreadorientationmodel_cmd.as_task(),
 )
 gatk4_lite_python_env = flyte.TaskEnvironment.from_task("gatk4_lite_python", gatk4_intervallisttools_cmd.as_task())
 gatk4_main_env = flyte.TaskEnvironment.from_task("gatk4_main", gatk4_createreadcountpanelofnormals_cmd.as_task())
 gatk4_gcnv_env = flyte.TaskEnvironment.from_task(
     "gatk4_gcnv", gatk4_determinegermlinecontigploidy_cmd.as_task(), gatk4_germlinecnvcaller_cmd.as_task()
 )
+gatk4_lite_r_env = flyte.TaskEnvironment.from_task("gatk4_lite_r", gatk4_variantrecalibrator_cmd.as_task())
 env = flyte.TaskEnvironment(
     name="gatk4",
     depends_on=[
@@ -1245,6 +1437,7 @@ env = flyte.TaskEnvironment(
         gatk4_lite_python_env,
         gatk4_main_env,
         gatk4_gcnv_env,
+        gatk4_lite_r_env,
     ],
 )
 
@@ -1961,3 +2154,127 @@ async def gatk4_splitintervals(
     )
     lists = [f async for f in results.walk() if f.path.endswith(".interval_list")]
     return sorted(lists, key=lambda f: f.name)
+
+
+async def gatk4_getpileupsummaries(
+    alignment: File,
+    index: File,
+    variants: File,
+    variants_tbi: File,
+    prefix: str,
+    intervals: File | None = None,
+    fasta: File | None = None,
+    fai: File | None = None,
+    dict: File | None = None,
+    args: str = "",
+) -> File:
+    """Read counts of ``alignment`` (BAM/CRAM) at the common germline sites in ``variants``: ``<prefix>.pileups.table``.
+
+    Without ``intervals``, the sites themselves are the intervals, as
+    upstream. A CRAM needs the reference: ``fasta`` with its ``fai`` and
+    ``dict``.
+    """
+    if fasta is not None and (fai is None or dict is None):
+        raise ValueError("the reference fasta needs its fai and dict")
+    results = await gatk4_getpileupsummaries_cmd(
+        alignment=alignment,
+        index=index,
+        intervals=intervals,
+        fasta=fasta,
+        fai=fai,
+        dict=dict,
+        variants=variants,
+        variants_tbi=variants_tbi,
+        prefix=prefix,
+        args=args,
+    )
+    return await only_file(results, f"{prefix}.pileups.table", "GetPileupSummaries")
+
+
+async def gatk4_gatherpileupsummaries(pileups: list[File], dict: File, prefix: str, args: str = "") -> File:
+    """``<prefix>.pileups.table``: per-interval pileup summaries gathered into one, in ``dict``'s order."""
+    results = await gatk4_gatherpileupsummaries_cmd(pileups=pileups, dict=dict, prefix=prefix, args=args)
+    return await only_file(results, f"{prefix}.pileups.table", "GatherPileupSummaries")
+
+
+@dataclass
+class CalculateContaminationResult:
+    contamination: File  # <prefix>.contamination.table
+    segmentation: File | None  # <prefix>.segmentation.table, when args pass --tumor-segmentation
+
+
+async def gatk4_calculatecontamination(
+    pileup: File, prefix: str, matched: File | None = None, args: str = ""
+) -> CalculateContaminationResult:
+    """The cross-sample contamination of a tumour's ``pileup`` table: ``<prefix>.contamination.table``.
+
+    ``matched`` is the matched normal's pileup table. A tumour segmentation
+    is written when ``args`` ask for it
+    (``--tumor-segmentation <prefix>.segmentation.table``).
+    """
+    results = await gatk4_calculatecontamination_cmd(pileup=pileup, matched=matched, prefix=prefix, args=args)
+    segmentations = [f async for f in results.walk() if f.path.endswith(".segmentation.table")]
+    return CalculateContaminationResult(
+        contamination=await only_file(results, f"{prefix}.contamination.table", "CalculateContamination"),
+        segmentation=segmentations[0] if segmentations else None,
+    )
+
+
+async def gatk4_learnreadorientationmodel(f1r2: list[File], prefix: str, args: str = "") -> File:
+    """Orientation-bias priors learnt from Mutect2's ``f1r2`` archives: ``<prefix>.tar.gz``.
+
+    The archives are staged under their own names, so they must be distinct.
+    """
+    results = await gatk4_learnreadorientationmodel_cmd(f1r2=f1r2, prefix=prefix, args=args)
+    return await only_file(results, f"{prefix}.tar.gz", "LearnReadOrientationModel")
+
+
+@dataclass
+class VariantRecalibratorResult:
+    recal: File  # <prefix>.recal, the recalibration VCF
+    idx: File  # <prefix>.recal.idx
+    tranches: File  # <prefix>.tranches
+    plots: File | None  # <prefix>plots.R, when args pass --rscript-file <prefix>plots.R
+
+
+async def gatk4_variantrecalibrator(
+    vcf: File,
+    tbi: File,
+    resources: list[File],
+    resources_tbi: list[File],
+    labels: list[str],
+    prefix: str,
+    fasta: File | None = None,
+    fai: File | None = None,
+    dict: File | None = None,
+    args: str = "",
+) -> VariantRecalibratorResult:
+    """A VQSR recalibration model of ``vcf``: ``<prefix>.recal`` (+ ``.idx``) and ``<prefix>.tranches``.
+
+    Each of ``labels`` names a resource by file name, e.g.
+    ``--resource:hapmap,known=false,training=true,truth=true,prior=15.0 hapmap_3.3.hg38.vcf.gz``;
+    the resources are staged under their own names, beside their
+    ``resources_tbi``. The mode and annotations go in ``args``
+    (``-mode SNP -an QD -an MQ``).
+    """
+    if fasta is not None and (fai is None or dict is None):
+        raise ValueError("the reference fasta needs its fai and dict")
+    results = await gatk4_variantrecalibrator_cmd(
+        vcf=vcf,
+        tbi=tbi,
+        resources=resources,
+        resources_tbi=resources_tbi,
+        labels=" ".join(labels),
+        fasta=fasta,
+        fai=fai,
+        dict=dict,
+        prefix=prefix,
+        args=args,
+    )
+    plots = [f async for f in results.walk() if f.path.endswith("plots.R")]
+    return VariantRecalibratorResult(
+        recal=await only_file(results, f"{prefix}.recal", "VariantRecalibrator"),
+        idx=await only_file(results, ".idx", "VariantRecalibrator"),
+        tranches=await only_file(results, f"{prefix}.tranches", "VariantRecalibrator"),
+        plots=plots[0] if plots else None,
+    )

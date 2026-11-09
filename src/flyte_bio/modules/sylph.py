@@ -6,6 +6,11 @@ writes upstream's ``<prefix>.tsv``. Reads and databases are linked into the
 working directory under their own names, so the table's ``Sample_file`` and
 ``Genome_file`` columns name them as upstream's do (sylph-tax then names its
 output after the sample file).
+
+:func:`sylph_sketchgenomes` sketches genome FASTA files (plain or gzipped)
+into a sylph database, ``<prefix>.syldb`` (``sylph sketch --gl``). As
+upstream, the genomes are linked into ``genomes/`` and listed with ``find``,
+so the database names them ``genomes/<file name>``.
 """
 
 import flyte
@@ -53,7 +58,34 @@ sylph_profile_cmd = shell.create(
     """,
 )
 
-env = flyte.TaskEnvironment.from_task("sylph", sylph_profile_cmd.as_task())
+sylph_sketchgenomes_cmd = shell.create(
+    name="sylph_sketchgenomes",
+    image=SYLPH_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"fasta": list[File], "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        FASTA=({{inputs.fasta}})
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        W=$(mktemp -d); cd "$W"
+        mkdir genomes
+        for F in "${{FASTA[@]}}"; do ln -s "$F" genomes/"$(basename "$F")"; done
+        find -L genomes/ -type f > genomes.txt
+        sylph sketch \
+            -t $TASK_CPUS \
+            $ARGS \
+            --gl genomes.txt \
+            -o "$P" \
+            || exit 1
+        mv "$P".syldb "$OUT"/
+    """,
+)
+
+env = flyte.TaskEnvironment.from_task("sylph", sylph_profile_cmd.as_task(), sylph_sketchgenomes_cmd.as_task())
 
 
 async def sylph_profile(
@@ -70,3 +102,13 @@ async def sylph_profile(
     if profile is None:
         raise FileNotFoundError(f"sylph profile wrote no {prefix}.tsv")
     return profile
+
+
+async def sylph_sketchgenomes(fasta: File | list[File], prefix: str = "sample", args: str = "") -> File:
+    """Sketch genome FASTA files into a sylph database: ``<prefix>.syldb``."""
+    fastas = fasta if isinstance(fasta, list) else [fasta]
+    results = await sylph_sketchgenomes_cmd(fasta=fastas, prefix=prefix, args=args)
+    database = await results.get_file(f"{prefix}.syldb")
+    if database is None:
+        raise FileNotFoundError(f"sylph sketch wrote no {prefix}.syldb")
+    return database

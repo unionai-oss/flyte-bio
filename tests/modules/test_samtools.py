@@ -23,6 +23,10 @@ pair and its interleaved file.
 The trimheader case is upstream's samtools/trimheader at the same commit
 (samtools 1.25): the trimmed header's @SQ lines, the read count and the read
 sequences' md5.
+
+The bam2fq and mpileup cases are upstream's at the same commit: the
+decompressed FASTQs' and pileups' md5s (bam2fq's split case snapshots its
+other and singleton files by name only).
 """
 
 import asyncio
@@ -32,6 +36,7 @@ import hashlib
 from flyte.io import File
 
 from flyte_bio.modules.samtools import (
+    samtools_bam2fq,
     samtools_calmd,
     samtools_collatefastq,
     samtools_convert,
@@ -45,6 +50,7 @@ from flyte_bio.modules.samtools import (
     samtools_index,
     samtools_markdup,
     samtools_merge,
+    samtools_mpileup,
     samtools_sort,
     samtools_stats,
     samtools_trimheader,
@@ -434,6 +440,53 @@ async def test_samtools_trimheader_bam() -> None:
     await assert_reads_md5(out, "f18cb59ef156ae954b5939916b36f524", label="samtools trimheader")
 
 
+UMI_CONVERTED_BAM = "genomics/homo_sapiens/illumina/bam/umi/test.paired_end.umi_converted.bam"
+
+
+@env.task
+async def test_samtools_bam2fq_bam() -> None:
+    # upstream case: samtools/bam2fq "bam" (ext.args "-T RX")
+    out = await samtools_bam2fq(await fixture(UMI_CONVERTED_BAM), prefix="test", args="-T RX")
+    assert [f.name for f in out.fastq] == ["test_interleaved.fq.gz"], out.fastq
+    assert out.other is None and out.singleton is None
+    await assert_gunzipped_md5(out.fastq[0], "d733e66d29a4b366bf9df8c42f845256", label="bam2fq interleaved")
+
+
+@env.task
+async def test_samtools_bam2fq_bam_split() -> None:
+    # upstream case: samtools/bam2fq "bam_split" (ext.args "-T RX")
+    out = await samtools_bam2fq(await fixture(UMI_CONVERTED_BAM), prefix="test", split=True, args="-T RX")
+    assert [f.name for f in out.fastq] == ["test_1.fq.gz", "test_2.fq.gz"], out.fastq
+    assert_name(out.other, "test_other.fq.gz")
+    assert_name(out.singleton, "test_singleton.fq.gz")
+    await assert_gunzipped_md5(out.fastq[0], "2e4f2a6f06308e4b3eb8004b4044c949", label="bam2fq R1")
+    await assert_gunzipped_md5(out.fastq[1], "bd81294b4907edab904d9692d79096f1", label="bam2fq R2")
+
+
+@env.task
+async def test_samtools_mpileup() -> None:
+    # upstream cases: samtools/mpileup "bam - no fasta", "bam - fasta" and "bam - region - bai"
+    sc2 = "genomics/sarscov2/"
+    bam, bai, fasta, fai = await asyncio.gather(
+        fixture(SORTED_BAM),
+        fixture(SORTED_BAM + ".bai"),
+        fixture(sc2 + "genome/genome.fasta"),
+        fixture(sc2 + "genome/genome.fasta.fai"),
+    )
+    no_fasta, with_fasta, region = await asyncio.gather(
+        samtools_mpileup(bam, prefix="test"),
+        samtools_mpileup(bam, prefix="test", fasta=fasta, fai=fai),
+        samtools_mpileup(bam, prefix="test", index=bai, args="-r MT192765.1"),
+    )
+    for out, label, md5 in (
+        (no_fasta, "no fasta", "72340047c1feda82fa632d1762080bd8"),
+        (with_fasta, "fasta", "958e6bead4103d72026f80153b6b5150"),
+        (region, "region - bai", "72340047c1feda82fa632d1762080bd8"),
+    ):
+        assert_name(out, "test.mpileup.gz")
+        await assert_gunzipped_md5(out, md5, label=f"mpileup {label}")
+
+
 tests = [
     test_faidx,
     test_sort,
@@ -461,4 +514,7 @@ tests = [
     test_samtools_import_paired,
     test_samtools_import_interleaved,
     test_samtools_trimheader_bam,
+    test_samtools_bam2fq_bam,
+    test_samtools_bam2fq_bam_split,
+    test_samtools_mpileup,
 ]

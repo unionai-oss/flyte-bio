@@ -16,6 +16,25 @@ kraken2 loads the whole database into memory, so a real database (the
 standard one is tens of GiB) needs ``memory`` raised with
 ``kraken2_cmd.as_task().override(resources=...)``; the default fits small
 databases like the test one.
+
+Building a custom database takes two steps, as upstream:
+
+- :func:`kraken2_add` adds FASTA files to a new database's library
+  (``kraken2-build --add-to-library``, once per file), next to the taxonomy
+  (``names.dmp``, ``nodes.dmp`` and any ``*.accession2taxid`` files) and an
+  optional custom ``seqid2taxid.map``. A library holds a few files per FASTA,
+  so the database directory ``<prefix>/`` (``library/added/``,
+  ``taxonomy/``, ``seqid2taxid.map``) comes back as ``<prefix>.tar.gz``.
+- :func:`kraken2_build` builds the database from that archive
+  (``kraken2-build --build``). It returns the database's top-level files,
+  ``hash.k2d``, ``opts.k2d``, ``taxo.k2d`` (plus ``seqid2taxid.map`` and
+  ``unmapped.txt`` where written): a Dir :func:`kraken2` reads. With
+  ``clean`` (upstream's ``cleaning``) it then removes the library and
+  taxonomy (``kraken2-build --clean``); without, the whole database
+  directory also comes back as ``kraken2-database.tar.gz``, which
+  :func:`flyte_bio.modules.bracken.bracken_build` needs.
+
+The thread count is the task's CPUs.
 """
 
 from dataclasses import dataclass
@@ -90,7 +109,86 @@ kraken2_cmd = shell.create(
     """,
 )
 
-env = flyte.TaskEnvironment.from_task("kraken2", kraken2_cmd.as_task())
+# Upstream labels both builds process_medium.
+BUILD_RESOURCES = flyte.Resources(cpu=4, memory="8Gi")
+
+kraken2_add_cmd = shell.create(
+    name="kraken2_add",
+    image=KRAKEN2_IMAGE,
+    resources=BUILD_RESOURCES,
+    inputs={
+        "fasta": list[File],
+        "taxonomy_names": File,
+        "taxonomy_nodes": File,
+        "accession2taxid": list[File],
+        "seqid2taxid": File | None,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        FASTA=({{inputs.fasta}}); NAMES=({{inputs.taxonomy_names}}); NODES=({{inputs.taxonomy_nodes}})
+        shopt -s nullglob; ACCESSIONS=({{inputs.accession2taxid}}); MAP=({{inputs.seqid2taxid}}); shopt -u nullglob
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        W=$(mktemp -d); cd "$W"
+
+        mkdir -p "$P/taxonomy"
+        ln -s "${{NAMES[0]}}" "$P/taxonomy/names.dmp"
+        ln -s "${{NODES[0]}}" "$P/taxonomy/nodes.dmp"
+        for F in "${{ACCESSIONS[@]}}"; do ln -s "$F" "$P/taxonomy/$(basename "$F")"; done
+        if [ ${{#MAP[@]}} -gt 0 ]; then cp "${{MAP[0]}}" "$P/seqid2taxid.map"; fi
+
+        for F in "${{FASTA[@]}}"; do
+            kraken2-build \
+                --add-to-library "$F" \
+                --db "$P" \
+                --threads $TASK_CPUS \
+                $ARGS \
+                || exit 1
+        done
+        tar -czhf "$OUT/$P.tar.gz" "$P"
+    """,
+)
+
+kraken2_build_cmd = shell.create(
+    name="kraken2_build",
+    image=KRAKEN2_IMAGE,
+    resources=BUILD_RESOURCES,
+    inputs={"library": File, "clean": bool, "args": str},
+    defaults={"clean": True, "args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        LIBRARY=({{inputs.library}})
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        W=$(mktemp -d); cd "$W"
+
+        mkdir kraken2-database
+        tar -xzf "${{LIBRARY[0]}}" -C kraken2-database --strip-components 1
+        kraken2-build \
+            --build \
+            $ARGS \
+            --threads $TASK_CPUS \
+            --db kraken2-database/ \
+            || exit 1
+        if [ {{inputs.clean}} = true ]; then
+            kraken2-build --clean --db kraken2-database/ || exit 1
+        else
+            tar -czf "$OUT/kraken2-database.tar.gz" kraken2-database
+        fi
+        mkdir "$OUT/kraken2-database"
+        find kraken2-database -maxdepth 1 -type f -exec cp {{}} "$OUT/kraken2-database/" \;
+    """,
+)
+
+env = flyte.TaskEnvironment.from_task(
+    "kraken2", kraken2_cmd.as_task(), kraken2_add_cmd.as_task(), kraken2_build_cmd.as_task()
+)
 
 
 @dataclass
@@ -143,4 +241,52 @@ async def kraken2(
         unclassified_reads_fastq=unclassified,
         classified_reads_assignment=assignment,
         results=results,
+    )
+
+
+async def kraken2_add(
+    fasta: File | list[File],
+    taxonomy_names: File,
+    taxonomy_nodes: File,
+    accession2taxid: File | list[File] | None = None,
+    seqid2taxid: File | None = None,
+    prefix: str = "sample",
+    args: str = "",
+) -> File:
+    """Add ``fasta`` to a new database's library: ``<prefix>.tar.gz`` of the database directory ``<prefix>/``."""
+    fastas = fasta if isinstance(fasta, list) else [fasta]
+    if accession2taxid is None:
+        accessions = []
+    else:
+        accessions = accession2taxid if isinstance(accession2taxid, list) else [accession2taxid]
+    results = await kraken2_add_cmd(
+        fasta=fastas,
+        taxonomy_names=taxonomy_names,
+        taxonomy_nodes=taxonomy_nodes,
+        accession2taxid=accessions,
+        seqid2taxid=seqid2taxid,
+        prefix=prefix,
+        args=args,
+    )
+    archive = await results.get_file(f"{prefix}.tar.gz")
+    if archive is None:
+        raise FileNotFoundError(f"kraken2_add wrote no {prefix}.tar.gz")
+    return archive
+
+
+@dataclass
+class Kraken2BuildResult:
+    db: Dir  # the database's top-level files: hash.k2d, opts.k2d, taxo.k2d, ...
+    archive: File | None  # without clean: the whole database directory, kraken2-database.tar.gz
+
+
+async def kraken2_build(library: File, clean: bool = True, args: str = "") -> Kraken2BuildResult:
+    """Build a Kraken2 database from :func:`kraken2_add`'s archive; ``clean`` removes library and taxonomy."""
+    results = await kraken2_build_cmd(library=library, clean=clean, args=args)
+    archive = await results.get_file("kraken2-database.tar.gz")
+    if not clean and archive is None:
+        raise FileNotFoundError("kraken2_build wrote no kraken2-database.tar.gz")
+    return Kraken2BuildResult(
+        db=Dir.from_existing_remote(results.path.rstrip("/") + "/kraken2-database"),
+        archive=archive,
     )
