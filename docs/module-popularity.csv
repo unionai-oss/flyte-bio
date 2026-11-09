@@ -311,7 +311,7 @@ tximeta/tximport,2,4,yes,riboseq rnaseq
 ucsc/gtftogenepred,2,4,yes,rnafusion scnanoseq
 umitools/prepareforrsem,2,4,yes,riboseq rnaseq
 unicycler,2,4,yes,bacass viralrecon
-vcf2maf,2,4,,rnadnavar tumourevo
+vcf2maf,2,4,yes,rnadnavar tumourevo
 vcflib/vcffilter,2,4,yes,pathogensurveillance sarek
 vcftools,2,4,yes,rnadnavar sarek
 xz/decompress,2,4,yes,coproid viralmetagenome
@@ -433,7 +433,7 @@ clipkit,1,5,yes,proteinfamilies
 clustalo/guidetree,1,5,yes,multiplesequencealign
 clusty,1,5,,viralmetagenome
 cmaple,1,5,yes,proteinfamilies
-cnaqc,1,5,,tumourevo
+cnaqc,1,5,yes,tumourevo
 cnvkit/antitarget,1,5,,sarek
 cnvkit/call,1,5,,sarek
 cnvkit/export,1,5,,sarek
@@ -464,7 +464,7 @@ coverm/genome,1,5,,seqsubmit
 crisprcleanr/normalize,1,5,yes,crisprseq
 ctatsplicing/prepgenomelib,1,5,,rnafusion
 ctatsplicing/startocancerintrons,1,5,,rnafusion
-ctree,1,5,,tumourevo
+ctree,1,5,yes,tumourevo
 custom/bed12codonpositions,1,5,,riboseq
 custom/filterdifferentialtable,1,5,,differentialabundance
 custom/matrixfilter,1,5,,differentialabundance
@@ -726,7 +726,7 @@ mmseqs/createindex,1,5,yes,proteinfold
 mmseqs/easysearch,1,5,,viralmetagenome
 mmseqs/taxonomy,1,5,yes,funcscan
 mmseqs/tsv2exprofiledb,1,5,yes,proteinfold
-mobster,1,5,,tumourevo
+mobster,1,5,yes,tumourevo
 modkit/callmods,1,5,yes,methylong
 modkit/repair,1,5,yes,methylong
 motus/merge,1,5,,taxprofiler
@@ -831,7 +831,7 @@ pridepy/fetchsdrf,1,5,,mhcquant
 propr/grea,1,5,,differentialabundance
 propr/propd,1,5,,differentialabundance
 proteus/readproteingroups,1,5,,differentialabundance
-pyclonevi,1,5,,tumourevo
+pyclonevi,1,5,yes,tumourevo
 pycoqc,1,5,,viralrecon
 pydamage/filter,1,5,,mag
 pypolca/run,1,5,,mag
@@ -953,7 +953,7 @@ sourcepredict,1,5,yes,coproid
 sourmash/compare,1,5,yes,pathogensurveillance
 sourmash/gather,1,5,yes,magmap
 spaceranger/count,1,5,yes,sopa
-sparsesignatures,1,5,,tumourevo
+sparsesignatures,1,5,yes,tumourevo
 sratools/prefetch,1,5,yes,fetchngs
 star/indexversion,1,5,yes,rnavar
 starfusion/build,1,5,,rnafusion
@@ -991,7 +991,7 @@ tiddit/cov,1,5,,raredisease
 tidk/explore,1,5,,genomeqc
 tidk/plot,1,5,,genomeqc
 tidk/search,1,5,,genomeqc
-tinc,1,5,,tumourevo
+tinc,1,5,yes,tumourevo
 traitar/pfamget,1,5,,bacmodel
 traitar/run,1,5,,bacmodel
 transdecoder/longorf,1,5,yes,metatdenovo
@@ -1019,7 +1019,7 @@ vcfanno,1,5,,raredisease
 vcflib/vcffixup,1,5,,phaseimpute
 vcflib/vcfuniq,1,5,,viralrecon
 verifybamid/verifybamid2,1,5,,raredisease
-viber,1,5,,tumourevo
+viber,1,5,yes,tumourevo
 vireo,1,5,yes,hadge
 vrhyme/vrhyme,1,5,,viralmetagenome
 vsearch/sintax,1,5,yes,ampliseq

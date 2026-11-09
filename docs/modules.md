@@ -103,6 +103,7 @@ Pipeline columns show which pipelines use each module.
 | `clipkit` | Trim multiple sequence alignments (ClipKIT), with per-site log, complement and JSON report | `clipkit` | — |
 | `clustalo` | Multiple sequence alignment and guide trees with Clustal Omega | `clustalo_align`, `clustalo_guidetree` | — |
 | `cmaple` | Maximum-likelihood phylogeny of closely related sequences (CMAPLE), optionally from a starting tree | `cmaple` | — |
+| `cnaqc` | CNAqc QC of copy-number segments against mutation VAF peaks, with CCFs | `cnaqc` | — |
 | `cnvkit` | Copy-number calling from targeted and whole-genome sequencing (CNVkit): target BEDs and the batch pipeline (references, panels of normals, copy ratios and segments) | `cnvkit_target`, `cnvkit_batch` | — |
 | `collectfeaturecounts` | Collect per-sample featureCounts tables into one long counts table with per-sample TPMs | `collect_featurecounts` | — |
 | `collectstats` | Join per-sample read statistics (trimming, BBDuk, idxstats, feature counts, merge table) into one table | `collect_stats` | — |
@@ -110,6 +111,7 @@ Pipeline columns show which pipelines use each module.
 | `coreograph` | Detect and crop tissue-microarray cores (U-Net), with masks, TMA map and centroids | `coreograph` | — |
 | `crisprcleanr` | Correction of gene-independent copy-number effects in CRISPR screen counts | `crisprcleanr_normalize` | — |
 | `csvtk` | Join tables on key fields; concatenate tables, converting the delimiter | `csvtk_join`, `csvtk_concat` | — |
+| `ctree` | Clone trees from MOBSTER, VIBER or PyClone-VI clusters | `ctree` | — |
 | `cutadapt` | Adapter, primer and quality trimming of FASTQ reads (single- or paired-end) | `cutadapt` | — |
 | `damageprofiler` | Ancient-DNA damage patterns (misincorporation, read lengths) of a BAM | `damageprofiler` | — |
 | `deepcell` | Whole-cell and nuclear segmentation with Mesmer. Non-commercial licence: in `licensed_env`, not the default `env` | `deepcell_mesmer` | — |
@@ -201,6 +203,7 @@ Pipeline columns show which pipelines use each module.
 | `mirtrace` | Quality control for small-RNA sequencing | `mirtrace_qc` | — |
 | `misopy` | MISO annotation indexing of a GFF3 (as a .tar.gz) | `misopy_index` | — |
 | `mmseqs` | Build, cluster, search, index and tabulate MMseqs2 sequence databases, including taxonomy, expandable profile databases from TSV and public database downloads | `mmseqs_createdb`, `mmseqs_cluster`, `mmseqs_linclust`, `mmseqs_createtsv`, `mmseqs_taxonomy`, `mmseqs_databases`, `mmseqs_createindex`, `mmseqs_tsv2exprofiledb` | — |
+| `mobster` | MOBSTER subclonal deconvolution with a neutral tail | `mobster` | — |
 | `modkit` | ONT modified-base calling, pileup and BAM tag repair. Oxford Nanopore public licence: in `licensed_env`, not the default `env` | `modkit_callmods`, `modkit_pileup`, `modkit_repair` | — |
 | `mosdepth` | Read-depth summaries of BAM/CRAM files | `mosdepth` | variant_calling |
 | `msisensorpro` | Scan a reference FASTA for microsatellite sites | `msisensorpro_scan` | — |
@@ -233,6 +236,7 @@ Pipeline columns show which pipelines use each module.
 | `preseq` | Library complexity from mapped reads: extrapolation and the observed complexity curve | `preseq_lcextrap`, `preseq_ccurve` | — |
 | `prodigal` | Prokaryotic gene prediction | `prodigal` | — |
 | `prokka` | Annotate a prokaryotic or viral genome assembly | `prokka` | — |
+| `pyclonevi` | PyClone-VI clustering of cellular prevalence, with a ctree input table | `pyclonevi` | — |
 | `pydamage` | Per-contig ancient-DNA damage estimates of an indexed BAM | `pydamage_analyze` | — |
 | `qcatch` | Cell calling and cell-level QC of a simpleaf quantification | `qcatch` | scrnaseq |
 | `qualimap` | Alignment QC: RNA-seq QC and BAM QC reports | `qualimap_rnaseq`, `qualimap_bamqc` | rnaseq |
@@ -279,6 +283,7 @@ Pipeline columns show which pipelines use each module.
 | `sourmash` | MinHash sketches of sequence files, SBT indexes of them, and gather searches | `sourmash_sketch`, `sourmash_index`, `sourmash_gather`, `sourmash_compare` | — |
 | `spaceranger` | 10x Space Ranger: build a reference; count Visium and Visium HD spatial gene expression. Licensed: in `licensed_env`, not the default `env` | `spaceranger_mkref`, `spaceranger_count` | — |
 | `spades` | De novo genome, RNA, viral and metagenome assembly (Illumina with optional PacBio/Nanopore reads, dataset YAML, custom HMMs) | `spades` | — |
+| `sparsesignatures` | SparseSignatures de novo mutational signatures | `sparsesignatures` | — |
 | `sratools` | Download SRA runs (with retries and integrity checks), write the SRA Toolkit settings, dump runs to FASTQ | `sratools_ncbi_settings`, `sratools_prefetch`, `sratools_fasterqdump` | — |
 | `star` | Spliced RNA-seq alignment; the STAR genome index version | `star_genome_generate`, `star_align`, `star_indexversion` | rnaseq |
 | `stardist` | Nucleus segmentation of 2D images | `stardist` | — |
@@ -290,6 +295,7 @@ Pipeline columns show which pipelines use each module.
 | `sylphtax` | Taxonomic profiles (MetaPhlAn-style) from sylph results | `sylphtax_taxprof` | — |
 | `taxonkit` | Full NCBI-taxonomy lineages of taxon IDs with TaxonKit | `taxonkit_lineage` | — |
 | `thermorawfileparser` | Convert Thermo RAW mass-spec files to mzML, MGF or Parquet | `thermorawfileparser` | — |
+| `tinc` | TINC tumour-in-normal contamination estimate | `tinc` | — |
 | `toulligqc` | Nanopore run QC reports from reads, sequencing summaries or BAMs | `toulligqc` | — |
 | `transdecoder` | Coding regions in transcripts with TransDecoder | `transdecoder_longorf`, `transdecoder_predict` | — |
 | `trimgalore` | Adapter and quality trimming | `trimgalore` | rnaseq |
@@ -306,8 +312,10 @@ Pipeline columns show which pipelines use each module.
 | `untar` | Extract a tar archive | `untar` | rnaseq |
 | `unzip` | Extract a zip (or other 7-Zip-readable) archive into a Dir | `unzip` | — |
 | `unzipfiles` | Extract a zip (or other 7-Zip-readable) archive and list every extracted file | `unzipfiles` | — |
+| `vcf2maf` | VCF to MAF conversion, optionally annotating with Ensembl VEP | `vcf2maf` | — |
 | `vcflib` | Filter VCF records/genotypes by field expressions | `vcflib_vcffilter` | — |
 | `vcftools` | VCF summaries (Ts/Tv, FILTER, frequencies) | `vcftools` | variant_calling |
+| `viber` | VIBER Binomial mixture clustering of read counts across samples | `viber` | — |
 | `vireo` | Assign droplets to donors from per-cell allele counts | `vireo` | — |
 | `vsearch` | Cluster sequences (fast, size, smallmem, UNOISE); sort sequences by abundance or length | `vsearch_cluster`, `vsearch_sort`, `vsearch_sintax`, `vsearch_usearch_global` | — |
 | `wfmash` | All-to-all mapping and alignment of genomes for pangenome graphs | `wfmash` | — |
