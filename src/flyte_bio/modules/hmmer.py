@@ -36,6 +36,28 @@ Also exposes:
   ``seqfile`` (``esl-sfetch --index``), ``<seqfile name>.ssi``, for fast
   retrieval of sequences by name. The index records the file's name, so the
   file is indexed under its own name.
+- :func:`esl_alimask` — remove columns from a multiple alignment with Easel's
+  ``esl-alimask`` (``args``: ``--rf-is-mask``, ``-g``, ``-p`` and the rest, or
+  a mask file, ``mask``): ``<prefix>.masked.sthlm.gz``. Each ``write_*`` flag
+  also writes one of esl-alimask's mask files (``--fmask-rf``,
+  ``--fmask-all``, ``--gmask-rf``, ``--gmask-all``, ``--pmask-rf``,
+  ``--pmask-all``) as ``<prefix>.<mask>.gz``. Everything is gzipped as
+  upstream (``gzip``).
+- :func:`esl_reformat` — convert a sequence file or alignment to another
+  format with Easel's ``esl-reformat``. ``args`` ends with the output format
+  (``afa``, ``-u phylip``, ``--gapsym=- afa``), which names the output,
+  ``<prefix>.<format>.gz`` (``sequences`` with no ``args``). Upstream's
+  post-processing step, a shell pipe, is here a ``sed`` script
+  (``sed_script``) the output is passed through, such as ``/^>/!s/-//g`` to
+  remove gaps.
+- :func:`format_tsv` — HMMER's ``--tblout`` or ``--domtblout`` tables
+  (``table_format``) as one TSV, ``<prefix>.<table_format>.tsv.gz``
+  (``gzip -n``): a header row, then each table's rows, with a first
+  ``profile`` column holding that table's label from ``labels``. The column
+  count comes from each table's dash row; the free-text description (the
+  rest of the line) is the last column. A table with no column-count header,
+  a different layout (such as nhmmer's) or a second run's rows after the
+  first run's footer is an error.
 """
 
 from dataclasses import dataclass
@@ -305,12 +327,166 @@ esl_sfetch_index_cmd = shell.create(
     """,
 )
 
+MASKS = ("fmask-rf", "fmask-all", "gmask-rf", "gmask-all", "pmask-rf", "pmask-all")
+
+esl_alimask_cmd = shell.create(
+    name="esl_alimask",
+    image=HMMER_IMAGE,
+    resources=SINGLE_RESOURCES,
+    inputs={"alignment": File, "mask": File | None, "masks": str, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        ALN=({inputs.alignment})
+        shopt -s nullglob; MASK=({inputs.mask}); shopt -u nullglob
+        MASKS={inputs.masks}
+        P={inputs.prefix}
+        ARGS={inputs.args}
+        OUT={outputs.results}
+        cd "$OUT"
+        OPTS=()
+        for M in $MASKS; do OPTS+=("--$M" "$P.$M"); done
+        esl-alimask "${OPTS[@]}" -o "$P.masked.sthlm" $ARGS "${ALN[0]}" "${MASK[@]}" || exit 1
+        gzip "$P".*mask*
+    """,
+)
+
+# The sed script is passed as one argument, so no shell reaches it.
+esl_reformat_cmd = shell.create(
+    name="esl_reformat",
+    image=HMMER_IMAGE,
+    resources=SINGLE_RESOURCES,
+    inputs={"seqfile": File, "filename": str, "sed_script": str, "args": str},
+    defaults={"sed_script": "", "args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        set -o pipefail
+        SEQ=({inputs.seqfile})
+        NAME={inputs.filename}
+        SED={inputs.sed_script}
+        ARGS={inputs.args}
+        OUT={outputs.results}
+        if [ -n "$SED" ]; then
+            esl-reformat $ARGS "${SEQ[0]}" | sed -e "$SED" | gzip -c > "$OUT/$NAME" || exit 1
+        else
+            esl-reformat $ARGS "${SEQ[0]}" | gzip -c > "$OUT/$NAME" || exit 1
+        fi
+    """,
+)
+
+FORMAT_TSV_IMAGE = "community.wave.seqera.io/library/gawk_gzip:fe0c202000bc8ed4"
+# Upstream's process_low; the formatter streams.
+FORMAT_TSV_RESOURCES = flyte.Resources(cpu=1, memory="2Gi")
+TABLE_HEADERS = {
+    "tblout": "profile target_name target_accession query_name query_accession full_evalue full_score full_bias "
+    "best_domain_evalue best_domain_score best_domain_bias exp reg clu ov env dom rep inc description",
+    "domtblout": "profile target_name target_accession target_length query_name query_accession query_length "
+    "full_evalue full_score full_bias domain_number domain_count c_evalue i_evalue domain_score domain_bias "
+    "hmm_from hmm_to ali_from ali_to env_from env_to acc description",
+}
+TABLE_COLUMNS = {"tblout": 19, "domtblout": 23}
+
+# Upstream's formatter templates (one per format, otherwise the same), with the
+# format's header, column count and name passed in. ``names`` and
+# ``labels`` carry the tables (in the caller's order, as a list[File] is staged
+# under its files' names and globbed alphabetically) and their labels, one per
+# line.
+FORMAT_TSV_AWK = r"""
+            { sub(/\r$/, "") }
+            N == 0 && /^#/ {
+                n = 0
+                ok = 1
+                first = $1
+                sub(/^#/, "", first)
+                if (length(first) > 0) {
+                    if (first ~ /^-+$/) { n++ } else { ok = 0 }
+                }
+                if (ok) {
+                    for (i = 2; i <= NF; i++) {
+                        if ($i !~ /^-+$/) { ok = 0; break }
+                        n++
+                    }
+                }
+                if (ok && n > 0) {
+                    if (n != expected) {
+                        print "hmmer/formattsv: expected " expected " " kind " columns, found " n " -- unsupported layout" (kind == "tblout" ? " (e.g. nhmmer)" : "") > "/dev/stderr"
+                        exit 1
+                    }
+                    N = n
+                }
+                next
+            }
+            N > 0 && $0 == "#" { intrailer = 1; next }
+            intrailer {
+                if ($0 != "" && $0 !~ /^#/) {
+                    print "hmmer/formattsv: data row seen after the run-metadata footer -- looks like more than one HMMER run concatenated into one file" > "/dev/stderr"
+                    exit 1
+                }
+                next
+            }
+            {
+                if (N == 0) {
+                    print "hmmer/formattsv: data row seen before a column-count header was found" > "/dev/stderr"
+                    exit 1
+                }
+                printf "%s", label
+                for (i = 1; i < N; i++) printf "\t%s", $i
+                rest = $N
+                for (i = N + 1; i <= NF; i++) rest = rest " " $i
+                printf "\t%s\n", rest
+            }
+"""  # noqa: E501
+
+format_tsv_cmd = shell.create(
+    name="hmmer_format_tsv",
+    image=FORMAT_TSV_IMAGE,
+    resources=FORMAT_TSV_RESOURCES,
+    inputs={
+        "tables": list[File],
+        "names": str,
+        "labels": str,
+        "header": str,
+        "columns": str,
+        "table_format": str,
+        "filename": str,
+    },
+    outputs={"results": Dir},
+    script=r"""
+        set -euo pipefail
+        IN=({inputs.tables})
+        NAMES={inputs.names}
+        LABELS={inputs.labels}
+        HEADER={inputs.header}
+        EXPECTED={inputs.columns}
+        KIND={inputs.table_format}
+        NAME={inputs.filename}
+        OUT={outputs.results}
+        D=$(dirname "${IN[0]}")
+        mapfile -t files <<< "$NAMES"
+        mapfile -t labels <<< "$LABELS"
+        {
+            printf '%s\n' "$HEADER" | tr ' ' '\t'
+            for i in "${!files[@]}"; do
+                zcat -f "$D/${files[i]}" | awk -v label="${labels[i]}" -v expected="$EXPECTED" -v kind="$KIND" '"""
+    + FORMAT_TSV_AWK
+    + r"""'
+            done
+        } | gzip -n > "$OUT/$NAME"
+    """,
+)
+
 hmmer_env = flyte.TaskEnvironment.from_task(
-    "hmmer_tools", hmmsearch_cmd.as_task(), hmmalign_cmd.as_task(), hmmbuild_cmd.as_task()
+    "hmmer_tools",
+    hmmsearch_cmd.as_task(),
+    hmmalign_cmd.as_task(),
+    hmmbuild_cmd.as_task(),
+    esl_alimask_cmd.as_task(),
+    esl_reformat_cmd.as_task(),
 )
 hmmrank_env = flyte.TaskEnvironment.from_task("hmmer_rank", hmmrank_cmd.as_task())
 sfetch_env = flyte.TaskEnvironment.from_task("hmmer_sfetch", esl_sfetch_index_cmd.as_task())
-env = flyte.TaskEnvironment(name="hmmer", depends_on=[hmmer_env, hmmrank_env, sfetch_env])
+format_tsv_env = flyte.TaskEnvironment.from_task("hmmer_format_tsv", format_tsv_cmd.as_task())
+env = flyte.TaskEnvironment(name="hmmer", depends_on=[hmmer_env, hmmrank_env, sfetch_env, format_tsv_env])
 
 
 @dataclass
@@ -410,3 +586,80 @@ async def esl_sfetch_index(seqfile: File) -> File:
     if len(indexes) != 1:
         raise FileNotFoundError(f"esl-sfetch wrote {len(indexes)} .ssi indexes, expected 1")
     return indexes[0]
+
+
+async def pick_file(results: Dir, name: str, tool: str) -> File:
+    found = await results.get_file(name)
+    if found is None:
+        raise FileNotFoundError(f"{tool} wrote no {name}")
+    return found
+
+
+@dataclass
+class EslAlimaskResult:
+    masked: File  # <prefix>.masked.sthlm.gz
+    masks: dict[str, File]  # each mask asked for ("fmask-rf", ...): <prefix>.<mask>.gz
+
+
+async def esl_alimask(
+    alignment: File,
+    mask: File | None = None,
+    prefix: str = "sample",
+    write_fmask_rf: bool = False,
+    write_fmask_all: bool = False,
+    write_gmask_rf: bool = False,
+    write_gmask_all: bool = False,
+    write_pmask_rf: bool = False,
+    write_pmask_all: bool = False,
+    args: str = "",
+) -> EslAlimaskResult:
+    """``alignment`` with columns removed by esl-alimask: ``<prefix>.masked.sthlm.gz``, plus any masks asked for."""
+    wanted = [
+        m
+        for m, on in zip(
+            MASKS,
+            (write_fmask_rf, write_fmask_all, write_gmask_rf, write_gmask_all, write_pmask_rf, write_pmask_all),
+        )
+        if on
+    ]
+    results = await esl_alimask_cmd(alignment=alignment, mask=mask, masks=" ".join(wanted), prefix=prefix, args=args)
+    return EslAlimaskResult(
+        masked=await pick_file(results, f"{prefix}.masked.sthlm.gz", "esl-alimask"),
+        masks={m: await pick_file(results, f"{prefix}.{m}.gz", "esl-alimask") for m in wanted},
+    )
+
+
+async def esl_reformat(seqfile: File, prefix: str = "sample", sed_script: str = "", args: str = "") -> File:
+    """``seqfile`` in the format ``args`` ends with (optionally through ``sed_script``): ``<prefix>.<format>.gz``."""
+    suffix = args.rsplit(maxsplit=1)[-1] if args.strip() else "sequences"
+    filename = f"{prefix}.{suffix}.gz"
+    results = await esl_reformat_cmd(seqfile=seqfile, filename=filename, sed_script=sed_script, args=args)
+    return await pick_file(results, filename, "esl-reformat")
+
+
+async def format_tsv(tables: list[File], labels: list[str], table_format: str, prefix: str = "sample") -> File:
+    """HMMER ``tables`` as one TSV with a ``profile`` column from ``labels``: ``<prefix>.<table_format>.tsv.gz``."""
+    if len(labels) != len(tables):
+        raise ValueError(
+            f"HMMER_FORMATTSV: labels and files must be the same length (got {len(labels)} labels, {len(tables)} files)"
+        )
+    if table_format not in TABLE_HEADERS:
+        raise ValueError(f"HMMER_FORMATTSV: format must be 'tblout' or 'domtblout', got '{table_format}'")
+    if not tables:
+        raise ValueError("format_tsv needs at least one table")
+    if any("\n" in label for label in labels):
+        raise ValueError("format_tsv: a label can't contain a newline")
+    names = [t.path.rstrip("/").rsplit("/", 1)[-1] for t in tables]
+    if len(set(names)) != len(names):
+        raise ValueError(f"format_tsv inputs need distinct names, got {names}")
+    filename = f"{prefix}.{table_format}.tsv.gz"
+    results = await format_tsv_cmd(
+        tables=tables,
+        names="\n".join(names),
+        labels="\n".join(labels),
+        header=TABLE_HEADERS[table_format],
+        columns=str(TABLE_COLUMNS[table_format]),
+        table_format=table_format,
+        filename=filename,
+    )
+    return await pick_file(results, filename, "the HMMER table formatter")

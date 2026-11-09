@@ -23,6 +23,15 @@ upstream, the output is ``<prefix>.seqtk-seq.<ext>.gz`` (``gzip -c``), where
 :func:`seqtk_cutn` writes the runs of N (gaps) in a FASTA as a BED,
 ``seqtk cutN -g`` (``-n`` sets the shortest gap, in ``args``), to
 ``<prefix>.bed``.
+
+:func:`seqtk_subseq` extracts the sequences (or, with a BED, the regions)
+named in ``filter_list`` from a FASTA/FASTQ file, ``seqtk subseq``. As
+upstream, the output is ``<prefix>.<ext>.gz`` (``gzip --no-name``), where
+``ext`` is ``fq`` for a FASTQ-named input and ``fa`` otherwise.
+
+:func:`seqtk_mergepe` interleaves paired-end FASTQ files into one,
+``seqtk mergepe``: ``<prefix>.fastq.gz`` (``gzip -n``). As upstream, a single
+(single-end) file is passed through unchanged under that name.
 """
 
 import re
@@ -109,6 +118,9 @@ seqtk_seq_cmd = shell.create(
     """,
 )
 
+# Upstream's test for a FASTQ input, to name seqtk subseq's output.
+SUBSEQ_FASTQ_NAME = re.compile(r".+\.fq|.+\.fq.gz|.+\.fastq|.+\.fastq.gz")
+
 # Upstream labels cutN process_low; it is single-threaded and streams.
 seqtk_cutn_cmd = shell.create(
     name="seqtk_cutn",
@@ -127,8 +139,55 @@ seqtk_cutn_cmd = shell.create(
     """,
 )
 
+seqtk_subseq_cmd = shell.create(
+    name="seqtk_subseq",
+    image=SEQTK_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"sequences": File, "filter_list": File, "filename": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        set -o pipefail
+        IN=({inputs.sequences})
+        LIST=({inputs.filter_list})
+        NAME={inputs.filename}
+        ARGS={inputs.args}
+        OUT={outputs.results}
+        set -f
+        seqtk subseq $ARGS "${IN[0]}" "${LIST[0]}" | gzip --no-name > "$OUT/$NAME" || exit 1
+    """,
+)
+
+seqtk_mergepe_cmd = shell.create(
+    name="seqtk_mergepe",
+    image=SEQTK_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"reads_1": File, "reads_2": File | None, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        set -o pipefail
+        R1=({inputs.reads_1})
+        shopt -s nullglob; R2=({inputs.reads_2}); shopt -u nullglob
+        P={inputs.prefix}
+        ARGS={inputs.args}
+        OUT={outputs.results}
+        if [ ${#R2[@]} -eq 0 ]; then
+            cp "${R1[0]}" "$OUT/$P.fastq.gz"
+        else
+            seqtk mergepe $ARGS "${R1[0]}" "${R2[0]}" | gzip -n > "$OUT/$P.fastq.gz" || exit 1
+        fi
+    """,
+)
+
 env = flyte.TaskEnvironment.from_task(
-    "seqtk", seqtk_sample_cmd.as_task(), seqtk_trim_cmd.as_task(), seqtk_seq_cmd.as_task(), seqtk_cutn_cmd.as_task()
+    "seqtk",
+    seqtk_sample_cmd.as_task(),
+    seqtk_trim_cmd.as_task(),
+    seqtk_seq_cmd.as_task(),
+    seqtk_cutn_cmd.as_task(),
+    seqtk_subseq_cmd.as_task(),
+    seqtk_mergepe_cmd.as_task(),
 )
 
 
@@ -202,3 +261,21 @@ async def seqtk_cutn(fasta: File, prefix: str = "sample", args: str = "") -> Fil
     """The gaps (runs of N) in ``fasta`` as a BED, ``seqtk cutN -g``: ``<prefix>.bed``."""
     results = await seqtk_cutn_cmd(fasta=fasta, prefix=prefix, args=args)
     return await pick(results, f"{prefix}.bed", "seqtk cutN")
+
+
+async def seqtk_subseq(sequences: File, filter_list: File, prefix: str = "sample", args: str = "") -> File:
+    """The sequences or regions in ``filter_list`` from ``sequences``: ``<prefix>.fa.gz`` or ``<prefix>.fq.gz``."""
+    ext = "fq" if SUBSEQ_FASTQ_NAME.fullmatch(file_name(sequences)) else "fa"
+    filename = f"{prefix}.{ext}.gz"
+    results = await seqtk_subseq_cmd(sequences=sequences, filter_list=filter_list, filename=filename, args=args)
+    return await pick(results, filename, "seqtk subseq")
+
+
+async def seqtk_mergepe(reads: list[File], prefix: str = "sample", args: str = "") -> File:
+    """Paired ``reads`` interleaved (one file passed through): ``<prefix>.fastq.gz``."""
+    if len(reads) not in (1, 2):
+        raise ValueError(f"seqtk_mergepe needs one (single-end) or two (paired-end) files, got {len(reads)}")
+    results = await seqtk_mergepe_cmd(
+        reads_1=reads[0], reads_2=reads[1] if len(reads) == 2 else None, prefix=prefix, args=args
+    )
+    return await pick(results, f"{prefix}.fastq.gz", "seqtk mergepe")

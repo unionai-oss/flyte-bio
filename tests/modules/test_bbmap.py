@@ -36,6 +36,13 @@ and one stable file's md5. bbmap/align snapshots BAMs by their reads' md5,
 and reads outputs by name, line count and the md5 of their sorted lines
 (joined by newlines); its "pigz" case runs with ``unpigz=t``. bbmap/clumpify
 snapshots the decompressed reads' md5s and the log's name.
+
+The bbmap/sendsketch cases are upstream's at the same commit. They query JGI's
+sketch server over the network, and upstream snapshots the md5 of its report.
+The report reflects the server's live database: the paired case's no longer
+matches upstream's snapshot (the hits' order and figures differ), and the
+single case's will drift the same way. So both check the report's query line,
+its columns and its hits instead.
 """
 
 import gzip
@@ -56,6 +63,7 @@ from flyte_bio.modules.bbmap import (
     bbmap_index,
     bbmap_pileup,
     bbmap_repair,
+    bbmap_sendsketch,
     bbnorm,
     bbsplit,
     bbsplit_index,
@@ -492,6 +500,34 @@ async def test_bbmap_clumpify_paired_end() -> None:
     await assert_gunzipped_md5(result.reads[1], "c70ab7bbd44d6b6fadd6a1a79ef1648f", label=names[1])
 
 
+async def check_sendsketch_report(hits: File, query: str, expected_hit: str | None) -> None:
+    """Check a sendsketch report's shape: the server's live database moves its hits and figures."""
+    assert hits.name == "test.txt", f"wrote {hits.name}"
+    async with hits.open("rb") as fh:
+        report = bytes(await fh.read()).decode().splitlines()
+    assert report[1].startswith(f"Query: {query}\tDB: RefSeq\t"), f"report's query line: {report[1]!r}"
+    assert report[2].startswith("WKID\tKID\tANI\t"), f"report's header: {report[2]!r}"
+    names = [line.split("\t")[-1] for line in report[3:] if line]
+    assert names, "sendsketch reported no hits"
+    if expected_hit is not None:
+        assert expected_hit in names, f"no {expected_hit} hit among {names}"
+
+
+@env.task
+async def test_bbmap_sendsketch_single() -> None:
+    # upstream case: bbmap/sendsketch "test-bbmap-sendsketch-single" (upstream's md5 ba6a7865... matched in 2026-11)
+    hits = await bbmap_sendsketch(await fixture("genomics/homo_sapiens/genome/genome.fasta"), prefix="test")
+    # The test genome is a small human slice; its top hits are other primates.
+    await check_sendsketch_report(hits, "genome.fasta", expected_hit=None)
+
+
+@env.task
+async def test_bbmap_sendsketch_paired() -> None:
+    # upstream case: bbmap/sendsketch "test-bbmap-sendsketch-paired": upstream sketches only the first mate
+    hits = await bbmap_sendsketch(await fixture("genomics/homo_sapiens/illumina/fastq/test2_1.fastq.gz"), prefix="test")
+    await check_sendsketch_report(hits, "test2_1.fastq.gz", expected_hit="Homo sapiens")
+
+
 tests = [
     test_bbsplit_prebuilt_index,
     test_bbduk_single_end,
@@ -521,4 +557,6 @@ tests = [
     test_bbmap_pileup_paired_bam,
     test_bbmap_clumpify_single_end,
     test_bbmap_clumpify_paired_end,
+    test_bbmap_sendsketch_single,
+    test_bbmap_sendsketch_paired,
 ]

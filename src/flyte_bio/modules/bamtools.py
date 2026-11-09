@@ -11,7 +11,13 @@ Exposes:
   A split can write one BAM per contig, too many files for a Dir, so the BAMs
   come back as one archive, ``<prefix>.split.tar.gz``, with the BAMs at its
   root.
+- :func:`bamtools_convert` — ``bamtools convert`` of one BAM to the format
+  ``args`` names with ``-format <format>`` (``bed``, ``fasta``, ``fastq``,
+  ``json``, ``pileup``, ``sam`` or ``yaml``), as ``<prefix>.<format>``.
 """
+
+import os
+import re
 
 import flyte
 from flyte.extras import shell
@@ -58,7 +64,31 @@ bamtools_split_cmd = shell.create(
     """,
 )
 
-env = flyte.TaskEnvironment.from_task("bamtools", bamtools_stats_cmd.as_task(), bamtools_split_cmd.as_task())
+bamtools_convert_cmd = shell.create(
+    name="bamtools_convert",
+    image=BAMTOOLS_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"bam": File, "prefix": str, "extension": str, "args": str},
+    outputs={"results": Dir},
+    script=r"""
+        BAM=({inputs.bam})
+        P={inputs.prefix}
+        EXT={inputs.extension}
+        ARGS={inputs.args}
+        OUT={outputs.results}
+        W=$(mktemp -d); cd "$W"
+        NAME=$(basename "${BAM[0]}"); ln -s "${BAM[0]}" "$NAME"
+        bamtools convert $ARGS -in "$NAME" -out "$P.$EXT"
+        mv "$P.$EXT" "$OUT"/
+    """,
+)
+
+env = flyte.TaskEnvironment.from_task(
+    "bamtools", bamtools_stats_cmd.as_task(), bamtools_split_cmd.as_task(), bamtools_convert_cmd.as_task()
+)
+
+CONVERT_FORMATS = ("bed", "fasta", "fastq", "json", "pileup", "sam", "yaml")
+CONVERT_FORMAT_ERROR = "-format option must be provided in args. Possible values: " + " ".join(CONVERT_FORMATS)
 
 
 async def bamtools_stats(bam: File, prefix: str = "sample", args: str = "") -> File:
@@ -83,3 +113,18 @@ async def bamtools_split(bams: list[File], args: str, prefix: str = "sample") ->
     if archive is None:
         raise FileNotFoundError(f"bamtools split wrote no {prefix}.split.tar.gz")
     return archive
+
+
+async def bamtools_convert(bam: File, args: str, prefix: str = "sample") -> File:
+    """``bamtools convert`` of ``bam`` to the ``-format <format>`` in ``args``, as ``<prefix>.<format>``."""
+    match = re.search(r"(?:^|\s)-format (" + "|".join(CONVERT_FORMATS) + r")(?:\s|$)", args)
+    if match is None:
+        raise ValueError(CONVERT_FORMAT_ERROR)
+    extension = match.group(1)
+    if (bam.name or os.path.basename(bam.path)) == f"{prefix}.{extension}":
+        raise ValueError(f"input and output are both {prefix}.{extension}: set another prefix")
+    results = await bamtools_convert_cmd(bam=bam, prefix=prefix, extension=extension, args=args)
+    converted = await results.get_file(f"{prefix}.{extension}")
+    if converted is None:
+        raise FileNotFoundError(f"bamtools convert wrote no {prefix}.{extension}")
+    return converted

@@ -36,6 +36,13 @@ Exposes:
   ``fa`` for FASTA-named inputs and ``fq`` otherwise, plus ``.gz`` for a
   gzipped input (seqkit compresses by the extension). Matching options
   (``-n``, ``-r``, ``-v``…) go in ``args``.
+- :func:`seqkit_head` — ``seqkit head -n <seq_count>`` of each of one or more
+  FASTA/FASTQ files: as upstream, ``<prefix>_subset_<input name>`` each
+  (compressed as the input's name says), returned in the input order.
+- :func:`seqkit_sliding` — ``seqkit sliding`` windows of one FASTA/FASTQ
+  file, with the step and window in ``args`` (e.g. ``-s 2 -W 5``). As
+  upstream, the output is ``<prefix>.fasta`` for an uncompressed FASTA-named
+  input and ``<prefix>.fastq`` otherwise, uncompressed.
 
 All pass the task's CPUs as ``--threads``. ``args`` is split on whitespace
 without shell quote removal, so write ``-p A``, not ``-p 'A'``; patterns are
@@ -60,6 +67,8 @@ FASTA_NAME = re.compile(r".+\.(fasta|fa|fas|fna|faa)(\.gz)?")
 SEQ_FASTA_NAME = re.compile(r".+\.(fasta|fa|fas|fna|fsa)(\.gz)?")
 # seqkit grep's (upstream's ``.*f[astn]*a(.gz)?``, with its unescaped dot).
 GREP_FASTA_NAME = re.compile(r".*f[astn]*a(.gz)?")
+# seqkit sliding's: only uncompressed names count as FASTA.
+SLIDING_FASTA_NAME = re.compile(r".+\.fasta|.+\.fa|.+\.fas|.+\.fna")
 
 # A list[File] is staged under the files' names and globbed alphabetically, so
 # ``names`` carries the caller's order (one name per line) into the script.
@@ -220,6 +229,55 @@ seqkit_grep_cmd = shell.create(
     """,
 )
 
+seqkit_head_cmd = shell.create(
+    name="seqkit_head",
+    image=SEQKIT_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"fastqs": list[File], "seq_count": int, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        IN=({{inputs.fastqs}})
+        COUNT={{inputs.seq_count}}
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        set -f
+        for F in "${{IN[@]}}"; do
+            seqkit head \
+                $ARGS \
+                --threads $TASK_CPUS \
+                -n "$COUNT" \
+                -o "$OUT/${{P}}_subset_$(basename "$F")" \
+                "$F" || exit 1
+        done
+    """,
+)
+
+seqkit_sliding_cmd = shell.create(
+    name="seqkit_sliding",
+    image=SEQKIT_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"fastx": File, "filename": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        IN=({{inputs.fastx}})
+        NAME={{inputs.filename}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        set -f
+        seqkit \
+            sliding \
+            "${{IN[0]}}" \
+            $ARGS \
+            --threads $TASK_CPUS \
+            -o "$OUT/$NAME" || exit 1
+    """,
+)
+
 env = flyte.TaskEnvironment.from_task(
     "seqkit",
     seqkit_stats_cmd.as_task(),
@@ -229,6 +287,8 @@ env = flyte.TaskEnvironment.from_task(
     seqkit_split2_cmd.as_task(),
     seqkit_fq2fa_cmd.as_task(),
     seqkit_grep_cmd.as_task(),
+    seqkit_head_cmd.as_task(),
+    seqkit_sliding_cmd.as_task(),
 )
 
 
@@ -339,3 +399,23 @@ async def seqkit_grep(
         sequence=sequence, pattern_file=patterns, pattern=pattern, filename=filename, args=args
     )
     return await pick(results, filename, "seqkit grep")
+
+
+async def seqkit_head(fastqs: File | list[File], seq_count: int, prefix: str = "sample", args: str = "") -> list[File]:
+    """The first ``seq_count`` records of each of ``fastqs``: ``<prefix>_subset_<name>`` each, in input order."""
+    files = [fastqs] if isinstance(fastqs, File) else list(fastqs)
+    names = [file_name(f) for f in files]
+    if not names:
+        raise ValueError("seqkit_head needs at least one file")
+    if len(set(names)) != len(names):
+        raise ValueError(f"seqkit_head inputs need distinct names, got {names}")
+    results = await seqkit_head_cmd(fastqs=files, seq_count=seq_count, prefix=prefix, args=args)
+    return [await pick(results, f"{prefix}_subset_{name}", "seqkit head") for name in names]
+
+
+async def seqkit_sliding(fastx: File, prefix: str = "sample", args: str = "") -> File:
+    """``seqkit sliding`` windows of ``fastx``: ``<prefix>.fasta`` (uncompressed FASTA input) or ``<prefix>.fastq``."""
+    extension = "fasta" if SLIDING_FASTA_NAME.fullmatch(file_name(fastx)) else "fastq"
+    filename = f"{prefix}.{extension}"
+    results = await seqkit_sliding_cmd(fastx=fastx, filename=filename, args=args)
+    return await pick(results, filename, "seqkit sliding")

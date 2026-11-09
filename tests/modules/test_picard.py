@@ -25,6 +25,8 @@ picard/collecthsmetrics cases are upstream's at the same commit (Picard
   (joined by newlines), and the size.
 - MergeSamFiles (picard/mergesamfiles at the same commit): the merged BAM's
   name and reads md5.
+- SortSam (picard/sortsam at the same commit): the sorted BAM's name and
+  reads md5, with the test config's ``<id>.sorted`` prefix.
 """
 
 import hashlib
@@ -39,6 +41,7 @@ from flyte_bio.modules.picard import (
     picard_createsequencedictionary,
     picard_markduplicates,
     picard_mergesamfiles,
+    picard_sortsam,
 )
 from flyte_bio.modules.samtools import samtools_view
 from tests.framework import assert_nonempty, assert_reads_md5, env, fixture
@@ -255,6 +258,15 @@ async def test_picard_mergesamfiles_bams() -> None:
     await assert_reads_md5(merged, "730da54c088350ff625d34b95e623dca", label="merged bam")
 
 
+@env.task
+async def test_picard_sortsam_queryname() -> None:
+    # upstream case: picard/sortsam "test-picard-sortsam"
+    bam = await fixture("genomics/sarscov2/illumina/bam/test.single_end.bam")
+    sorted_bam = await picard_sortsam(bam, "queryname", prefix="test.sorted")
+    assert sorted_bam.name == "test.sorted.bam", f"wrote {sorted_bam.name}"
+    await assert_reads_md5(sorted_bam, "b9847fed94d2b7286e18caaa099658ce", label="sorted bam")
+
+
 tests = [
     test_markduplicates_sorted_bam,
     test_picard_collectmultiplemetrics,
@@ -269,4 +281,5 @@ tests = [
     test_picard_collecthsmetrics_bed,
     test_picard_collecthsmetrics_samebed,
     test_picard_mergesamfiles_bams,
+    test_picard_sortsam_queryname,
 ]

@@ -1,8 +1,8 @@
 """Tests for flyte_bio.modules.cooler.
 
 The cases are upstream's cooler tests (modules commit 9a1cc9f, cooler 0.10.4;
-dump 0.10.3). The makebins BED and the dump of a toy cooler are pure data, so
-they're checked against upstream's md5s. ``.cool`` and ``.mcool`` files are
+dump 0.10.3). The digest and makebins BEDs and the dump of a toy cooler are
+pure data, so they're checked against upstream's md5s. ``.cool`` and ``.mcool`` files are
 HDF5 and record their creation date, so upstream snapshots only their names;
 these tests check the names too, then that the file is HDF5 and, through
 :func:`cooler_dump`, that it holds what the step should have written.
@@ -14,6 +14,7 @@ from flyte_bio.modules.cooler import (
     CoolerResult,
     cooler_balance,
     cooler_cload,
+    cooler_digest,
     cooler_dump,
     cooler_makebins,
     cooler_zoomify,
@@ -89,6 +90,17 @@ async def test_cooler_cload_tabix() -> None:
 
 
 @env.task
+async def test_cooler_digest() -> None:
+    result = await cooler_digest(
+        await fixture("genomics/sarscov2/genome/genome.fasta"),
+        await fixture("genomics/sarscov2/genome/genome.sizes"),
+        "CviQI",
+    )
+    assert file_name(result.output) == "genome_CviQI.bed", file_name(result.output)
+    await assert_md5(result.output, "f02d3cfaf642b27d4cc197209845e096", label="digest")
+
+
+@env.task
 async def test_cooler_makebins() -> None:
     result = await cooler_makebins(await fixture(CLOAD + "hg19.chrom.sizes"), 1000000, prefix="test")
     assert file_name(result.output) == "test.bed"
@@ -123,6 +135,7 @@ tests = [
     test_cooler_cload_pairix,
     test_cooler_cload_pairs,
     test_cooler_cload_tabix,
+    test_cooler_digest,
     test_cooler_makebins,
     test_cooler_balance,
     test_cooler_dump,

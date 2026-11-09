@@ -20,7 +20,15 @@ Exposes:
   matches (``<prefix>_prefetch.sig.zip``, ``<prefix>_prefetch.csv.gz``).
   ``args`` are extra options, such as ``--ksize 31`` or ``--threshold-bp``.
 
-As upstream, index and gather inputs are staged in the working directory
+- :func:`sourmash_compare`, which compares signatures pairwise (similarity,
+  or containment with ``--containment`` in ``args``) and writes the matrix as
+  NumPy (``<prefix>_comp.npy`` with its labels,
+  ``<prefix>_comp.npy.labels.txt``) and/or CSV (``<prefix>_comp.csv``). The
+  signatures come as files (passed in name order, as upstream) and/or a
+  ``file_list`` of signature paths (``--from-file``). It uses the task's CPUs
+  (``--processes``).
+
+As upstream, index, gather and compare inputs are staged in the working directory
 under their own names, which gather's CSV records.
 """
 
@@ -29,6 +37,8 @@ from dataclasses import dataclass
 import flyte
 from flyte.extras import shell
 from flyte.io import Dir, File
+
+from flyte_bio.limits import TASK_LIMITS
 
 SOURMASH_IMAGE = "quay.io/biocontainers/sourmash:4.9.4--hdfd78af_0"
 DEFAULT_RESOURCES = flyte.Resources(cpu=1, memory="4Gi")
@@ -134,8 +144,52 @@ sourmash_gather_cmd = shell.create(
     """,
 )
 
+sourmash_compare_cmd = shell.create(
+    name="sourmash_compare",
+    image=SOURMASH_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={
+        "signatures": list[File] | None,
+        "file_list": File | None,
+        "save_numpy_matrix": bool,
+        "save_csv": bool,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        shopt -s nullglob; SIGNATURES=({{inputs.signatures}}); FILE_LIST=({{inputs.file_list}}); shopt -u nullglob
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        W=$(mktemp -d); cd "$W"
+        NAMES=()
+        for F in "${{SIGNATURES[@]}}"; do ln -s "$F" .; NAMES+=("$(basename "$F")"); done
+        mapfile -t NAMES < <(if [ ${{#NAMES[@]}} -gt 0 ]; then printf '%s\n' "${{NAMES[@]}}" | LC_ALL=C sort; fi)
+        SAVE=()
+        if [ {{inputs.save_numpy_matrix}} = true ]; then SAVE+=(--output "${{P}}_comp.npy"); fi
+        if [ {{inputs.save_csv}} = true ]; then SAVE+=(--csv "${{P}}_comp.csv"); fi
+        FROM_FILE=()
+        if [ ${{#FILE_LIST[@]}} -gt 0 ]; then FROM_FILE=(--from-file "${{FILE_LIST[0]}}"); fi
+        sourmash compare \
+            $ARGS \
+            --processes $TASK_CPUS \
+            "${{SAVE[@]}}" \
+            "${{FROM_FILE[@]}}" \
+            "${{NAMES[@]}}" || exit 1
+        shopt -s nullglob
+        mv ./*_comp.npy ./*_comp.npy.labels.txt ./*_comp.csv "$OUT"/
+    """,
+)
+
 env = flyte.TaskEnvironment.from_task(
-    "sourmash", sourmash_sketch_cmd.as_task(), sourmash_index_cmd.as_task(), sourmash_gather_cmd.as_task()
+    "sourmash",
+    sourmash_sketch_cmd.as_task(),
+    sourmash_index_cmd.as_task(),
+    sourmash_gather_cmd.as_task(),
+    sourmash_compare_cmd.as_task(),
 )
 
 
@@ -197,4 +251,42 @@ async def sourmash_gather(
         prefetch=await results.get_file(f"{prefix}_prefetch.sig.zip"),
         prefetch_csv=await results.get_file(f"{prefix}_prefetch.csv.gz"),
         results=results,
+    )
+
+
+@dataclass
+class SourmashCompareResult:
+    matrix: File | None  # <prefix>_comp.npy, with save_numpy_matrix
+    labels: File | None  # <prefix>_comp.npy.labels.txt, with save_numpy_matrix
+    csv: File | None  # <prefix>_comp.csv, with save_csv
+
+
+async def sourmash_compare(
+    signatures: list[File] | None = None,
+    file_list: File | None = None,
+    save_numpy_matrix: bool = True,
+    save_csv: bool = False,
+    prefix: str = "sample",
+    args: str = "",
+) -> SourmashCompareResult:
+    """The pairwise comparison matrix of ``signatures`` and/or the signatures listed in ``file_list``."""
+    if not save_numpy_matrix and not save_csv:
+        raise ValueError("Supply either save_numpy_matrix, save_csv, or both or no output will be created")
+    if not signatures and file_list is None:
+        raise ValueError("Supply either signatures, file_list, or both")
+    names = [f.name for f in signatures or []]
+    if len(set(names)) != len(names):
+        raise ValueError(f"sourmash_compare needs distinct signature names, got {names}")
+    results = await sourmash_compare_cmd(
+        signatures=signatures or None,
+        file_list=file_list,
+        save_numpy_matrix=save_numpy_matrix,
+        save_csv=save_csv,
+        prefix=prefix,
+        args=args,
+    )
+    return SourmashCompareResult(
+        matrix=await results.get_file(f"{prefix}_comp.npy"),
+        labels=await results.get_file(f"{prefix}_comp.npy.labels.txt"),
+        csv=await results.get_file(f"{prefix}_comp.csv"),
     )

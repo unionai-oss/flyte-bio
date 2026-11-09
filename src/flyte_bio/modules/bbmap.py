@@ -54,6 +54,11 @@ and the rest in ``args``), writing ``<prefix>.clumped.fastq.gz`` (single-end)
 or ``<prefix>_1.clumped.fastq.gz`` / ``<prefix>_2.clumped.fastq.gz``, and
 Clumpify's output in ``<prefix>.clumpify.log``.
 
+And it exposes :func:`bbmap_sendsketch`, which sketches one sequence file
+(FASTA or FASTQ; as upstream, only the first of a pair) and sends the sketch to
+JGI's sketch server (needs network access), writing the closest matching
+genomes to ``<prefix>.txt``.
+
 Upstream gives BBMap, Pileup and Clumpify all the task's memory as heap (or,
 for Clumpify, lets it size its own heap and use every core); here they get the
 usual 80% and the task's CPUs.
@@ -476,6 +481,31 @@ bbmap_clumpify_cmd = shell.create(
     """,
 )
 
+# Upstream labels SendSketch process_low; it only sketches locally and queries a server.
+SENDSKETCH_RESOURCES = flyte.Resources(cpu=1, memory="4Gi")
+
+# As upstream, only the first of several files is sketched.
+bbmap_sendsketch_cmd = shell.create(
+    name="bbmap_sendsketch",
+    image=BBMAP_IMAGE,
+    resources=SENDSKETCH_RESOURCES,
+    inputs={"file": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        IN=({{inputs.file}})
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        W=$(mktemp -d); cd "$W"
+        sendsketch.sh -Xmx{JAVA_HEAP_MB}M \
+            in="${{IN[0]}}" \
+            out="$OUT/$P.txt" \
+            $ARGS || exit 1
+    """,
+)
+
 env = flyte.TaskEnvironment.from_task(
     "bbmap",
     bbsplit_index_cmd.as_task(),
@@ -488,6 +518,7 @@ env = flyte.TaskEnvironment.from_task(
     bbmap_align_cmd.as_task(),
     bbmap_pileup_cmd.as_task(),
     bbmap_clumpify_cmd.as_task(),
+    bbmap_sendsketch_cmd.as_task(),
 )
 
 
@@ -804,3 +835,9 @@ async def bbmap_clumpify(
         reads=[await pick_file(results, name, "clumpify") for name in names],
         log=await pick_file(results, f"{prefix}.clumpify.log", "clumpify"),
     )
+
+
+async def bbmap_sendsketch(file: File, prefix: str = "sample", args: str = "") -> File:
+    """The closest matches to ``file``'s sketch on JGI's sketch server (``sendsketch.sh``): ``<prefix>.txt``."""
+    results = await bbmap_sendsketch_cmd(file=file, prefix=prefix, args=args)
+    return await pick_file(results, f"{prefix}.txt", "sendsketch")

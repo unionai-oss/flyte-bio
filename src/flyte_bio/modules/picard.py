@@ -20,6 +20,9 @@ Exposes:
   ``.dict``, as upstream).
 - :func:`picard_mergesamfiles`, which merges BAMs into ``<prefix>.bam``,
   passing them in name order, as upstream (a single BAM is copied as is).
+- :func:`picard_sortsam`, which sorts a BAM by ``sort_order``
+  (``queryname``, ``coordinate``, ``duplicate`` or ``unsorted``) into
+  ``<prefix>.bam``.
 
 Upstream pins a newer Picard (3.5.0) for every tool but MarkDuplicates, so
 those share a second environment and ``env`` aggregates both.
@@ -275,6 +278,31 @@ picard_mergesamfiles_cmd = shell.create(
 )
 
 
+picard_sortsam_cmd = shell.create(
+    name="picard_sortsam",
+    image=COLLECTMULTIPLEMETRICS_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"bam": File, "sort_order": str, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        BAM=({{inputs.bam}})
+        SORT_ORDER={{inputs.sort_order}}
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        picard \
+            -Xmx{JAVA_HEAP_MB}M \
+            SortSam \
+            --INPUT "${{BAM[0]}}" \
+            --OUTPUT {{outputs.results}}/"$P.bam" \
+            --SORT_ORDER "$SORT_ORDER" \
+            $ARGS || exit 1
+    """,
+)
+
+
 # One image per environment: every tool but MarkDuplicates uses the newer Picard, so `env` aggregates two.
 picard_markduplicates_env = flyte.TaskEnvironment.from_task(
     "picard_markduplicates",
@@ -287,6 +315,7 @@ picard_collectmultiplemetrics_env = flyte.TaskEnvironment.from_task(
     picard_createsequencedictionary_cmd.as_task(),
     picard_collecthsmetrics_cmd.as_task(),
     picard_mergesamfiles_cmd.as_task(),
+    picard_sortsam_cmd.as_task(),
 )
 env = flyte.TaskEnvironment(name="picard", depends_on=[picard_markduplicates_env, picard_collectmultiplemetrics_env])
 
@@ -438,3 +467,11 @@ async def picard_mergesamfiles(bams: list[File], prefix: str, args: str = "") ->
         raise ValueError("an input and the output have the same name; choose another prefix")
     results = await picard_mergesamfiles_cmd(bams=bams, prefix=prefix, args=args)
     return await pick_file(results, f"{prefix}.bam", "MergeSamFiles")
+
+
+async def picard_sortsam(bam: File, sort_order: str, prefix: str, args: str = "") -> File:
+    """``bam`` sorted by ``sort_order`` (``queryname``, ``coordinate``…): ``<prefix>.bam``."""
+    if bam.name == f"{prefix}.bam":
+        raise ValueError('Input and output names are the same, use "prefix" to disambiguate!')
+    results = await picard_sortsam_cmd(bam=bam, sort_order=sort_order, prefix=prefix, args=args)
+    return await pick_file(results, f"{prefix}.bam", "SortSam")

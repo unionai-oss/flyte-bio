@@ -14,11 +14,16 @@ The seqtk_seq cases are upstream's seqtk/seq tests (same commit and
 container), with their config's ``ext.args = '-A'`` (FASTA output); the
 seqtk_cutn case is upstream's seqtk/cutn test. nf-test hashes ``.gz``
 outputs decompressed.
+
+The seqtk_subseq case is upstream's seqtk/subseq test (same commit and
+container), with its config's ``<id>.filtered`` prefix; the seqtk_mergepe
+cases are upstream's seqtk/mergepe tests, single-end (passed through) and
+paired-end.
 """
 
 from flyte.io import File
 
-from flyte_bio.modules.seqtk import seqtk_cutn, seqtk_sample, seqtk_seq, seqtk_trim
+from flyte_bio.modules.seqtk import seqtk_cutn, seqtk_mergepe, seqtk_sample, seqtk_seq, seqtk_subseq, seqtk_trim
 from tests.framework import assert_gunzipped_md5, assert_md5, env, fixture
 
 READS = "genomics/sarscov2/illumina/fastq/test_1.fastq.gz"
@@ -87,6 +92,31 @@ async def test_seqtk_cutn_chr21() -> None:
     await assert_md5(out, "16cbba84e3a4bdbb52217afb5051f948", label="test.bed")
 
 
+@env.task
+async def test_seqtk_subseq_fasta() -> None:
+    out = await seqtk_subseq(
+        await fixture("genomics/sarscov2/genome/genome.fasta"),
+        await fixture("genomics/sarscov2/genome/bed/test.bed.gz"),
+        prefix="test.filtered",
+    )
+    assert name_of(out) == "test.filtered.fa.gz", name_of(out)
+    await assert_gunzipped_md5(out, "31c95c4d686526cf002f6119bc55b2b2", label="test.filtered.fa.gz")
+
+
+@env.task
+async def test_seqtk_mergepe_single_end() -> None:
+    out = await seqtk_mergepe([await fixture(READS)], prefix="test")
+    assert name_of(out) == "test.fastq.gz", name_of(out)
+    await assert_gunzipped_md5(out, "4161df271f9bfcd25d5845a1e220dbec", label="test.fastq.gz")
+
+
+@env.task
+async def test_seqtk_mergepe_paired_end() -> None:
+    out = await seqtk_mergepe([await fixture(READS), await fixture(READS_2)], prefix="test")
+    assert name_of(out) == "test.fastq.gz", name_of(out)
+    await assert_gunzipped_md5(out, "efe40fe3df38b5a1c469890e5ad19874", label="test.fastq.gz")
+
+
 tests = [
     test_seqtk_sample_single_end,
     test_seqtk_sample_paired_end,
@@ -96,4 +126,7 @@ tests = [
     test_seqtk_seq_fasta,
     test_seqtk_seq_fastq,
     test_seqtk_cutn_chr21,
+    test_seqtk_subseq_fasta,
+    test_seqtk_mergepe_single_end,
+    test_seqtk_mergepe_paired_end,
 ]

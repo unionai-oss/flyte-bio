@@ -8,11 +8,20 @@ process_low; the BAM's header records VSEARCH's ``--threads``.
 The vsearch_sort cases are upstream's vsearch/sort tests (same commit,
 VSEARCH 2.31.0 in its VSEARCH-only image), with their config's
 ``<id>_sorted`` prefix.
+
+The vsearch_sintax and vsearch_usearch_global cases are upstream's
+vsearch/sintax and vsearch/usearchglobal tests (same commit and image): the
+SARS-CoV-2 genome classified against its transcriptome by md5, and the
+transcriptome aligned to the genome at 98.5% identity. Upstream's first
+usearch_global case asks for an unknown output ("xcfert"), so falls back to
+the alignment, which upstream checks by name and one query's line; the userout
+case's lines are compared sorted, as upstream (VSEARCH's output order depends
+on its threads).
 """
 
 from flyte.io import File
 
-from flyte_bio.modules.vsearch import vsearch_cluster, vsearch_sort
+from flyte_bio.modules.vsearch import vsearch_cluster, vsearch_sintax, vsearch_sort, vsearch_usearch_global
 from tests.framework import assert_gunzipped_md5, assert_md5, env, fixture
 
 READS = "genomics/sarscov2/illumina/fastq/test_1.fastq.gz"
@@ -83,6 +92,45 @@ async def test_vsearch_sort_length() -> None:
     await check_sort("--sortbylength", "e733a34d0c655966408e773de876e5fb")
 
 
+GENOME = "genomics/sarscov2/genome/genome.fasta"
+TRANSCRIPTOME = "genomics/sarscov2/genome/transcriptome.fasta"
+
+
+async def text_of(file: File) -> str:
+    async with file.open("rb") as fh:
+        return bytes(await fh.read()).decode()
+
+
+@env.task
+async def test_vsearch_sintax() -> None:
+    out = await vsearch_sintax(await fixture(GENOME), await fixture(TRANSCRIPTOME), prefix="test")
+    assert out.name == "test.tsv", f"output named {out.name}, expected test.tsv"
+    await assert_md5(out, "93bc75fb89343e23fbae971df157b14a", label="test.tsv")
+
+
+@env.task
+async def test_vsearch_usearch_global_unknown_output() -> None:
+    out = await vsearch_usearch_global(
+        await fixture(TRANSCRIPTOME), await fixture(GENOME), 0.985, "xcfert", prefix="test"
+    )
+    assert out.name == "test.aln", f"output named {out.name}, expected test.aln"
+    assert "Query >lcl|MT192765.1_cds_QIK50427.1_2" in await text_of(out), "alignment lacks the second CDS"
+
+
+# Upstream's snapshot: the rows, sorted.
+USEARCH_GLOBAL_ROWS = [f"lcl|MT192765.1_cds_QIK50{426 + i}.1_{i + 1}\tMT192765.1\t100.0" for i in range(11)]
+
+
+@env.task
+async def test_vsearch_usearch_global_userout() -> None:
+    out = await vsearch_usearch_global(
+        await fixture(TRANSCRIPTOME), await fixture(GENOME), 0.985, "userout", "query+target+id", prefix="test"
+    )
+    assert out.name == "test.tsv", f"output named {out.name}, expected test.tsv"
+    rows = sorted((await text_of(out)).splitlines())
+    assert rows == USEARCH_GLOBAL_ROWS, rows
+
+
 tests = [
     test_vsearch_cluster_fast,
     test_vsearch_cluster_size_samout,
@@ -91,4 +139,7 @@ tests = [
     test_vsearch_cluster_userout,
     test_vsearch_sort_size,
     test_vsearch_sort_length,
+    test_vsearch_sintax,
+    test_vsearch_usearch_global_unknown_output,
+    test_vsearch_usearch_global_userout,
 ]

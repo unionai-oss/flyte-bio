@@ -12,6 +12,10 @@ The seqkit/fq2fa and seqkit/grep cases are upstream's at the same commit.
 seqkit/grep's pattern-file cases write upstream's ``chr22.header`` (``chr22``
 and a newline); its ``with_pattern`` case, ``ext.args = '-p chr22'``, passes
 the pattern as the dedicated ``pattern`` input.
+
+The seqkit/head and seqkit/sliding cases are upstream's at the same commit,
+seqkit/sliding's with its test config's ``-s 2 -W 5``. seqkit/sliding writes
+uncompressed output even for the gzipped FASTQ, as upstream.
 """
 
 import gzip
@@ -23,9 +27,11 @@ from flyte.io import File
 from flyte_bio.modules.seqkit import (
     seqkit_fq2fa,
     seqkit_grep,
+    seqkit_head,
     seqkit_replace,
     seqkit_rmdup,
     seqkit_seq,
+    seqkit_sliding,
     seqkit_split2,
     seqkit_stats,
 )
@@ -309,6 +315,36 @@ async def test_seqkit_grep_pattern() -> None:
     await assert_md5(out, CHR22_MD5, label="test.fa")
 
 
+@env.task
+async def test_seqkit_head_paired_fastq_gz() -> None:
+    # upstream case: seqkit/head "sarscov2 - paired fastq.gz"
+    reads = [await fixture(FASTQ + "test2_1.fastq.gz"), await fixture(FASTQ + "test2_2.fastq.gz")]
+    subsets = await seqkit_head(reads, 100, prefix="test")
+    expected = {
+        "test_subset_test2_1.fastq.gz": "4161df271f9bfcd25d5845a1e220dbec",
+        "test_subset_test2_2.fastq.gz": "2ebae722295ea66d84075a3b042e2b42",
+    }
+    assert [name_of(f) for f in subsets] == list(expected), f"wrote {[name_of(f) for f in subsets]}"
+    for subset in subsets:
+        await assert_gunzipped_md5(subset, expected[name_of(subset)], label=name_of(subset))
+
+
+@env.task
+async def test_seqkit_sliding_fasta() -> None:
+    # upstream case: seqkit/sliding "sarscov2 - fasta"
+    windows = await seqkit_sliding(await fixture(GENOME + "genome.fasta"), prefix="test", args="-s 2 -W 5")
+    assert name_of(windows) == "test.fasta", f"wrote {name_of(windows)}"
+    await assert_md5(windows, "d5e112b55c37bef1f16f28ba16b323dd", label="test.fasta")
+
+
+@env.task
+async def test_seqkit_sliding_fastq() -> None:
+    # upstream case: seqkit/sliding "sarscov2 - fastq"
+    windows = await seqkit_sliding(await fixture(FASTQ + "test_1.fastq.gz"), prefix="test", args="-s 2 -W 5")
+    assert name_of(windows) == "test.fastq", f"wrote {name_of(windows)}"
+    await assert_md5(windows, "59f475cac6d2c372ce2d3a1e3c40305b", label="test.fastq")
+
+
 tests = [
     test_seqkit_stats_single_end,
     test_seqkit_stats_paired_end,
@@ -338,4 +374,7 @@ tests = [
     test_seqkit_grep_file_gzipped,
     test_seqkit_grep_file_uncompressed,
     test_seqkit_grep_pattern,
+    test_seqkit_head_paired_fastq_gz,
+    test_seqkit_sliding_fasta,
+    test_seqkit_sliding_fastq,
 ]

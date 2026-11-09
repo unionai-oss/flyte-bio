@@ -24,6 +24,9 @@ Exposes the subset of the samtools suite the RNA-seq pipeline leans on:
   alignment, as ``<prefix>.<ext>``.
 - :func:`samtools_import` — FASTQ reads (single-end, a pair, or one
   interleaved file) as an unaligned ``<prefix>.<ext>``.
+- :func:`samtools_trimheader` — an indexed BAM whose header keeps only the
+  references with reads (mapped or unmapped, from ``samtools idxstats``), as
+  ``<prefix>.bam``. ``args`` goes to the final ``samtools view``.
 
 fixmate, markdup and import write SAM, BAM or CRAM following ``--output-fmt`` in
 ``args`` (BAM by default). As upstream, calmd and markdup get ``-@`` of the
@@ -41,8 +44,8 @@ and ``collate`` and its ``fastq`` the task's CPUs each.
 
 Each upstream module pins its own samtools build, so the FASTQ conversions
 have their own environments (convert, dict, calmd, fixmate, markdup and
-import share fastq's samtools 1.25);
-:data:`env` aggregates them.
+import share fastq's samtools 1.25, and trimheader has its own image with
+gawk); :data:`env` aggregates them.
 """
 
 from dataclasses import dataclass
@@ -59,6 +62,8 @@ SAMTOOLS_IMAGE = "community.wave.seqera.io/library/htslib_samtools:1.23.1--5b6bb
 # dict pin fastq's.
 SAMTOOLS_FASTQ_IMAGE = "community.wave.seqera.io/library/htslib_samtools:1.25--704fb80d75745bd4"
 SAMTOOLS_COLLATEFASTQ_IMAGE = "community.wave.seqera.io/library/htslib_samtools_xz:ca51bc8a00d53523"
+# The image the upstream trimheader module pins (samtools 1.25 with gawk).
+SAMTOOLS_TRIMHEADER_IMAGE = "community.wave.seqera.io/library/htslib_samtools_gawk:5366169842fe8538"
 
 # Most of these are single-threaded I/O over modest inputs; sort is the one
 # memory/throughput-sensitive step.
@@ -488,6 +493,39 @@ samtools_import_cmd = shell.create(
 )
 
 
+# As upstream: idxstats (which needs the index beside the BAM) lists each
+# reference's mapped and unmapped reads; the header loses the @SQ lines of
+# references with neither, and the records are streamed back unchanged.
+samtools_trimheader_cmd = shell.create(
+    name="samtools_trimheader",
+    image=SAMTOOLS_TRIMHEADER_IMAGE,
+    resources=MEDIUM_RESOURCES,
+    inputs={"bam": File, "bai": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        BAM=({{inputs.bam}})
+        BAI=({{inputs.bai}})
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        W=$(mktemp -d); cd "$W"
+        mkdir input
+        ln -s "${{BAM[0]}}" "input/$(basename "${{BAM[0]}}")"
+        ln -s "${{BAI[0]}}" "input/$(basename "${{BAI[0]}}")"
+        IN="input/$(basename "${{BAM[0]}}")"
+        samtools idxstats --threads $TASK_CPUS "$IN" > idxstats.tsv || exit 1
+        KEEP_USED='NR == FNR {{ if ($3 + $4 > 0) keep[$1]; next }} !/^@SQ/ || (substr($2, 4) in keep)'
+        {{
+            samtools view -H "$IN" | awk -F '\t' "$KEEP_USED" idxstats.tsv -
+            samtools view --threads $TASK_CPUS "$IN"
+        }} | samtools view $ARGS --threads $TASK_CPUS -b -o "$OUT/$P.bam" - || exit 1
+        rm idxstats.tsv
+    """,
+)
+
+
 samtools_tools_env = flyte.TaskEnvironment.from_task(
     "samtools_tools",
     samtools_faidx.as_task(),
@@ -512,8 +550,10 @@ samtools_fastq_env = flyte.TaskEnvironment.from_task(
 samtools_collatefastq_env = flyte.TaskEnvironment.from_task(
     "samtools_collatefastq", samtools_collatefastq_cmd.as_task()
 )
+samtools_trimheader_env = flyte.TaskEnvironment.from_task("samtools_trimheader", samtools_trimheader_cmd.as_task())
 env = flyte.TaskEnvironment(
-    name="samtools", depends_on=[samtools_tools_env, samtools_fastq_env, samtools_collatefastq_env]
+    name="samtools",
+    depends_on=[samtools_tools_env, samtools_fastq_env, samtools_collatefastq_env, samtools_trimheader_env],
 )
 
 
@@ -712,3 +752,14 @@ async def samtools_import(reads: list[File], prefix: str, single_end: bool = Fal
         reads=reads, read_names="/".join(names), single_end=single_end, prefix=prefix, args=args
     )
     return await pick_alignment(results, prefix, args, "import")
+
+
+async def samtools_trimheader(bam: File, bai: File, prefix: str, args: str = "") -> File:
+    """``bam`` (indexed by ``bai``) with only the @SQ lines of references with reads, as ``<prefix>.bam``."""
+    if bam.name == f"{prefix}.bam":
+        raise ValueError("input and output names are the same; choose another prefix")
+    results = await samtools_trimheader_cmd(bam=bam, bai=bai, prefix=prefix, args=args)
+    out = await results.get_file(f"{prefix}.bam")
+    if out is None:
+        raise FileNotFoundError(f"samtools trimheader wrote no {prefix}.bam")
+    return out

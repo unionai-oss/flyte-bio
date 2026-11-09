@@ -7,6 +7,10 @@ which converts a wiggle file (plain or gzipped) to bigWig. Outputs keep
 upstream's names: ``<prefix>.bedGraph``, ``<prefix>.bigWig`` and
 ``<prefix>.bw``.
 
+:func:`bigwigaverageoverbed` averages a bigWig over each region of a BED,
+writing the table ``<prefix>.tab`` (name, size, covered bases, sum, mean over
+the region, mean over covered bases).
+
 It also exposes :func:`gtftogenepred`, which converts a GTF to genePred,
 ``<prefix>.genepred``. As upstream, when ``args`` has both ``-genePredExt``
 and ``-geneNameAsName2`` it also writes ``<prefix>.refflat``, the refFlat
@@ -25,6 +29,7 @@ BEDCLIP_IMAGE = "quay.io/biocontainers/ucsc-bedclip:377--h0b8a92a_2"
 BEDGRAPHTOBIGWIG_IMAGE = "quay.io/biocontainers/ucsc-bedgraphtobigwig:469--h9b8f530_0"
 WIGTOBIGWIG_IMAGE = "community.wave.seqera.io/library/ucsc-wigtobigwig:482--4eb74e15915ee878"
 GTFTOGENEPRED_IMAGE = "community.wave.seqera.io/library/ucsc-gtftogenepred:482--ace98be9f7cb069f"
+BIGWIGAVERAGEOVERBED_IMAGE = "community.wave.seqera.io/library/ucsc-bigwigaverageoverbed:482--09b4685dee7c8b33"
 
 DEFAULT_RESOURCES = flyte.Resources(cpu=1, memory="4Gi")
 
@@ -83,13 +88,32 @@ gtftogenepred_cmd = shell.create(
     """,
 )
 
+# As upstream, the BED's chromosome names must match the bigWig's (UCSC style).
+bigwigaverageoverbed_cmd = shell.create(
+    name="ucsc_bigwigaverageoverbed",
+    image=BIGWIGAVERAGEOVERBED_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"bed": File, "bigwig": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        BED=({inputs.bed}); BW=({inputs.bigwig})
+        ARGS={inputs.args}
+        bigWigAverageOverBed $ARGS "${BW[0]}" "${BED[0]}" {outputs.results}/{inputs.prefix}.tab || exit 1
+    """,
+)
+
 # One image per tool, so one env each; `env` aggregates them.
 bedclip_env = flyte.TaskEnvironment.from_task("ucsc_bedclip", bedclip_cmd.as_task())
 bedgraphtobigwig_env = flyte.TaskEnvironment.from_task("ucsc_bedgraphtobigwig", bedgraphtobigwig_cmd.as_task())
 wigtobigwig_env = flyte.TaskEnvironment.from_task("ucsc_wigtobigwig", wigtobigwig_cmd.as_task())
 gtftogenepred_env = flyte.TaskEnvironment.from_task("ucsc_gtftogenepred", gtftogenepred_cmd.as_task())
+bigwigaverageoverbed_env = flyte.TaskEnvironment.from_task(
+    "ucsc_bigwigaverageoverbed", bigwigaverageoverbed_cmd.as_task()
+)
 env = flyte.TaskEnvironment(
-    name="ucsc", depends_on=[bedclip_env, bedgraphtobigwig_env, wigtobigwig_env, gtftogenepred_env]
+    name="ucsc",
+    depends_on=[bedclip_env, bedgraphtobigwig_env, wigtobigwig_env, gtftogenepred_env, bigwigaverageoverbed_env],
 )
 
 
@@ -107,14 +131,18 @@ async def bedclip(bedgraph: File, sizes: File, prefix: str) -> File:
 
 async def bedgraphtobigwig(bedgraph: File, sizes: File, prefix: str) -> File:
     """Convert ``bedgraph`` to ``<prefix>.bigWig``."""
-    return await pick(
-        await bedgraphtobigwig_cmd(bedgraph=bedgraph, sizes=sizes, prefix=prefix), f"{prefix}.bigWig"
-    )
+    return await pick(await bedgraphtobigwig_cmd(bedgraph=bedgraph, sizes=sizes, prefix=prefix), f"{prefix}.bigWig")
 
 
 async def wigtobigwig(wig: File, sizes: File, prefix: str, args: str = "") -> File:
     """Convert ``wig`` (plain or gzipped) to ``<prefix>.bw``."""
     return await pick(await wigtobigwig_cmd(wig=wig, sizes=sizes, prefix=prefix, args=args), f"{prefix}.bw")
+
+
+async def bigwigaverageoverbed(bed: File, bigwig: File, prefix: str, args: str = "") -> File:
+    """``<prefix>.tab``: ``bigwig``'s coverage averaged over each region of ``bed``."""
+    results = await bigwigaverageoverbed_cmd(bed=bed, bigwig=bigwig, prefix=prefix, args=args)
+    return await pick(results, f"{prefix}.tab")
 
 
 @dataclass

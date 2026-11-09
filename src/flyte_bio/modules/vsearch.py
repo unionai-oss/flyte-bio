@@ -22,9 +22,24 @@ It also exposes :func:`vsearch_sort`, which sorts the sequences in ``fasta``
 (FASTA or FASTQ, may be gzipped) by abundance (``--sortbysize``) or length
 (``--sortbylength``) and writes them as FASTA to ``<prefix>.fasta``; a prefix
 that would overwrite the input is an error. It runs in upstream's
-VSEARCH-only image.
+VSEARCH-only image, as do:
+
+- :func:`vsearch_sintax` — taxonomic classification of the sequences in
+  ``fasta`` against the reference database ``db`` (``--sintax``):
+  ``<prefix>.tsv`` (``--tabbedout``). Options such as ``--sintax_cutoff 0.8``
+  go in ``args``.
+- :func:`vsearch_usearch_global` — global alignment of the sequences in
+  ``fasta`` against ``db`` at identity ``id_cutoff`` (``--usearch_global``),
+  writing one output, chosen by ``output`` (upstream's names, without the
+  dashes): ``alnout`` (``<prefix>.aln``), ``biomout`` (``.biom``),
+  ``blast6out`` (``.txt``), ``mothur_shared_out`` (``.mothur``), ``otutabout``
+  (``.otu``), ``samout`` (``.sam``), ``uc`` (``.uc``), ``userout`` (``.tsv``)
+  or ``lcaout`` (``.lca``). As upstream, any other ``output`` falls back to
+  ``alnout`` with a warning. ``user_columns`` sets ``--userfields``
+  (``query+target+id``).
 """
 
+import logging
 from dataclasses import dataclass
 
 import flyte
@@ -117,8 +132,83 @@ vsearch_sort_cmd = shell.create(
     """,
 )
 
+vsearch_sintax_cmd = shell.create(
+    name="vsearch_sintax",
+    image=VSEARCH_SORT_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"fasta": File, "db": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        FA=({{inputs.fasta}})
+        DB=({{inputs.db}})
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        vsearch \
+            --sintax "${{FA[0]}}" \
+            --db "${{DB[0]}}" \
+            --threads $TASK_CPUS \
+            $ARGS \
+            --tabbedout "$OUT/$P.tsv" || exit 1
+    """,
+)
+
+USEARCH_GLOBAL_OUTPUTS = {
+    "alnout": "aln",
+    "biomout": "biom",
+    "blast6out": "txt",
+    "mothur_shared_out": "mothur",
+    "otutabout": "otu",
+    "samout": "sam",
+    "uc": "uc",
+    "userout": "tsv",
+    "lcaout": "lca",
+}
+
+vsearch_usearch_global_cmd = shell.create(
+    name="vsearch_usearch_global",
+    image=VSEARCH_SORT_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={
+        "fasta": File,
+        "db": File,
+        "id_cutoff": str,
+        "output": str,
+        "filename": str,
+        "user_columns": str,
+        "args": str,
+    },
+    defaults={"user_columns": "", "args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        FA=({{inputs.fasta}})
+        DB=({{inputs.db}})
+        ID={{inputs.id_cutoff}}
+        OUTPUT={{inputs.output}}
+        NAME={{inputs.filename}}
+        COLUMNS={{inputs.user_columns}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        COLOPT=()
+        if [ -n "$COLUMNS" ]; then COLOPT=(--userfields "$COLUMNS"); fi
+        vsearch \
+            --usearch_global "${{FA[0]}}" \
+            --db "${{DB[0]}}" \
+            --id "$ID" \
+            --threads $TASK_CPUS \
+            $ARGS \
+            "${{COLOPT[@]}}" \
+            "--$OUTPUT" "$OUT/$NAME" || exit 1
+    """,
+)
+
 vsearch_cluster_env = flyte.TaskEnvironment.from_task("vsearch_samtools", vsearch_cluster_cmd.as_task())
-vsearch_sort_env = flyte.TaskEnvironment.from_task("vsearch_only", vsearch_sort_cmd.as_task())
+vsearch_sort_env = flyte.TaskEnvironment.from_task(
+    "vsearch_only", vsearch_sort_cmd.as_task(), vsearch_sintax_cmd.as_task(), vsearch_usearch_global_cmd.as_task()
+)
 env = flyte.TaskEnvironment(name="vsearch", depends_on=[vsearch_cluster_env, vsearch_sort_env])
 
 
@@ -161,6 +251,46 @@ async def vsearch_sort(fasta: File, sort: str, prefix: str = "sample", args: str
     if fasta.path.rstrip("/").rsplit("/", 1)[-1] == filename:
         raise ValueError("Input and output names are the same, set prefix in module configuration to disambiguate!")
     results = await vsearch_sort_cmd(fasta=fasta, sort=sort, prefix=prefix, args=args)
+    found = await results.get_file(filename)
+    if found is None:
+        raise FileNotFoundError(f"vsearch wrote no {filename}")
+    return found
+
+
+async def vsearch_sintax(fasta: File, db: File, prefix: str = "sample", args: str = "") -> File:
+    """``fasta``'s sequences classified against ``db`` with SINTAX: ``<prefix>.tsv``."""
+    results = await vsearch_sintax_cmd(fasta=fasta, db=db, prefix=prefix, args=args)
+    found = await results.get_file(f"{prefix}.tsv")
+    if found is None:
+        raise FileNotFoundError(f"vsearch wrote no {prefix}.tsv")
+    return found
+
+
+async def vsearch_usearch_global(
+    fasta: File,
+    db: File,
+    id_cutoff: float,
+    output: str,
+    user_columns: str = "",
+    prefix: str = "sample",
+    args: str = "",
+) -> File:
+    """``fasta`` aligned against ``db`` at identity ``id_cutoff``, writing the ``output`` option's file."""
+    if output not in USEARCH_GLOBAL_OUTPUTS:
+        logging.getLogger(__name__).warning(
+            "Unknown output file format provided (%s): selecting pairwise alignments (alnout)", output
+        )
+        output = "alnout"
+    filename = f"{prefix}.{USEARCH_GLOBAL_OUTPUTS[output]}"
+    results = await vsearch_usearch_global_cmd(
+        fasta=fasta,
+        db=db,
+        id_cutoff=str(id_cutoff),
+        output=output,
+        filename=filename,
+        user_columns=user_columns,
+        args=args,
+    )
     found = await results.get_file(filename)
     if found is None:
         raise FileNotFoundError(f"vsearch wrote no {filename}")

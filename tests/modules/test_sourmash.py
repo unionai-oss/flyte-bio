@@ -6,12 +6,16 @@ signatures; it checks only that they record the staged file names, as these
 tests do. For the index it checks only the file name, as here (plus that it's
 a nonempty file). Gather's CSV is checked by its decompressed md5, with
 upstream's test options ``--threshold-bp 10 --ksize 31``.
+
+The sourmash/compare case is upstream's at the same commit, with its test
+config's ``--ksize 31``: two signatures of the same genome, compared into a
+NumPy matrix, its labels and a CSV, checked by md5 as upstream.
 """
 
 from flyte.io import File
 
-from flyte_bio.modules.sourmash import sourmash_gather, sourmash_index, sourmash_sketch
-from tests.framework import assert_gunzipped_md5, assert_nonempty, env, fixture
+from flyte_bio.modules.sourmash import sourmash_compare, sourmash_gather, sourmash_index, sourmash_sketch
+from tests.framework import assert_gunzipped_md5, assert_md5, assert_nonempty, env, fixture
 
 SARSCOV2_FASTA = "genomics/sarscov2/genome/genome.fasta"
 HAEMOPHILUS_FNA = "genomics/prokaryotes/haemophilus_influenzae/genome/genome.fna.gz"
@@ -77,6 +81,26 @@ async def test_sourmash_gather_sarscov2_genome() -> None:
     assert unsaved == [None] * 4, f"gather saved outputs it wasn't asked for: {unsaved}"
 
 
+@env.task
+async def test_sourmash_compare_sarscov2_genome() -> None:
+    # upstream case: sourmash/compare "sarscov2 genome [fasta]"
+    signatures = [
+        await sourmash_sketch([await fixture(SARSCOV2_FASTA)], prefix="test1"),
+        await sourmash_sketch([await fixture(SARSCOV2_FASTA)], prefix="test2"),
+    ]
+    result = await sourmash_compare(
+        signatures, save_numpy_matrix=True, save_csv=True, prefix="group1", args="--ksize 31"
+    )
+    for file, name, md5 in [
+        (result.matrix, "group1_comp.npy", "8a8683e1201544f28e2c2e21d2b89e4f"),
+        (result.labels, "group1_comp.npy.labels.txt", "cd4807ea8634f741113647e656b70090"),
+        (result.csv, "group1_comp.csv", "48366e16838afecfde44bff57ae9dddd"),
+    ]:
+        assert file is not None, f"compare wrote no {name}"
+        assert file.name == name, f"wrote {file.name}, expected {name}"
+        await assert_md5(file, md5, label=name)
+
+
 tests = [
     test_sourmash_single_fasta,
     test_sourmash_multiple_fasta_separate,
@@ -84,4 +108,5 @@ tests = [
     test_sourmash_merged_prefix_with_space,
     test_sourmash_index_sarscov2_genome,
     test_sourmash_gather_sarscov2_genome,
+    test_sourmash_compare_sarscov2_genome,
 ]

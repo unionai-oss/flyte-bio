@@ -7,6 +7,9 @@ Exposes:
   ``bin_size`` over a chrom sizes file. The ``pairix`` and ``tabix`` modes need
   the contacts' index (``.px2`` / ``.tbi``), which is linked next to them, and
   run on the task's CPUs (``--nproc``), as upstream.
+- :func:`cooler_digest` — the restriction fragments of a genome (FASTA plus
+  chrom sizes) for an ``enzyme``, as ``<FASTA name without extension>_<enzyme>.bed``
+  (runs of characters other than letters and digits in the enzyme become ``_``).
 - :func:`cooler_makebins` — the fixed-size genomic bins of a chrom sizes file,
   as ``<prefix>.bed``.
 - :func:`cooler_balance` — matrix-balance a cooler (one resolution of an
@@ -72,6 +75,27 @@ cooler_cload_cmd = shell.create(
         if [ "$MODE" = pairix ] || [ "$MODE" = tabix ]; then NPROC=(--nproc $TASK_CPUS); fi
         cooler cload "$MODE" $ARGS "${{NPROC[@]}}" "${{SIZES[0]}}":{{inputs.bin_size}} "$NAME" "$P.cool" || exit 1
         mv "$P.cool" {{outputs.results}}/
+    """,
+)
+
+# The FASTA is linked into a working directory: its index (.fai) is written
+# next to it, and inputs are read-only.
+cooler_digest_cmd = shell.create(
+    name="cooler_digest",
+    image=COOLER_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"fasta": File, "chromsizes": File, "enzyme": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        FA=({inputs.fasta}); SIZES=({inputs.chromsizes})
+        ENZYME={inputs.enzyme}
+        ARGS={inputs.args}
+        W=$(mktemp -d); cd "$W"
+        NAME=$(basename "${FA[0]}")
+        ln -s "${FA[0]}" "$NAME"
+        LABEL=$(printf '%s' "$ENZYME" | sed -E 's/[^0-9a-zA-Z]+/_/g')
+        cooler digest $ARGS -o {outputs.results}/"${NAME%.*}_$LABEL.bed" "${SIZES[0]}" "$NAME" "$ENZYME" || exit 1
     """,
 )
 
@@ -148,6 +172,7 @@ cooler_zoomify_cmd = shell.create(
 cooler_tools_env = flyte.TaskEnvironment.from_task(
     "cooler_tools",
     cooler_cload_cmd.as_task(),
+    cooler_digest_cmd.as_task(),
     cooler_makebins_cmd.as_task(),
     cooler_balance_cmd.as_task(),
     cooler_zoomify_cmd.as_task(),
@@ -187,6 +212,15 @@ async def cooler_cload(
         contacts=contacts, index=index, chromsizes=chromsizes, mode=mode, bin_size=bin_size, prefix=prefix, args=args
     )
     return await pick(results, f"{prefix}.cool")
+
+
+async def cooler_digest(fasta: File, chromsizes: File, enzyme: str, args: str = "") -> CoolerResult:
+    """``<FASTA name without extension>_<enzyme>.bed``: the ``enzyme`` fragments of the genome."""
+    results = await cooler_digest_cmd(fasta=fasta, chromsizes=chromsizes, enzyme=enzyme, args=args)
+    beds = [file for file in await results.list_files() if file_name(file).endswith(".bed")]
+    if len(beds) != 1:
+        raise FileNotFoundError(f"cooler digest wrote {len(beds)} BED files, expected 1")
+    return CoolerResult(output=beds[0], results=results)
 
 
 async def cooler_makebins(chromsizes: File, bin_size: int, prefix: str = "sample", args: str = "") -> CoolerResult:

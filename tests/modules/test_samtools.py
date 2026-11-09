@@ -19,6 +19,10 @@ first line.
 The import cases are upstream's samtools/import at the same commit (samtools
 1.25): the output name and the read sequences' md5, which is the same for a
 pair and its interleaved file.
+
+The trimheader case is upstream's samtools/trimheader at the same commit
+(samtools 1.25): the trimmed header's @SQ lines, the read count and the read
+sequences' md5.
 """
 
 import asyncio
@@ -43,6 +47,7 @@ from flyte_bio.modules.samtools import (
     samtools_merge,
     samtools_sort,
     samtools_stats,
+    samtools_trimheader,
     samtools_view,
 )
 from tests.framework import (
@@ -411,6 +416,24 @@ async def test_samtools_import_interleaved() -> None:
     await assert_reads_md5(out, "88d78879c34214288644aec7ec3cb270", label="samtools import interleaved")
 
 
+@env.task
+async def test_samtools_trimheader_bam() -> None:
+    # upstream case: samtools/trimheader "bacteroides_fragilis - bam". The plasmid
+    # NZ_CP069564.1 has no reads, and 47038 reads are unplaced.
+    bam_path = "genomics/prokaryotes/bacteroides_fragilis/illumina/bam/test1.sorted.bam"
+    out = await samtools_trimheader(await fixture(bam_path), await fixture(bam_path + ".bai"), "test")
+    assert_name(out, "test.bam")
+    header = await samtools_view(bam=out, args="-H")
+    async with header.open("rb") as fh:
+        sq = [line for line in bytes(await fh.read()).decode().splitlines() if line.startswith("@SQ")]
+    assert sq == ["@SQ\tSN:NZ_CP069563.1\tLN:5150703"], f"trimmed @SQ lines: {sq}"
+    count = await samtools_view(bam=out, args="-c")
+    async with count.open("rb") as fh:
+        reads = int(bytes(await fh.read()).decode().strip())
+    assert reads == 100000, f"{reads} reads, expected 100000"
+    await assert_reads_md5(out, "f18cb59ef156ae954b5939916b36f524", label="samtools trimheader")
+
+
 tests = [
     test_faidx,
     test_sort,
@@ -437,4 +460,5 @@ tests = [
     test_samtools_import_single,
     test_samtools_import_paired,
     test_samtools_import_interleaved,
+    test_samtools_trimheader_bam,
 ]
