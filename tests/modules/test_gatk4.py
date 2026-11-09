@@ -3,30 +3,44 @@
 import asyncio
 import gzip
 import hashlib
+import tarfile
 import tempfile
 import zlib
 from pathlib import Path
 
-from flyte.io import File
+from flyte.io import Dir, File
 
 from flyte_bio.modules.gatk4 import (
     Mutect2Result,
+    gatk4_annotateintervals,
     gatk4_applybqsr,
     gatk4_baserecalibrator,
     gatk4_bedtointervallist,
     gatk4_cnnscorevariants,
+    gatk4_collectreadcounts,
     gatk4_combinegvcfs,
+    gatk4_createreadcountpanelofnormals,
     gatk4_createsequencedictionary,
+    gatk4_createsomaticpanelofnormals,
+    gatk4_determinegermlinecontigploidy,
+    gatk4_filterintervals,
     gatk4_filtermutectcalls,
     gatk4_filtervarianttranches,
     gatk4_gatherbqsrreports,
+    gatk4_genomicsdbimport,
+    gatk4_genomicsdbimport_interval_list,
+    gatk4_genomicsdbimport_update,
+    gatk4_germlinecnvcaller,
     gatk4_haplotypecaller,
+    gatk4_indexfeaturefile,
     gatk4_intervallisttobed,
     gatk4_intervallisttools,
     gatk4_markduplicates,
     gatk4_mergemutectstats,
     gatk4_mergevcfs,
     gatk4_mutect2,
+    gatk4_preprocessintervals,
+    gatk4_splitintervals,
     gatk4_splitncigarreads,
     gatk4_variantfiltration,
 )
@@ -564,6 +578,295 @@ async def test_gatk4_splitncigarreads() -> None:
     await assert_bam(within, "test.bam", "splitncigarreads intervals")
 
 
+# The panel-of-normals and germline CNV tools: upstream's cases at modules commit 9a1cc9f (GATK 4.7.0.0), with
+# their test configs' ext.args.
+OVERLAPPING_ONLY = "--interval-merging-rule OVERLAPPING_ONLY"
+COUNTS_TSV = "--format TSV " + OVERLAPPING_ONLY
+MULTI_INTERVALS = HS + "genome/genome.multi_intervals.bed"
+
+
+@env.task
+async def test_gatk4_preprocessintervals() -> None:
+    # upstream case: gatk4/preprocessintervals "test-gatk4-preprocessintervals" (no intervals, a blacklist excluded)
+    (fasta, fai, dict_), blacklist = await asyncio.gather(
+        human_reference(), fixture(HS + "genome/genome.blacklist_intervals.bed")
+    )
+    intervals = await gatk4_preprocessintervals(
+        fasta, fai, dict_, "test", exclude_intervals=blacklist, args="--padding 0 " + OVERLAPPING_ONLY
+    )
+    assert intervals.name == "test.interval_list", intervals.name
+    await assert_md5(intervals, "ce14b8fb47a60483fe44473ba40e1583", label="test.interval_list")
+
+
+@env.task
+async def test_gatk4_annotateintervals() -> None:
+    # upstream cases: gatk4/annotateintervals "homo_sapiens genome [bed]", "... multi-interval [bed]",
+    # "... [interval_list]", "... [interval_list] mappable_regions" and "... duplication_regions"
+    (fasta, fai, dict_), bed, multi, interval_list, (track, track_tbi) = await asyncio.gather(
+        human_reference(),
+        fixture(HS + "genome/genome.bed"),
+        fixture(MULTI_INTERVALS),
+        fixture(HS + "genome/genome.interval_list"),
+        indexed_fixture(HS + "genome/genome.bed.gz"),
+    )
+    reference = {"fasta": fasta, "fai": fai, "dict": dict_, "prefix": "test", "args": OVERLAPPING_ONLY}
+    results = await asyncio.gather(
+        gatk4_annotateintervals([bed], **reference),
+        gatk4_annotateintervals([bed, multi], **reference),
+        gatk4_annotateintervals([interval_list], **reference),
+        gatk4_annotateintervals([interval_list], **reference, mappable_regions=track, mappable_regions_tbi=track_tbi),
+        gatk4_annotateintervals(
+            [interval_list],
+            **reference,
+            segmental_duplication_regions=track,
+            segmental_duplication_regions_tbi=track_tbi,
+        ),
+    )
+    expected = (
+        ("bed", "abf7cef9157e2b3c4554f48475f1b7a1"),
+        ("multi-interval bed", "abf7cef9157e2b3c4554f48475f1b7a1"),
+        ("interval_list", "abf7cef9157e2b3c4554f48475f1b7a1"),
+        ("interval_list mappable_regions", "428d33a03f2887e267d1cb6f0351bf9d"),
+        ("interval_list duplication_regions", "0c59e93cc6e35ca14d3d25ef885156f8"),
+    )
+    for tsv, (label, md5) in zip(results, expected, strict=True):
+        assert tsv.name == "test.tsv", f"{label}: {tsv.name}"
+        await assert_md5(tsv, md5, label=label)
+
+
+@env.task
+async def test_gatk4_collectreadcounts() -> None:
+    # upstream cases: gatk4/collectreadcounts "test-gatk4-collectreadcounts-hdf5" (its snapshot records the name),
+    # "...-tsv" and "...-cram"
+    cram = HS + "illumina/cram/test.paired_end.sorted.cram"
+    (fasta, fai, dict_), (bam, bai), (cram, crai), bed = await asyncio.gather(
+        human_reference(),
+        bam_with_index(HS + "illumina/bam/test.paired_end.sorted.bam"),
+        asyncio.gather(fixture(cram), fixture(cram + ".crai")),
+        fixture(HS + "genome/genome.bed"),
+    )
+    hdf5, tsv, from_cram = await asyncio.gather(
+        gatk4_collectreadcounts(bam, bai, bed, "test", args=OVERLAPPING_ONLY),
+        gatk4_collectreadcounts(bam, bai, bed, "test", args=COUNTS_TSV),
+        gatk4_collectreadcounts(cram, crai, bed, "test", fasta=fasta, fai=fai, dict=dict_, args=COUNTS_TSV),
+    )
+    assert hdf5.name == "test.hdf5", hdf5.name
+    assert tsv.name == "test.tsv" and from_cram.name == "test.tsv", (tsv.name, from_cram.name)
+    await assert_md5(tsv, "8e45a6164916c303387f39f02ce45841", label="tsv")
+    await assert_md5(from_cram, "d9a32039b7a84f5bb74e8382e5427670", label="cram")
+
+
+async def bam_with_index(path: str) -> tuple[File, File]:
+    """A BAM fixture and its ``.bai``."""
+    return await asyncio.gather(fixture(path), fixture(path + ".bai"))
+
+
+async def cohort_counts(intervals: File) -> list[File]:
+    """TSV read counts of upstream's two test BAMs (``test.tsv``, ``test2.tsv``) over ``intervals``."""
+    (fasta, fai, dict_), *bams = await asyncio.gather(
+        human_reference(),
+        bam_with_index(HS + "illumina/bam/test.paired_end.sorted.bam"),
+        bam_with_index(HS + "illumina/bam/test2.paired_end.sorted.bam"),
+    )
+    return list(
+        await asyncio.gather(
+            *(
+                gatk4_collectreadcounts(bam, bai, intervals, name, fasta=fasta, fai=fai, dict=dict_, args=COUNTS_TSV)
+                for (bam, bai), name in zip(bams, ("test", "test2"), strict=True)
+            )
+        )
+    )
+
+
+@env.task
+async def test_gatk4_createreadcountpanelofnormals() -> None:
+    # upstream case: gatk4/createreadcountpanelofnormals "homo sapiens - bam" (its snapshot records the name), on
+    # PreprocessIntervals (default bins) and CollectReadCounts of two BAMs
+    fasta, fai, dict_ = await human_reference()
+    intervals = await gatk4_preprocessintervals(fasta, fai, dict_, "test")
+    counts = await cohort_counts(intervals)
+    pon = await gatk4_createreadcountpanelofnormals(
+        counts, "test", args="--minimum-interval-median-percentile 1.0 --number-of-eigensamples 2"
+    )
+    assert pon.name == "test.hdf5", pon.name
+
+
+@env.task
+async def test_gatk4_filterintervals() -> None:
+    # upstream case: gatk4/filterintervals "test-gatk4-filterintervals"
+    genome = HS + "genome/"
+    intervals, counts, annotated = await asyncio.gather(
+        fixture(genome + "genome.preprocessed_intervals.interval_list"),
+        fixture(genome + "genome.preprocessed_intervals.counts.tsv"),
+        fixture(genome + "genome.annotated_intervals.tsv"),
+    )
+    filtered = await gatk4_filterintervals(
+        intervals, "test", read_counts=[counts], annotated_intervals=annotated, args=OVERLAPPING_ONLY
+    )
+    assert filtered.name == "test.interval_list", filtered.name
+    await assert_md5(filtered, "67b15dff732693db3542e6b1dc30a5da", label="test.interval_list")
+
+
+async def dir_entries(directory: Dir) -> list[str]:
+    """The sorted names of ``directory``'s top-level files and subdirectories."""
+    base = directory.path.rstrip("/") + "/"
+    return sorted({f.path[len(base) :].split("/", 1)[0] async for f in directory.walk()})
+
+
+PLOIDY_MODEL_FILES = [
+    "contig_ploidy_prior.tsv",
+    "gcnvkernel_version.json",
+    "interval_list.tsv",
+    "mu_mean_bias_j_interval__.tsv",
+    "mu_psi_j_log__.tsv",
+    "ploidy_config.json",
+    "std_mean_bias_j_interval__.tsv",
+    "std_psi_j_log__.tsv",
+]
+
+
+async def cohort_ploidy():
+    """Upstream's DetermineGermlineContigPloidy setup: counts over the multi-interval BED, then ploidy calls."""
+    bed, priors = await asyncio.gather(
+        fixture(MULTI_INTERVALS), fixture(HS + "illumina/gatk/contig_ploidy_priors_table.tsv")
+    )
+    counts = await cohort_counts(bed)
+    ploidy = await gatk4_determinegermlinecontigploidy(
+        counts, "test", intervals=bed, contig_ploidy_priors=priors, args=OVERLAPPING_ONLY
+    )
+    return counts, ploidy
+
+
+@env.task
+async def test_gatk4_determinegermlinecontigploidy() -> None:
+    # upstream case: gatk4/determinegermlinecontigploidy "homo sapiens - bam" (cohort mode; its snapshot records
+    # the calls' and model's file names: model fitting isn't byte-stable)
+    _, ploidy = await cohort_ploidy()
+    assert ploidy.model is not None, "no ploidy model in cohort mode"
+    calls, model = await asyncio.gather(dir_entries(ploidy.calls), dir_entries(ploidy.model))
+    assert calls == ["SAMPLE_0", "SAMPLE_1"], calls
+    assert model == PLOIDY_MODEL_FILES, model
+
+
+@env.task
+async def test_gatk4_germlinecnvcaller() -> None:
+    # upstream case: gatk4/germlinecnvcaller "homo sapiens - bam" (cohort mode, after CollectReadCounts,
+    # DetermineGermlineContigPloidy and BedToIntervalList; its snapshot records the calls' and model's file names)
+    (counts, ploidy), dict_ = await asyncio.gather(cohort_ploidy(), fixture(HS + "genome/genome.dict"))
+    intervals = await gatk4_bedtointervallist(await fixture(MULTI_INTERVALS), dict_, prefix="test")
+    cnv = await gatk4_germlinecnvcaller(
+        counts,
+        "test",
+        intervals=intervals,
+        contig_ploidy_calls=ploidy.calls,
+        args=OVERLAPPING_ONLY + " --run-mode COHORT",
+    )
+    assert cnv.model is not None, "no cohort model in cohort mode"
+    calls, model = await asyncio.gather(dir_entries(cnv.calls), dir_entries(cnv.model))
+    configs = ["calling_config.json", "denoising_config.json", "gcnvkernel_version.json", "interval_list.tsv"]
+    assert calls == ["SAMPLE_0", "SAMPLE_1", *configs], calls
+    expected_model = [
+        *configs,
+        "log_q_tau_tk.tsv",
+        "mu_W_tu.tsv",
+        "mu_ard_u_interval__.tsv",
+        "mu_log_mean_bias_t.tsv",
+        "mu_psi_t_log__.tsv",
+        "std_W_tu.tsv",
+        "std_ard_u_interval__.tsv",
+        "std_log_mean_bias_t.tsv",
+        "std_psi_t_log__.tsv",
+    ]
+    assert model == expected_model, model
+
+
+async def workspace_entries(archive: File) -> tuple[str, list[str]]:
+    """A GenomicsDB workspace archive's directory name and the sorted names directly in it."""
+    local = await archive.download()
+    with tarfile.open(local) as tar:
+        parts = [Path(m.name).parts for m in tar.getmembers()]
+    roots = {p[0] for p in parts}
+    assert len(roots) == 1, f"{archive.name}: top-level entries {sorted(roots)}"
+    return roots.pop(), sorted({p[1] for p in parts if len(p) > 1})
+
+
+WORKSPACE_ENTRIES = ["__tiledb_workspace.tdb", "callset.json", "chr22$1$40001", "vcfheader.vcf", "vidmap.json"]
+GENOMICSDB = HS + "illumina/gatk/test_genomicsdb.tar.gz"
+
+
+@env.task
+async def test_gatk4_genomicsdbimport() -> None:
+    # upstream cases: gatk4/genomicsdbimport "test_gatk4_genomicsdbimport_create_genomicsdb",
+    # "..._get_intervalslist" and "..._update_genomicsdb" (the workspaces are snapshotted by their listing)
+    (gvcf, tbi), (gvcf2, tbi2), intervals, workspace = await asyncio.gather(
+        indexed_fixture(HS + "illumina/gvcf/test.genome.vcf.gz"),
+        indexed_fixture(HS + "illumina/gvcf/test2.genome.vcf.gz"),
+        fixture(HS + "genome/genome.interval_list"),
+        fixture(GENOMICSDB),
+    )
+    created, interval_list, updated = await asyncio.gather(
+        gatk4_genomicsdbimport([gvcf], [tbi], "test", intervals=intervals),
+        gatk4_genomicsdbimport_interval_list(workspace, "test"),
+        gatk4_genomicsdbimport_update(workspace, [gvcf2], [tbi2]),
+    )
+    assert created.name == "test.tar.gz", created.name
+    assert await workspace_entries(created) == ("test", WORKSPACE_ENTRIES)
+    assert interval_list.name == "test.interval_list", interval_list.name
+    await assert_md5(interval_list, "4c85812ac15fc1cd29711a851d23c0bf", label="test.interval_list")
+    assert updated.name == "test_genomicsdb.tar.gz", updated.name
+    assert await workspace_entries(updated) == ("test_genomicsdb", WORKSPACE_ENTRIES)
+
+
+@env.task
+async def test_gatk4_createsomaticpanelofnormals() -> None:
+    # upstream case: gatk4/createsomaticpanelofnormals "homo sapiens - genomicsdb" (its snapshot records the names)
+    workspace, (fasta, fai, dict_) = await asyncio.gather(fixture(GENOMICSDB), human_reference())
+    pon = await gatk4_createsomaticpanelofnormals(workspace, fasta, fai, dict_, "test")
+    assert pon.vcf.name == "test.vcf.gz" and pon.tbi.name == "test.vcf.gz.tbi", (pon.vcf.name, pon.tbi.name)
+    header, _ = await vcf_lines(pon.vcf)
+    assert header[0].startswith("##fileformat=VCF"), header[0]
+
+
+@env.task
+async def test_gatk4_indexfeaturefile() -> None:
+    # upstream cases: gatk4/indexfeaturefile "..._bed", "..._bed_gz", "..._vcf" and "..._vcf_gz" (Tribble .idx
+    # indices record the file's path and date, so upstream snapshots their names)
+    gvcf = HS + "illumina/gvcf/test.genome.vcf"
+    files = await asyncio.gather(
+        fixture(HS + "genome/genome.bed"),
+        fixture(HS + "genome/genome.bed.gz"),
+        fixture(gvcf),
+        fixture(gvcf + ".gz"),
+    )
+    bed_idx, bed_tbi, vcf_idx, vcf_tbi = await asyncio.gather(*(gatk4_indexfeaturefile(f) for f in files))
+    assert bed_idx.name == "genome.bed.idx", bed_idx.name
+    assert vcf_idx.name == "test.genome.vcf.idx", vcf_idx.name
+    assert bed_tbi.name == "genome.bed.gz.tbi" and vcf_tbi.name == "test.genome.vcf.gz.tbi", (bed_tbi, vcf_tbi)
+    await assert_md5(bed_tbi, "4bc51e2351a6e83f20e13be75861f941", label="genome.bed.gz.tbi")
+    await assert_md5(vcf_tbi, "fedd68eaddf8d31257853d9da8325bd3", label="test.genome.vcf.gz.tbi")
+
+
+@env.task
+async def test_gatk4_splitintervals() -> None:
+    # upstream cases: gatk4/splitintervals "test-gatk4-splitintervals-bed" and "...-intervals" (--scatter-count 2)
+    (fasta, fai, dict_), bed, interval_list = await asyncio.gather(
+        human_reference(), fixture(MULTI_INTERVALS), fixture(HS + "genome/genome.interval_list")
+    )
+    reference = {"fasta": fasta, "fai": fai, "dict": dict_, "args": "--scatter-count 2"}
+    from_bed, from_list = await asyncio.gather(
+        gatk4_splitintervals(bed, "test", **reference), gatk4_splitintervals(interval_list, "test", **reference)
+    )
+    expected = (
+        (from_bed, "bed", ("c8d6b19e7a92535b6ce9608eae558faa", "b1877ad96aec308906594c50ebbe3ded")),
+        (from_list, "intervals", ("ebd6b34a335efc6732ff541936c6d2d5", "9459b0e124fa84ec1e64ac4615bc9af7")),
+    )
+    for split, label, md5s in expected:
+        names = [f.name for f in split]
+        assert names == ["0000-scattered.interval_list", "0001-scattered.interval_list"], f"{label}: {names}"
+        for f, md5 in zip(split, md5s, strict=True):
+            await assert_md5(f, md5, label=f"{label} {f.name}")
+
+
 tests = [
     test_createsequencedictionary,
     test_intervallisttobed,
@@ -585,4 +888,15 @@ tests = [
     test_gatk4_intervallisttools,
     test_gatk4_combinegvcfs,
     test_gatk4_splitncigarreads,
+    test_gatk4_preprocessintervals,
+    test_gatk4_annotateintervals,
+    test_gatk4_collectreadcounts,
+    test_gatk4_createreadcountpanelofnormals,
+    test_gatk4_filterintervals,
+    test_gatk4_determinegermlinecontigploidy,
+    test_gatk4_germlinecnvcaller,
+    test_gatk4_genomicsdbimport,
+    test_gatk4_createsomaticpanelofnormals,
+    test_gatk4_indexfeaturefile,
+    test_gatk4_splitintervals,
 ]

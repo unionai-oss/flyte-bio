@@ -188,7 +188,7 @@ chopper,2,4,yes,ampliseq mag
 chromap/chromap,2,4,yes,atacseq chipseq
 chromap/index,2,4,yes,atacseq chipseq
 clair3,2,4,yes,longraredisease methylong
-cnvkit/batch,2,4,,createpanelrefs sarek
+cnvkit/batch,2,4,yes,createpanelrefs sarek
 cooler/dump,2,4,yes,hic hicar
 custom/collectfeaturecounts,2,4,yes,magmap metatdenovo
 custom/collectstats,2,4,yes,magmap metatdenovo
@@ -200,7 +200,7 @@ diamond/blastx,2,4,yes,funcprofiler taxprofiler
 eggnogmapper,2,4,yes,funcprofiler metatdenovo
 epang/place,2,4,yes,ampliseq phyloplace
 epang/split,2,4,yes,ampliseq phyloplace
-falco,2,4,,demultiplex taxprofiler
+falco,2,4,yes,demultiplex taxprofiler
 famsa/align,2,4,yes,multiplesequencealign proteinfamilies
 fibertoolsrs/addnucleosomes,2,4,yes,methylong pacvar
 fibertoolsrs/extract,2,4,yes,methylong pacvar
@@ -211,17 +211,17 @@ gappa/examineassign,2,4,yes,ampliseq phyloplace
 gappa/examinegraft,2,4,yes,ampliseq phyloplace
 gappa/examineheattree,2,4,yes,ampliseq phyloplace
 gatk4/calculatecontamination,2,4,,rnadnavar sarek
-gatk4/collectreadcounts,2,4,,createpanelrefs raredisease
-gatk4/determinegermlinecontigploidy,2,4,,createpanelrefs raredisease
+gatk4/collectreadcounts,2,4,yes,createpanelrefs raredisease
+gatk4/determinegermlinecontigploidy,2,4,yes,createpanelrefs raredisease
 gatk4/gatherbqsrreports,2,4,yes,rnadnavar sarek
 gatk4/gatherpileupsummaries,2,4,,rnadnavar sarek
-gatk4/genomicsdbimport,2,4,,createpanelrefs sarek
-gatk4/germlinecnvcaller,2,4,,createpanelrefs raredisease
+gatk4/genomicsdbimport,2,4,yes,createpanelrefs sarek
+gatk4/germlinecnvcaller,2,4,yes,createpanelrefs raredisease
 gatk4/getpileupsummaries,2,4,,rnadnavar sarek
-gatk4/indexfeaturefile,2,4,,createpanelrefs rnadnavar
+gatk4/indexfeaturefile,2,4,yes,createpanelrefs rnadnavar
 gatk4/intervallisttobed,2,4,yes,rnadnavar sarek
 gatk4/learnreadorientationmodel,2,4,,rnadnavar sarek
-gatk4/splitintervals,2,4,,createpanelrefs raredisease
+gatk4/splitintervals,2,4,yes,createpanelrefs raredisease
 gatk4/splitncigarreads,2,4,yes,rnadnavar rnavar
 gatk4/variantrecalibrator,2,4,,rnadnavar sarek
 glnexus,2,4,,longraredisease raredisease
@@ -245,7 +245,7 @@ krakentools/kreport2krona,2,4,,taxprofiler viralmetagenome
 krona/ktimporttext,2,4,,taxprofiler viralmetagenome
 krona/ktupdatetaxonomy,2,4,yes,hgtseq seqinspector
 last/lastdb,2,4,yes,pairgenomealign raredisease
-liftoff,2,4,,bacass genomeassembler
+liftoff,2,4,yes,bacass genomeassembler
 lima,2,4,yes,isoseq pacvar
 manta/germline,2,4,,raredisease sarek
 manta/somatic,2,4,,rnadnavar sarek
@@ -255,7 +255,7 @@ merqury/merqury,2,4,,genomeassembler genomeqc
 meryl/count,2,4,,genomeassembler genomeqc
 meryl/unionsum,2,4,,genomeassembler genomeqc
 metaeuk/easypredict,2,4,yes,mag metatdenovo
-metaphlan/metaphlan,2,4,,funcprofiler taxprofiler
+metaphlan/metaphlan,2,4,yes,funcprofiler taxprofiler
 mmseqs/databases,2,4,yes,funcscan mag
 mmseqs/easycluster,2,4,,genomeqc riboseq
 modkit/pileup,2,4,yes,longraredisease methylong
@@ -274,7 +274,7 @@ pydamage/analyze,2,4,yes,coproid mag
 qualimap/bamqc,2,4,yes,hgtseq methylseq
 quartonotebook,2,4,yes,coproid differentialabundance
 racon,2,4,yes,bacass crisprseq
-rgi/cardannotation,2,4,,funcprofiler funcscan
+rgi/cardannotation,2,4,yes,funcprofiler funcscan
 ribodetector,2,4,yes,riboseq rnaseq
 rtgtools/vcfeval,2,4,,raredisease variantbenchmarking
 rundbcan/cazymeannotation,2,4,yes,funcscan metatdenovo
@@ -310,7 +310,7 @@ trinity,2,4,yes,denovotranscript viralmetagenome
 tximeta/tximport,2,4,yes,riboseq rnaseq
 ucsc/gtftogenepred,2,4,yes,rnafusion scnanoseq
 umitools/prepareforrsem,2,4,yes,riboseq rnaseq
-unicycler,2,4,,bacass viralrecon
+unicycler,2,4,yes,bacass viralrecon
 vcf2maf,2,4,,rnadnavar tumourevo
 vcflib/vcffilter,2,4,yes,pathogensurveillance sarek
 vcftools,2,4,yes,rnadnavar sarek
@@ -346,25 +346,25 @@ art/illumina,1,5,yes,readsimulator
 artic/guppyplex,1,5,,viralrecon
 artic/minion,1,5,,viralrecon
 ascat,1,5,,sarek
-ashlar,1,5,,mcmicro
+ashlar,1,5,yes,mcmicro
 assemblyscan,1,5,yes,pairgenomealign
 ataqv/ataqv,1,5,yes,atacseq
 ataqv/mkarv,1,5,yes,atacseq
 atlasgeneannotationmanipulation/gtf2featureannotation,1,5,,differentialabundance
-autocycler/cluster,1,5,,bacass
-autocycler/combine,1,5,,bacass
-autocycler/compress,1,5,,bacass
-autocycler/resolve,1,5,,bacass
-autocycler/subsample,1,5,,bacass
-autocycler/trim,1,5,,bacass
-backsub,1,5,,mcmicro
+autocycler/cluster,1,5,yes,bacass
+autocycler/combine,1,5,yes,bacass
+autocycler/compress,1,5,yes,bacass
+autocycler/resolve,1,5,yes,bacass
+autocycler/subsample,1,5,yes,bacass
+autocycler/trim,1,5,yes,bacass
+backsub,1,5,yes,mcmicro
 bamtools/convert,1,5,yes,isoseq
 bamtools/split,1,5,yes,scnanoseq
 bamtools/stats,1,5,yes,hgtseq
 bandage/image,1,5,,viralrecon
 barrnap,1,5,,seqsubmit
-bases2fastq,1,5,,demultiplex
-basicpy,1,5,,mcmicro
+bases2fastq,1,5,yes,demultiplex
+basicpy,1,5,yes,mcmicro
 bbmap/clumpify,1,5,yes,seqinspector
 bbmap/filterbyname,1,5,yes,detaxizer
 bbmap/pileup,1,5,yes,nascent
@@ -374,16 +374,16 @@ bcftools/convert,1,5,,phaseimpute
 bcftools/isec,1,5,,sarek
 bcftools/pluginsplit,1,5,,phaseimpute
 bcftools/roh,1,5,,raredisease
-bcl2fastq,1,5,,demultiplex
-bclconvert,1,5,,demultiplex
+bcl2fastq,1,5,yes,demultiplex
+bclconvert,1,5,yes,demultiplex
 beagle5/beagle,1,5,,phaseimpute
 bedops/convert2bed,1,5,,variantbenchmarking
 bedops/gtf2bed,1,5,yes,rnastructurome
 bedtools/complement,1,5,yes,cutandrun
 bedtools/makewindows,1,5,,phaseimpute
 bedtools/slop,1,5,,raredisease
-bff,1,5,,hadge
-bftools/showinf,1,5,,mcmicro
+bff,1,5,yes,hadge
+bftools/showinf,1,5,yes,mcmicro
 bigslice/bigslice,1,5,,funcscan
 bigslice/downloaddb,1,5,,funcscan
 bismark/align,1,5,,methylseq
@@ -406,7 +406,7 @@ bwameme/mem,1,5,,raredisease
 bwameth/align,1,5,,methylseq
 bwameth/index,1,5,,methylseq
 cadd,1,5,,raredisease
-canu,1,5,,bacass
+canu,1,5,yes,bacass
 carveme/carve,1,5,,bacmodel
 cellbender/removebackground,1,5,yes,scrnaseq
 cellranger/count,1,5,,scrnaseq
@@ -418,7 +418,7 @@ cellranger/vdj,1,5,yes,airrflow
 cellrangerarc/count,1,5,,scrnaseq
 cellrangerarc/mkgtf,1,5,,scrnaseq
 cellrangerarc/mkref,1,5,,scrnaseq
-cellsnp/modea,1,5,,hadge
+cellsnp/modea,1,5,yes,hadge
 centrifuge/build,1,5,,createtaxdb
 centrifuge/centrifuge,1,5,,taxprofiler
 centrifuge/kreport,1,5,,taxprofiler
@@ -439,7 +439,7 @@ cnvkit/call,1,5,,sarek
 cnvkit/export,1,5,,sarek
 cnvkit/genemetrics,1,5,,sarek
 cnvkit/reference,1,5,,sarek
-cnvkit/target,1,5,,createpanelrefs
+cnvkit/target,1,5,yes,createpanelrefs
 cnvnator/cnvnator,1,5,,raredisease
 cnvnator/convert2vcf,1,5,,raredisease
 comebin/runcomebin,1,5,,mag
@@ -458,7 +458,7 @@ cooler/cload,1,5,yes,hic
 cooler/digest,1,5,yes,hicar
 cooler/makebins,1,5,yes,hic
 cooler/zoomify,1,5,yes,hic
-coreograph,1,5,,mcmicro
+coreograph,1,5,yes,mcmicro
 coverm/contig,1,5,,seqsubmit
 coverm/genome,1,5,,seqsubmit
 crisprcleanr/normalize,1,5,yes,crisprseq
@@ -497,7 +497,7 @@ deepvariant/callvariants,1,5,,pacvar
 deepvariant/makeexamples,1,5,,pacvar
 deepvariant/postprocessvariants,1,5,,pacvar
 deepvariant/vcfstatsreport,1,5,,longraredisease
-demuxem,1,5,,hadge
+demuxem,1,5,yes,hadge
 deseq2/differential,1,5,,differentialabundance
 dexseq/count,1,5,yes,rnasplice
 dexseq/dtu,1,5,yes,rnasplice
@@ -507,7 +507,7 @@ diamond/blastp,1,5,yes,metatdenovo
 diamond/cluster,1,5,yes,reportho
 diamond/makedb,1,5,yes,createtaxdb
 dotseq/dotseq,1,5,,riboseq
-dragonflye,1,5,,bacass
+dragonflye,1,5,yes,bacass
 dupradar,1,5,yes,rnaseq
 easypqp/convert,1,5,,mhcquant
 easypqp/library,1,5,,mhcquant
@@ -531,12 +531,12 @@ fgbio/copyumifromreadname,1,5,,sarek
 fgbio/fastqtobam,1,5,,sarek
 fgbio/groupreadsbyumi,1,5,,sarek
 find/unpigz,1,5,,createtaxdb
-fmhfunprofiler,1,5,,funcprofiler
+fmhfunprofiler,1,5,yes,funcprofiler
 foldmason/createdb,1,5,,multiplesequencealign
 foldmason/easymsa,1,5,,multiplesequencealign
 foldmason/msa2lddtreport,1,5,,multiplesequencealign
 foldseek/easysearch,1,5,yes,proteinfold
-fqtk,1,5,,demultiplex
+fqtk,1,5,yes,demultiplex
 freyja/boot,1,5,,viralrecon
 freyja/demix,1,5,,viralrecon
 freyja/update,1,5,,viralrecon
@@ -557,21 +557,21 @@ gapseq/find,1,5,,bacmodel
 gapseq/findtransport,1,5,,bacmodel
 gapseq/medium,1,5,,bacmodel
 gapseq/requestdb,1,5,,bacmodel
-gatk4/annotateintervals,1,5,,createpanelrefs
+gatk4/annotateintervals,1,5,yes,createpanelrefs
 gatk4/applyvqsr,1,5,,sarek
 gatk4/cnnscorevariants,1,5,yes,sarek
 gatk4/combinegvcfs,1,5,yes,rnavar
 gatk4/concordance,1,5,,variantbenchmarking
-gatk4/createreadcountpanelofnormals,1,5,,createpanelrefs
-gatk4/createsomaticpanelofnormals,1,5,,createpanelrefs
+gatk4/createreadcountpanelofnormals,1,5,yes,createpanelrefs
+gatk4/createsomaticpanelofnormals,1,5,yes,createpanelrefs
 gatk4/denoisereadcounts,1,5,,raredisease
 gatk4/estimatelibrarycomplexity,1,5,,sarek
-gatk4/filterintervals,1,5,,createpanelrefs
+gatk4/filterintervals,1,5,yes,createpanelrefs
 gatk4/filtervarianttranches,1,5,yes,sarek
 gatk4/genotypegvcfs,1,5,,sarek
 gatk4/mergebamalignment,1,5,,raredisease
 gatk4/postprocessgermlinecnvcalls,1,5,,raredisease
-gatk4/preprocessintervals,1,5,,createpanelrefs
+gatk4/preprocessintervals,1,5,yes,createpanelrefs
 gatk4/printreads,1,5,,raredisease
 gatk4/revertsam,1,5,,raredisease
 gatk4/samtofastq,1,5,,raredisease
@@ -604,7 +604,7 @@ glimpse2/chunk,1,5,,phaseimpute
 glimpse2/concordance,1,5,,phaseimpute
 glimpse2/ligate,1,5,,phaseimpute
 glimpse2/phase,1,5,,phaseimpute
-gmmdemux,1,5,,hadge
+gmmdemux,1,5,yes,hadge
 goleft/indexcov,1,5,,sarek
 gprofiler2/gost,1,5,,differentialabundance
 graphtyper/genotype,1,5,yes,pathogensurveillance
@@ -627,7 +627,7 @@ hamronization/summarize,1,5,,funcscan
 happy/happy,1,5,,variantbenchmarking
 happy/report,1,5,,variantbenchmarking
 happy/sompy,1,5,,variantbenchmarking
-hasheddrops,1,5,,hadge
+hasheddrops,1,5,yes,hadge
 hhsuite/reformat,1,5,yes,proteinfamilies
 hifiasm,1,5,,genomeassembler
 hiphase,1,5,,pacvar
@@ -636,10 +636,10 @@ homer/findpeaks,1,5,yes,nascent
 homer/maketagdirectory,1,5,yes,nascent
 homer/makeucscfile,1,5,yes,nascent
 homer/pos2bed,1,5,yes,nascent
-htodemux,1,5,,hadge
-humann3/humann,1,5,,funcprofiler
-humann3/regroup,1,5,,funcprofiler
-humann3/renorm,1,5,,funcprofiler
+htodemux,1,5,yes,hadge
+humann3/humann,1,5,yes,funcprofiler
+humann3/regroup,1,5,yes,funcprofiler
+humann3/renorm,1,5,yes,funcprofiler
 humid,1,5,,viralmetagenome
 iqtree,1,5,yes,pathogensurveillance
 isoseq/refine,1,5,yes,isoseq
@@ -691,7 +691,7 @@ mash/screen,1,5,,viralmetagenome
 mash/sketch,1,5,,viralmetagenome
 mat2json,1,5,yes,lsmquant
 maxbin2,1,5,,mag
-mcquant,1,5,,mcmicro
+mcquant,1,5,yes,mcmicro
 mdust,1,5,,genomeqc
 megan/rma2info,1,5,,taxprofiler
 melon,1,5,,taxprofiler
@@ -705,13 +705,13 @@ metamdbg/asm,1,5,,mag
 metaphlan/mergemetaphlantables,1,5,,taxprofiler
 methyldackel/extract,1,5,,methylseq
 methyldackel/mbias,1,5,,methylseq
-mgikit/demultiplex,1,5,,demultiplex
+mgikit/demultiplex,1,5,yes,demultiplex
 mgnifam/generatefamilies,1,5,yes,proteinfamilies
-mifaser,1,5,,funcprofiler
+mifaser,1,5,yes,funcprofiler
 mindagap/duplicatefinder,1,5,yes,molkart
 mindagap/mindagap,1,5,yes,molkart
 minia,1,5,,viralrecon
-miniasm,1,5,,bacass
+miniasm,1,5,yes,bacass
 minimac4/compressref,1,5,,phaseimpute
 minimac4/impute,1,5,,phaseimpute
 mirdeep2/mapper,1,5,yes,smrnaseq
@@ -735,7 +735,7 @@ motus/profile,1,5,,taxprofiler
 msisensor2/msi,1,5,,sarek
 msisensorpro/msisomatic,1,5,,sarek
 mtmalign/align,1,5,,multiplesequencealign
-multiseqdemux,1,5,,hadge
+multiseqdemux,1,5,yes,hadge
 muscle5/super5,1,5,,multiplesequencealign
 muse/call,1,5,,sarek
 muse/sump,1,5,,sarek
@@ -823,9 +823,9 @@ pints/caller,1,5,yes,nascent
 pirate,1,5,yes,pathogensurveillance
 plasmidid,1,5,,viralrecon
 plastid/psite,1,5,,riboseq
-popscle/demuxlet,1,5,,hadge
-popscle/dscpileup,1,5,,hadge
-popscle/freemuxlet,1,5,,hadge
+popscle/demuxlet,1,5,yes,hadge
+popscle/dscpileup,1,5,yes,hadge
+popscle/freemuxlet,1,5,yes,hadge
 pridepy/downloadfile,1,5,,mhcquant
 pridepy/fetchsdrf,1,5,,mhcquant
 propr/grea,1,5,,differentialabundance
@@ -848,8 +848,8 @@ rastair/call,1,5,,methylseq
 rastair/mbias,1,5,,methylseq
 rastair/mbiasparser,1,5,,methylseq
 rastair/methylkit,1,5,,methylseq
-rasusa,1,5,,bacass
-raven,1,5,,bacass
+rasusa,1,5,yes,bacass
+raven,1,5,yes,bacass
 rbt/vcfsplit,1,5,,sarek
 rclone/check,1,5,yes,datasync
 rclone/checksum,1,5,yes,datasync
@@ -858,8 +858,8 @@ regtools/junctionsextract,1,5,yes,rnasplice
 repeatmasker/repeatmasker,1,5,,genomeqc
 repeatmodeler/builddatabase,1,5,,genomeqc
 repeatmodeler/repeatmodeler,1,5,,genomeqc
-rgi/bwt,1,5,,funcprofiler
-rgi/main,1,5,,funcscan
+rgi/bwt,1,5,yes,funcprofiler
+rgi/main,1,5,yes,funcscan
 rhocall/annotate,1,5,,raredisease
 rhocall/viz,1,5,,raredisease
 ribocode/gtfupdate,1,5,,riboseq
@@ -895,7 +895,7 @@ saltshaker/plot,1,5,,raredisease
 sam2lca/analyze,1,5,yes,coproid
 sambamba/depth,1,5,,raredisease
 samblaster,1,5,,rnadnavar
-samshee,1,5,,demultiplex
+samshee,1,5,yes,demultiplex
 samtools/calmd,1,5,yes,rnastructurome
 samtools/collate,1,5,,raredisease
 samtools/coverage,1,5,,phaseimpute
@@ -907,8 +907,8 @@ samtools/reheader,1,5,,phaseimpute
 samtools/trimheader,1,5,yes,metatdenovo
 sawfish/discover,1,5,,pacvar
 sawfish/jointcall,1,5,,pacvar
-scanpy/hashsolo,1,5,,hadge
-scimap/mcmicro,1,5,,mcmicro
+scanpy/hashsolo,1,5,yes,hadge
+scimap/mcmicro,1,5,yes,mcmicro
 seacr/callpeak,1,5,yes,cutandrun
 semibin/singleeasybin,1,5,,mag
 sentieon/applyvarcal,1,5,,sarek
@@ -933,14 +933,14 @@ seqtk/cutn,1,5,yes,pairgenomealign
 seqtk/trim,1,5,yes,demo
 sequali,1,5,yes,seqinspector
 seqwish/induce,1,5,yes,pangenome
-sgdemux,1,5,,demultiplex
+sgdemux,1,5,yes,demultiplex
 shapeit5/ligate,1,5,,phaseimpute
 shapeit5/phasecommon,1,5,,phaseimpute
 shinyngs/app,1,5,,differentialabundance
 shinyngs/staticdifferential,1,5,,differentialabundance
 shinyngs/staticexploratory,1,5,,differentialabundance
 shinyngs/validatefomcomponents,1,5,,differentialabundance
-sigprofiler,1,5,,tumourevo
+sigprofiler,1,5,no,tumourevo
 simpleaf/index,1,5,yes,scrnaseq
 simpleaf/quant,1,5,yes,scrnaseq
 smncopynumbercaller,1,5,,raredisease
@@ -948,7 +948,7 @@ smoothxg,1,5,yes,pangenome
 sniffles,1,5,,longraredisease
 snpsift/annmem,1,5,,sarek
 snpsift/annmemcreate,1,5,,sarek
-souporcell,1,5,,hadge
+souporcell,1,5,yes,hadge
 sourcepredict,1,5,yes,coproid
 sourmash/compare,1,5,yes,pathogensurveillance
 sourmash/gather,1,5,yes,magmap
@@ -1020,7 +1020,7 @@ vcflib/vcffixup,1,5,,phaseimpute
 vcflib/vcfuniq,1,5,,viralrecon
 verifybamid/verifybamid2,1,5,,raredisease
 viber,1,5,,tumourevo
-vireo,1,5,,hadge
+vireo,1,5,yes,hadge
 vrhyme/vrhyme,1,5,,viralmetagenome
 vsearch/sintax,1,5,yes,ampliseq
 vsearch/sort,1,5,yes,crisprseq

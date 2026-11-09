@@ -61,14 +61,23 @@ Pipeline columns show which pipelines use each module.
 | `anndatar` | h5ad to Seurat and SingleCellExperiment RDS | `anndatar_convert` | scrnaseq |
 | `aria2` | Download a file over HTTP(S) or FTP | `aria2` | — |
 | `art` | Simulate Illumina reads from a reference | `art_illumina` | — |
+| `ashlar` | Stitch and register multiplexed tissue image cycles into one pyramidal OME-TIFF, with optional illumination correction | `ashlar` | — |
 | `assemblyscan` | Assembly summary statistics (contig counts, lengths, N50, GC) as TSV or JSON | `assemblyscan` | — |
 | `ataqv` | ATAC-seq quality metrics per sample, and the interactive HTML report across samples | `ataqv_ataqv`, `ataqv_mkarv` | — |
+| `autocycler` | Consensus long-read bacterial assembly: subsample reads, compress, cluster, trim, resolve and combine assemblies | `autocycler_subsample`, `autocycler_compress`, `autocycler_cluster`, `autocycler_trim`, `autocycler_resolve`, `autocycler_combine` | — |
+| `backsub` | Channel-wise background subtraction of a registered multiplexed image, driven by a markers CSV | `backsub` | — |
 | `bakta` | Annotate a bacterial genome, plasmid or MAG; download its database | `bakta_db_download`, `bakta` | — |
 | `bamtools` | BAM statistics; split BAMs by reference, mapping, pairing or tag, as a `.tar.gz` of BAMs | `bamtools_stats`, `bamtools_split`, `bamtools_convert` | — |
+| `bases2fastq` | Element AVITI run-folder demultiplexing to FASTQ (Element EULA) | `bases2fastq` | — |
+| `basicpy` | Estimate dark-field and flat-field illumination profiles of a tiled microscopy image (BaSiC) | `basicpy` | — |
 | `bbmap` | BBTools: BBMap indexing and alignment; BBSplit binning of reads by reference; BBDuk trimming; BBNorm read-depth normalisation; Clumpify read grouping; Pileup coverage stats; FilterByName read selection; Repair re-pairing of out-of-order mates | `bbsplit_index`, `bbsplit`, `bbduk`, `bbnorm`, `bbmap_filterbyname`, `bbmap_repair`, `bbmap_index`, `bbmap_align`, `bbmap_pileup`, `bbmap_clumpify`, `bbmap_sendsketch` | rnaseq |
 | `bcftools` | VCF/BCF utilities: statistics, sort, normalise, view, filter, annotate, merge, mpileup calling, index, concatenate, reheader, consensus sequence, set genotypes | `bcftools_stats`, `bcftools_sort`, `bcftools_norm`, `bcftools_view`, `bcftools_filter`, `bcftools_annotate`, `bcftools_merge`, `bcftools_mpileup`, `bcftools_index`, `bcftools_concat`, `bcftools_reheader`, `bcftools_consensus`, `bcftools_pluginsetgt` | variant_calling |
+| `bcl2fastq` | Illumina BCL run-folder demultiplexing to FASTQ (Illumina EULA) | `bcl2fastq` | — |
+| `bclconvert` | Illumina BCL Convert run-folder demultiplexing to FASTQ (Illumina EULA) | `bclconvert` | — |
 | `bedops` | GTF to BED conversion | `bedops_gtf2bed` | — |
 | `bedtools` | Genome arithmetic; extract or mask a BED's intervals in a FASTA; convert a BAM to BED; complement a BED against a genome | `bedtools_intersect`, `bedtools_sort`, `bedtools_merge`, `bedtools_genomecov`, `bedtools_getfasta`, `bedtools_maskfasta`, `bedtools_bamtobed`, `bedtools_complement` | rnaseq |
+| `bff` | Demultiplex cell-hashing (HTO) counts with cellhashR's BFF callers | `bff` | — |
+| `bftools` | Bio-Formats tools: dump an image's OME-XML metadata | `bftools_showinf` | — |
 | `bioawk` | awk with built-in parsing of FASTA, FASTQ, BED, SAM, VCF and GFF records | `bioawk` | — |
 | `blast` | Build BLAST databases and search nucleotide sequences with blastn | `blast_makeblastdb`, `blast_blastn` | — |
 | `blat` | BLAT alignment of sequences against a database. Academic, non-profit and personal use only: in `licensed_env`, not the default `env` | `blat` | — |
@@ -78,11 +87,13 @@ Pipeline columns show which pipelines use each module.
 | `busco` | Assembly, proteome and transcriptome completeness against a BUSCO lineage; download lineages | `busco_download`, `busco` | — |
 | `bwa` | BWA short-read alignment: index, BWA-MEM, and BWA-backtrack (`aln`, then `samse`/`sampe` to sorted BAM) | `bwa_index`, `bwa_mem`, `bwa_aln`, `bwa_samse`, `bwa_sampe` | variant_calling |
 | `bwamem2` | BWA-MEM2 index and short-read alignment, piped through samtools sort or view | `bwamem2_index`, `bwamem2_mem` | — |
+| `canu` | De novo assembly of long reads (PacBio CLR, HiFi, Nanopore) | `canu` | — |
 | `cat` | Concatenate a sample's FASTQs; concatenate any files, (de)compressing by extension | `cat_fastq`, `cat_cat`, `concatenate` | rnaseq |
 | `catadditionalfasta` | Append extra sequences (e.g. spike-ins) to a genome and GTF | `cat_additional_fasta` | rnaseq |
 | `cellbender` | Remove ambient RNA and empty droplets (CPU or GPU) | `cellbender_removebackground` | scrnaseq |
 | `cellpose` | Cell segmentation of microscopy images | `cellpose` | — |
 | `cellranger` | 10x Cell Ranger V(D)J reference building and immune profiling. Licensed: in `licensed_env`, not the default `env` | `cellranger_mkvdjref`, `cellranger_vdj` | — |
+| `cellsnp` | Per-cell allele counts at known SNPs (cellsnp-lite mode 1a) | `cellsnp_modea` | — |
 | `checkqc` | Check an Illumina run folder (archived) against QC thresholds | `checkqc` | — |
 | `chelae` | Adapter trimming of FASTQ reads | `chelae_trim` | — |
 | `chopper` | Quality, length and contaminant filtering of long reads | `chopper` | — |
@@ -92,9 +103,11 @@ Pipeline columns show which pipelines use each module.
 | `clipkit` | Trim multiple sequence alignments (ClipKIT), with per-site log, complement and JSON report | `clipkit` | — |
 | `clustalo` | Multiple sequence alignment and guide trees with Clustal Omega | `clustalo_align`, `clustalo_guidetree` | — |
 | `cmaple` | Maximum-likelihood phylogeny of closely related sequences (CMAPLE), optionally from a starting tree | `cmaple` | — |
+| `cnvkit` | Copy-number calling from targeted and whole-genome sequencing (CNVkit): target BEDs and the batch pipeline (references, panels of normals, copy ratios and segments) | `cnvkit_target`, `cnvkit_batch` | — |
 | `collectfeaturecounts` | Collect per-sample featureCounts tables into one long counts table with per-sample TPMs | `collect_featurecounts` | — |
 | `collectstats` | Join per-sample read statistics (trimming, BBDuk, idxstats, feature counts, merge table) into one table | `collect_stats` | — |
 | `cooler` | Hi-C contact matrices: bin pairs into a .cool, make genomic bins, balance, dump tables, zoomify to a multi-resolution .mcool | `cooler_cload`, `cooler_digest`, `cooler_makebins`, `cooler_balance`, `cooler_dump`, `cooler_zoomify` | — |
+| `coreograph` | Detect and crop tissue-microarray cores (U-Net), with masks, TMA map and centroids | `coreograph` | — |
 | `crisprcleanr` | Correction of gene-independent copy-number effects in CRISPR screen counts | `crisprcleanr_normalize` | — |
 | `csvtk` | Join tables on key fields; concatenate tables, converting the delimiter | `csvtk_join`, `csvtk_concat` | — |
 | `cutadapt` | Adapter, primer and quality trimming of FASTQ reads (single- or paired-end) | `cutadapt` | — |
@@ -102,16 +115,19 @@ Pipeline columns show which pipelines use each module.
 | `deepcell` | Whole-cell and nuclear segmentation with Mesmer. Non-commercial licence: in `licensed_env`, not the default `env` | `deepcell_mesmer` | — |
 | `deeptools` | bigWig coverage tracks, profile plots, coverage matrices, heatmaps and fingerprint plots for ChIP/ATAC-seq; BAM bin summaries with correlation and PCA plots | `deeptools_computematrix`, `deeptools_plotheatmap`, `deeptools_plotprofile`, `deeptools_plotfingerprint`, `deeptools_multibamsummary`, `deeptools_plotcorrelation`, `deeptools_plotpca`, `deeptools_bamcoverage` | — |
 | `deepvariant` | Germline small-variant calling with DeepVariant (VCF and gVCF) | `deepvariant_rundeepvariant` | — |
+| `demuxem` | Demultiplex cell-hashing data with demuxEM | `demuxem` | — |
 | `deseq2_qc` | Sample-level QC of a count matrix with DESeq2 (PCA, distances) | `deseq2_qc` | rnaseq |
 | `dexseq` | Differential exon and transcript usage with DEXSeq: annotation flattening, exon counting, DEU and DTU tests | `dexseq_prepareannotation`, `dexseq_count`, `dexseq_exon`, `dexseq_dtu` | — |
 | `diamond` | Cluster protein sequences (FASTA or DIAMOND database) | `diamond_cluster`, `diamond_makedb`, `diamond_blastp`, `diamond_blastx` | — |
 | `dragmap` | Short-read alignment with DRAGMAP: hash table build, alignment to BAM/CRAM | `dragmap_hashtable`, `dragmap_align` | — |
+| `dragonflye` | Long-read bacterial assembly (Flye, Miniasm or Raven) with long- and short-read polishing | `dragonflye` | — |
 | `duckdb` | Convert a CSV/TSV (optionally compressed) to Parquet | `duckdb_table2parquet` | — |
 | `dupradar` | Duplication rate vs. expression for RNA-seq BAMs | `dupradar` | rnaseq |
 | `eggnogmapper` | Functional annotation of proteins (orthologs, GO, EC, KEGG, CAZy, PFAMs) with eggNOG-mapper | `eggnogmapper` | — |
 | `ensemblvep` | Variant annotation with Ensembl VEP, with its cache download | `ensemblvep_download`, `ensemblvep_vep` | — |
 | `epang` | Phylogenetic placement of query sequences on a reference tree, and splitting reference/query alignments (EPA-ng) | `epang_place`, `epang_split` | — |
 | `evigene` | Reduce an over-assembled transcriptome to non-redundant transcripts, CDS and proteins | `evigene_tr2aacds` | — |
+| `falco` | Read QC reports (FastQC drop-in) | `falco` | — |
 | `famsa` | Fast multiple sequence alignment (FAMSA), optionally from a guide tree; export FAMSA's guide tree | `famsa_align`, `famsa_guidetree` | — |
 | `fastp` | Adapter and quality trimming with QC reports (single-end, paired-end, interleaved) | `fastp` | — |
 | `fastqc` | Read quality reports | `fastqc`, `fastqc_reads` | rnaseq, scrnaseq, variant_calling |
@@ -122,14 +138,17 @@ Pipeline columns show which pipelines use each module.
 | `fibertoolsrs` | Fiber-seq m6A prediction, nucleosome calling and feature extraction | `fibertoolsrs_predictm6a`, `fibertoolsrs_addnucleosomes`, `fibertoolsrs_extract` | — |
 | `filtlong` | Quality filtering of long reads, optionally against Illumina reads | `filtlong` | — |
 | `flye` | De novo assembly of PacBio or Nanopore long reads | `flye` | — |
+| `fmhfunprofiler` | KEGG ortholog profiling of metagenomes with FracMinHash sketches | `fmhfunprofiler` | — |
 | `foldseek` | Protein structure database building and search | `foldseek_createdb`, `foldseek_easysearch` | — |
 | `fq` | FASTQ subsampling and validation | `fq_subsample`, `fq_lint` | rnaseq |
+| `fqtk` | FASTQ demultiplexing by sample barcodes | `fqtk` | — |
 | `gappa` | Analysis of phylogenetic placements: taxonomic assignment, grafted trees, heat trees, merging jplace files | `gappa_examine_assign`, `gappa_examine_graft`, `gappa_examine_heat_tree`, `gappa_edit_merge` | — |
-| `gatk4` | GATK: sequence dictionary, interval list and BED conversion, interval-list scattering, MarkDuplicates, base-quality recalibration, HaplotypeCaller, GVCF combining, split-N-CIGAR read splitting, Mutect2 somatic calling and filtering, hard filtering, VCF merging, CNN scoring and tranche filtering | `gatk4_createsequencedictionary`, `gatk4_intervallisttobed`, `gatk4_bedtointervallist`, `gatk4_intervallisttools`, `gatk4_markduplicates`, `gatk4_baserecalibrator`, `gatk4_gatherbqsrreports`, `gatk4_applybqsr`, `gatk4_haplotypecaller`, `gatk4_combinegvcfs`, `gatk4_splitncigarreads`, `gatk4_mutect2`, `gatk4_mergemutectstats`, `gatk4_filtermutectcalls`, `gatk4_variantfiltration`, `gatk4_mergevcfs`, `gatk4_cnnscorevariants`, `gatk4_filtervarianttranches` | variant_calling |
+| `gatk4` | GATK: sequence dictionary, interval list and BED conversion, interval-list scattering, MarkDuplicates, base-quality recalibration, HaplotypeCaller, GVCF combining, split-N-CIGAR read splitting, Mutect2 somatic calling and filtering, hard filtering, VCF merging, CNN scoring and tranche filtering | `gatk4_createsequencedictionary`, `gatk4_intervallisttobed`, `gatk4_bedtointervallist`, `gatk4_intervallisttools`, `gatk4_markduplicates`, `gatk4_baserecalibrator`, `gatk4_gatherbqsrreports`, `gatk4_applybqsr`, `gatk4_haplotypecaller`, `gatk4_combinegvcfs`, `gatk4_splitncigarreads`, `gatk4_mutect2`, `gatk4_mergemutectstats`, `gatk4_filtermutectcalls`, `gatk4_variantfiltration`, `gatk4_mergevcfs`, `gatk4_cnnscorevariants`, `gatk4_filtervarianttranches`, `gatk4_preprocessintervals`, `gatk4_annotateintervals`, `gatk4_collectreadcounts`, `gatk4_filterintervals`, `gatk4_createreadcountpanelofnormals`, `gatk4_determinegermlinecontigploidy`, `gatk4_germlinecnvcaller`, `gatk4_genomicsdbimport`, `gatk4_genomicsdbimport_update`, `gatk4_genomicsdbimport_interval_list`, `gatk4_createsomaticpanelofnormals`, `gatk4_indexfeaturefile`, `gatk4_splitintervals` | variant_calling |
 | `gawk` | Run an awk program (text or file) over files, decompressing `.gz` inputs and optionally gzipping the output | `gawk` | — |
 | `genmap` | Build GenMap's FM index of a FASTA for mappability | `genmap_index` | — |
 | `gfaffix` | Collapse redundant shared affixes in a variation graph | `gfaffix` | — |
 | `gffread` | Convert GFF to GTF; extract transcript sequences | `gffread_gff_to_gtf`, `gffread_transcripts_fasta` | rnaseq |
+| `gmmdemux` | Demultiplex cell-hashing data with Gaussian mixture models (GMM-Demux) | `gmmdemux` | — |
 | `gnusort` | Sorting text files (BED, GTF, CSV) with GNU sort | `gnu_sort` | — |
 | `graphtyper` | Population-scale small-variant genotyping and region VCF concatenation | `graphtyper_genotype`, `graphtyper_vcfconcatenate` | — |
 | `gstama` | TAMA long-read transcript collapse, model merge and FLNC poly(A) cleanup | `gstama_collapse`, `gstama_merge`, `gstama_polyacleanup` | — |
@@ -138,11 +157,14 @@ Pipeline columns show which pipelines use each module.
 | `gtfgenefilter` | Keep the GTF lines on a genome's sequences (single-cell) | `gtf_gene_filter` | scrnaseq |
 | `gunzip` | Decompress a gzipped file | `gunzip` | rnaseq, scrnaseq |
 | `gzrt` | Recover the readable data from corrupt gzipped FASTQs | `gzrt` | — |
+| `hasheddrops` | Demultiplex cell-hashing data with DropletUtils' hashedDrops (optionally after emptyDrops) | `hasheddrops` | — |
 | `hhsuite` | Convert multiple alignments between formats (HH-suite reformat.pl: fas, a2m, a3m, sto, …) | `hhsuite_reformat` | — |
 | `hisat2` | Splice-aware short-read alignment: splice sites from a GTF, index build, alignment to BAM | `hisat2_extractsplicesites`, `hisat2_build`, `hisat2_align` | — |
 | `hmmer` | Profile HMMs: search a sequence database (hmmsearch), align to a profile (hmmalign), build a profile (hmmbuild), rank hits across profiles (hmmrank), index a sequence file for retrieval (esl-sfetch --index) | `hmmsearch`, `hmmalign`, `hmmbuild`, `hmmrank`, `esl_sfetch_index`, `esl_alimask`, `esl_reformat`, `format_tsv` | — |
 | `homer` | HOMER tag directories, peak calling, UCSC tracks, peak-to-BED conversion and peak annotation | `homer_maketagdirectory`, `homer_findpeaks`, `homer_makeucscfile`, `homer_pos2bed`, `homer_annotatepeaks` | — |
+| `htodemux` | Demultiplex a Seurat object's hashtag assay with HTODemux | `htodemux` | — |
 | `htslib` | bgzip and tabix | `htslib_bgziptabix`, `tabix_tabix`, `tabix_bgzip` | variant_calling |
+| `humann3` | Functional profiling of metagenomes with HUMAnN 3: gene families, pathways, regrouping, renormalisation | `humann3_humann`, `humann3_regroup`, `humann3_renorm` | — |
 | `ilastik` | Headless pixel classification and multicut segmentation with trained ilastik projects | `ilastik_pixelclassification`, `ilastik_multicut` | — |
 | `interproscan` | Protein domain and family annotation | `interproscan` | — |
 | `intervals` | Build genomic intervals and split them for scatter-gather | `build_intervals`, `create_intervals_bed` | variant_calling |
@@ -155,18 +177,24 @@ Pipeline columns show which pipelines use each module.
 | `krona` | Interactive taxonomy charts; build Krona's taxonomy database from NCBI | `krona_ktimporttaxonomy`, `krona_ktupdatetaxonomy` | — |
 | `last` | LAST pairwise genome/read alignment: index, train scoring parameters, align, keep best alignments, convert MAF (PSL/SAM/BAM/CRAM/BCF/GFF/…) and draw dot plots | `last_lastdb`, `last_train`, `last_lastal`, `last_split`, `last_mafconvert`, `last_dotplot` | — |
 | `leafcutter` | Intron clustering of regtools junctions for differential splicing | `leafcutter_clusterregtools` | — |
+| `liftoff` | Lift genome annotations over from a reference assembly to a target | `liftoff` | — |
 | `lima` | PacBio primer/barcode removal from CCS reads (BAM, FASTA, FASTQ) | `lima` | — |
 | `macs2` | ChIP-seq/ATAC-seq peak calling | `macs2_callpeak` | — |
 | `macs3` | Model-based peak calling for ChIP-seq and ATAC-seq | `macs3_callpeak` | — |
 | `mafft` | Multiple sequence alignment, optionally adding sequences or fragments | `mafft_align` | — |
 | `mageck` | CRISPR screen analysis: sgRNA counting, MLE and RRA gene ranking | `mageck_count`, `mageck_mle`, `mageck_test` | — |
 | `mat2json` | Convert MATLAB .mat files to JSON or CSV | `mat2json` | — |
+| `mcquant` | Single-cell quantification: per-cell marker intensities and morphology over a segmentation mask | `mcquant` | — |
 | `md5sum` | MD5 checksums of files, one per file or combined | `md5sum` | — |
 | `medaka` | Consensus polishing of assemblies with nanopore reads | `medaka` | — |
 | `megahit` | De novo assembly of short reads, single genomes or metagenomes | `megahit` | — |
 | `metaeuk` | Eukaryotic gene prediction in contigs against reference proteins with MetaEuk | `metaeuk_easypredict` | — |
+| `metaphlan` | Taxonomic profiling of metagenomes with MetaPhlAn 4 marker genes | `metaphlan_metaphlan` | — |
+| `mgikit` | MGI/DNBSEQ FASTQ demultiplexing | `mgikit_demultiplex` | — |
 | `mgnifam` | Build protein families (seed and full alignments, HMMs, reference annotations) from a clustering chunk (mgnifam generate_families) | `mgnifam_generatefamilies` | — |
+| `mifaser` | Enzyme (EC number) annotation of metagenomic reads with mi-faser | `mifaser` | — |
 | `mindagap` | Fill tile grid lines in spatial-transcriptomics panoramas; mark spots duplicated across tile overlaps | `mindagap_mindagap`, `mindagap_duplicatefinder` | — |
+| `miniasm` | De novo assembly of long reads from all-vs-all overlaps (no consensus) | `miniasm` | — |
 | `minimap2` | Align long or short reads (FASTQ or SAM/BAM/CRAM) to a FASTA or `.mmi` index, writing sorted BAM or PAF; build `.mmi` indexes | `minimap2_index`, `minimap2_align` | — |
 | `mirdeep2` | Small-RNA read mapping and known and novel miRNA discovery | `mirdeep2_mapper`, `mirdeep2_mirdeep2` | — |
 | `mirtop` | miRNA annotation in mirGFF3, with counts, export and statistics | `mirtop_gff`, `mirtop_counts`, `mirtop_export`, `mirtop_stats` | — |
@@ -179,6 +207,7 @@ Pipeline columns show which pipelines use each module.
 | `multiqc` | Aggregate QC reports into one HTML report | `multiqc` | rnaseq, scrnaseq, variant_calling |
 | `multiqccustombiotype` | featureCounts biotype counts as MultiQC content | `multiqc_custom_biotype` | rnaseq |
 | `multiqcsav` | MultiQC report with Illumina run (SAV/InterOp) metrics | `multiqcsav` | — |
+| `multiseqdemux` | Demultiplex a Seurat object's hashtag assay with MULTIseqDemux | `multiseqdemux` | — |
 | `nacho` | NanoString nCounter QC reports and normalised counts | `nacho_qc`, `nacho_normalize` | — |
 | `nanocomp` | Compare long-read datasets (FASTQ, FASTA, BAM or sequencing summaries): HTML plots and statistics | `nanocomp` | — |
 | `nanolyse` | Remove lambda phage reads from Nanopore FASTQ | `nanolyse` | — |
@@ -199,6 +228,7 @@ Pipeline columns show which pipelines use each module.
 | `pigz` | Parallel gzip compression and decompression | `pigz_compress`, `pigz_uncompress` | — |
 | `pints` | Peak calling for nascent transcription data (PRO-cap, GRO-cap and similar) | `pints_caller` | — |
 | `pirate` | Pangenome gene families across prokaryote GFF3 annotations | `pirate` | — |
+| `popscle` | Genotype-based demultiplexing: pileup, demuxlet, freemuxlet | `popscle_dscpileup`, `popscle_demuxlet`, `popscle_freemuxlet` | — |
 | `porechop` | Adapter trimming of Nanopore reads (Porechop, Porechop_ABI) | `porechop`, `porechop_abi` | — |
 | `preseq` | Library complexity from mapped reads: extrapolation and the observed complexity curve | `preseq_lcextrap`, `preseq_ccurve` | — |
 | `prodigal` | Prokaryotic gene prediction | `prodigal` | — |
@@ -209,9 +239,12 @@ Pipeline columns show which pipelines use each module.
 | `quarto` | Render a parameterised Quarto, R Markdown or Jupyter notebook to HTML | `quarto_notebook` | — |
 | `quast` | Assembly quality assessment, optionally against a reference FASTA and GFF | `quast` | — |
 | `racon` | Consensus polishing of long-read assemblies | `racon` | — |
+| `rasusa` | Random subsampling of reads to a target depth | `rasusa` | — |
+| `raven` | De novo assembly of long uncorrected reads | `raven` | — |
 | `rclone` | Copy and verify data between storage remotes (check, checksum, copy) | `rclone_check`, `rclone_checksum`, `rclone_copy` | — |
 | `regtools` | Splice junction extraction from RNA-seq BAMs | `regtools_junctionsextract` | — |
 | `resolvetaxonomy` | Resolve a taxonomy table from a taxonomy file or sequence headers, and strip headers to bare ids | `resolve_taxonomy` | — |
+| `rgi` | Antimicrobial resistance genes from CARD with RGI: database preparation, read mapping, contig/genome prediction (CARD data: no commercial use without a licence) | `rgi_cardannotation`, `rgi_bwt`, `rgi_main` | — |
 | `ribodetector` | Remove rRNA reads from FASTQ with a deep-learning classifier (CPU) | `ribodetector` | — |
 | `riker` | Alignment QC metrics (alignment, isize, WGS, GC bias, hybcap, error, RNA) in one pass | `riker_multi` | — |
 | `rmats` | rMATS' prep step: per-BAM splice graph and junction counts. Non-commercial licence: in `licensed_env`, not the default `env` | `rmats_prep` | — |
@@ -224,8 +257,10 @@ Pipeline columns show which pipelines use each module.
 | `s4pred` | Protein secondary structure prediction | `s4pred_runmodel` | — |
 | `salmon` | Transcript quantification | `salmon_index`, `salmon_quant_reads`, `salmon_quant_bam` | rnaseq |
 | `sam2lca` | Lowest-common-ancestor taxonomic assignment of aligned reads | `sam2lca_analyze` | — |
+| `samshee` | Illumina sample sheet validation and formatting | `samshee` | — |
 | `samtools` | Index, sort, view, merge and summarise alignments; convert them back to FASTQ; convert between BAM and CRAM; build a sequence dictionary; recalculate MD/NM tags, fix mate information and mark duplicates; import FASTQ into unaligned BAM | `samtools_faidx`, `samtools_sort`, `samtools_view`, `samtools_merge`, `samtools_index`, `samtools_stats`, `samtools_flagstat`, `samtools_idxstats`, `samtools_fastq`, `samtools_collatefastq`, `samtools_convert`, `samtools_dict`, `samtools_calmd`, `samtools_fixmate`, `samtools_markdup`, `samtools_import`, `samtools_trimheader` | rnaseq, variant_calling |
-| `scanpy` | simpleaf counts to h5ad; concatenate h5ads | `mtx_to_h5ad_simpleaf`, `concat_h5ad` | scrnaseq |
+| `scanpy` | simpleaf counts to h5ad; concatenate h5ads | `mtx_to_h5ad_simpleaf`, `concat_h5ad`, `scanpy_hashsolo` | scrnaseq |
+| `scimap` | Cluster cells of a cell-by-feature table by expression and spatial neighbourhood (AnnData + CSV) | `scimap_mcmicro` | — |
 | `seacr` | Peak calling from CUT&RUN or CUT&Tag bedGraphs, against an IgG control or a signal threshold | `seacr_callpeak` | — |
 | `seq2hla` | HLA class I/II typing and expression from paired-end RNA-seq reads | `seq2hla` | — |
 | `seqcluster` | Collapsing of identical small-RNA reads | `seqcluster_collapse` | — |
@@ -234,10 +269,12 @@ Pipeline columns show which pipelines use each module.
 | `seqtk` | Subsample FASTQ reads (by count or fraction, seeded); quality-trim them; convert or transform FASTA/FASTQ; list the gaps (runs of N) in a FASTA as BED | `seqtk_sample`, `seqtk_trim`, `seqtk_seq`, `seqtk_cutn`, `seqtk_subseq`, `seqtk_mergepe` | — |
 | `sequali` | Sequencing-read QC reports (FASTQ or unaligned BAM) | `sequali` | — |
 | `seqwish` | Induce a variation graph (GFA) from pairwise alignments | `seqwish_induce` | — |
+| `sgdemux` | Singular Genomics G4 FASTQ demultiplexing (G4-only licence) | `sgdemux` | — |
 | `simpleaf` | Single-cell quantification with alevin-fry (index, quant) | `simpleaf_index`, `simpleaf_quant` | scrnaseq |
 | `smoothxg` | Smooth a variation graph by local partial order realignment | `smoothxg` | — |
 | `snpeff` | Variant annotation with snpEff, with a cached download of its database | `snpeff_download`, `snpeff_snpeff` | — |
 | `sortmerna` | Filter rRNA reads out of single- or paired-end FASTQ against rRNA databases, or only build their index | `sortmerna` | — |
+| `souporcell` | Genotype-free demultiplexing of pooled cells by their variants | `souporcell` | — |
 | `sourcepredict` | Predict the source proportions of metagenomic samples from taxon counts | `sourcepredict` | — |
 | `sourmash` | MinHash sketches of sequence files, SBT indexes of them, and gather searches | `sourmash_sketch`, `sourmash_index`, `sourmash_gather`, `sourmash_compare` | — |
 | `spaceranger` | 10x Space Ranger: build a reference; count Visium and Visium HD spatial gene expression. Licensed: in `licensed_env`, not the default `env` | `spaceranger_mkref`, `spaceranger_count` | — |
@@ -265,11 +302,13 @@ Pipeline columns show which pipelines use each module.
 | `ultra` | uLTRA annotation-guided splice alignment of long transcript reads | `ultra_index`, `ultra_align` | — |
 | `umicollapse` | Deduplicate reads by UMI in a sorted BAM or a FASTQ | `umicollapse` | — |
 | `umitools` | UMI extraction and deduplication | `umitools_extract`, `umitools_dedup`, `umitools_prepareforrsem` | rnaseq |
+| `unicycler` | Hybrid or single-technology bacterial genome assembly | `unicycler` | — |
 | `untar` | Extract a tar archive | `untar` | rnaseq |
 | `unzip` | Extract a zip (or other 7-Zip-readable) archive into a Dir | `unzip` | — |
 | `unzipfiles` | Extract a zip (or other 7-Zip-readable) archive and list every extracted file | `unzipfiles` | — |
 | `vcflib` | Filter VCF records/genotypes by field expressions | `vcflib_vcffilter` | — |
 | `vcftools` | VCF summaries (Ts/Tv, FILTER, frequencies) | `vcftools` | variant_calling |
+| `vireo` | Assign droplets to donors from per-cell allele counts | `vireo` | — |
 | `vsearch` | Cluster sequences (fast, size, smallmem, UNOISE); sort sequences by abundance or length | `vsearch_cluster`, `vsearch_sort`, `vsearch_sintax`, `vsearch_usearch_global` | — |
 | `wfmash` | All-to-all mapping and alignment of genomes for pangenome graphs | `wfmash` | — |
 | `wget` | Download a file over HTTP(S) or FTP with GNU Wget | `wget` | — |

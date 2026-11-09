@@ -40,6 +40,39 @@ Exposes:
   operations (spliced alignments), optionally within intervals, writing
   ``<prefix>.bam``.
 
+Panel-of-normals and germline CNV references:
+
+- :func:`gatk4_preprocessintervals` — bin a reference (optionally within or
+  excluding intervals) into ``<prefix>.interval_list`` for read counting.
+- :func:`gatk4_annotateintervals` — annotate intervals with GC content (and
+  optionally mappability and segmental duplication) into ``<prefix>.tsv``.
+- :func:`gatk4_collectreadcounts` — count reads per interval into
+  ``<prefix>.hdf5``, or ``<prefix>.tsv`` when ``args`` has ``--format TSV``.
+- :func:`gatk4_filterintervals` — drop intervals by annotation and/or read
+  counts into ``<prefix>.interval_list``.
+- :func:`gatk4_createreadcountpanelofnormals` — a somatic CNV panel of
+  normals, ``<prefix>.hdf5``, from read counts.
+- :func:`gatk4_determinegermlinecontigploidy` — contig ploidy calls
+  (``<prefix>-calls``) and, in cohort mode, the ploidy model
+  (``<prefix>-model``) from read counts.
+- :func:`gatk4_germlinecnvcaller` — germline CNV calls (``<prefix>-calls``)
+  and, in cohort mode, the cohort model (``<prefix>-model``).
+- :func:`gatk4_genomicsdbimport` — import GVCFs into a GenomicsDB workspace,
+  update a workspace with more GVCFs, or list a workspace's intervals. A
+  workspace is passed around as a ``.tar.gz`` of its directory.
+- :func:`gatk4_createsomaticpanelofnormals` — a Mutect2 panel of normals,
+  ``<prefix>.vcf.gz`` (+ ``.tbi``), from a GenomicsDB workspace.
+- :func:`gatk4_indexfeaturefile` — index a VCF or BED (``.tbi`` for bgzipped
+  files, else ``.idx``).
+- :func:`gatk4_splitintervals` — split intervals for scattering into
+  ``<prefix>/<nnnn>-scattered.interval_list``.
+
+DetermineGermlineContigPloidy and GermlineCNVCaller run in upstream's gCNV
+image (GATK with its python/PyTensor kernel), with the BLAS and OpenMP
+threads set to the task's CPUs; CreateReadCountPanelOfNormals runs in the
+full GATK image. Model fitting is stochastic, so their outputs aren't
+byte-stable.
+
 The Mutect2 and VariantFiltration references may be
 bgzipped FASTA (pass the ``.gzi``); the dictionary is linked under the name
 GATK looks for (``genome.dict`` for ``genome.fasta.gz``), as upstream.
@@ -66,6 +99,10 @@ GATK4_CNN_IMAGE = "quay.io/nf-core/gatk:4.5.0.0"
 GATK4_LITE_IMAGE = "community.wave.seqera.io/library/gatk4-lite:4.7.0.0--79918b8b2632f4b1"
 # IntervalListTools' upstream image adds python, which upstream uses to rename the split lists.
 GATK4_LITE_PYTHON_IMAGE = "community.wave.seqera.io/library/gatk4-lite_python:fb04467550379e2f"
+# CreateReadCountPanelOfNormals needs the full GATK (Spark) image.
+GATK4_MAIN_IMAGE = "community.wave.seqera.io/library/gatk4-main:4.7.0.0--6f748daadc3eeb06"
+# The gCNV tools need GATK's python kernel (gcnvkernel), which upstream gets from this image.
+GATK4_GCNV_IMAGE = "community.wave.seqera.io/library/gatk4-main_gcnvkernel:600cef9dfbee0739"
 
 DEFAULT_MEMORY_MB = 6144
 DEFAULT_RESOURCES = flyte.Resources(cpu=1, memory=f"{DEFAULT_MEMORY_MB}Mi")
@@ -77,6 +114,8 @@ HAPLOTYPECALLER_RESOURCES = flyte.Resources(cpu=HAPLOTYPECALLER_CPUS, memory=f"{
 # Upstream's process_low; enough for the test data. Whole-genome samples need more memory.
 MUTECT2_MEMORY_MB = 12288
 MUTECT2_RESOURCES = flyte.Resources(cpu=2, memory=f"{MUTECT2_MEMORY_MB}Mi")
+# The gCNV tools compile their models (PyTensor) and fit them with BLAS/OpenMP threads.
+GCNV_RESOURCES = flyte.Resources(cpu=2, memory="8Gi")
 
 # GATK writes the dictionary next to the reference, named after it.
 gatk4_createsequencedictionary_cmd = shell.create(
@@ -711,8 +750,455 @@ gatk4_splitncigarreads_cmd = shell.create(
     """,
 )
 
-# One image per environment: MarkDuplicates', CNNScoreVariants', the lite tools' and IntervalListTools' differ,
-# so `env` has five.
+# As upstream: the reference is linked beside its .fai and .dict; intervals
+# to bin within and to exclude are both optional.
+gatk4_preprocessintervals_cmd = shell.create(
+    name="gatk4_preprocessintervals",
+    image=GATK4_LITE_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={
+        "fasta": File,
+        "fai": File,
+        "dict": File,
+        "intervals": File | None,
+        "exclude_intervals": File | None,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
+        FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); D=({{inputs.dict}})
+        shopt -s nullglob; INCLUDE=({{inputs.intervals}}); EXCLUDE=({{inputs.exclude_intervals}}); shopt -u nullglob
+        REF_FA="${{FA[0]}}"; REF_FAI="${{FAI[0]}}"; REF_DICT="${{D[0]}}"; REF_GZI=""
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        {LINK_REFERENCE}
+        OPTIONAL=()
+        if [ ${{#INCLUDE[@]}} -gt 0 ]; then OPTIONAL+=(--intervals "${{INCLUDE[0]}}"); fi
+        if [ ${{#EXCLUDE[@]}} -gt 0 ]; then OPTIONAL+=(--exclude-intervals "${{EXCLUDE[0]}}"); fi
+        gatk --java-options "$JAVA_OPTIONS" PreprocessIntervals \
+            "${{OPTIONAL[@]}}" --reference "$REF" --output {{outputs.results}}/{{inputs.prefix}}.interval_list \
+            $ARGS || exit 1
+    """,
+)
+
+# Defines link_feature FILE [INDEX]: links a feature file (BED, VCF) under its
+# own name, once, with its index (.tbi or .idx) beside it.
+LINK_FEATURE = r"""
+        link_feature() {
+            [ -e "$(basename "$1")" ] || ln -s "$1" "$(basename "$1")"
+            if [ -n "${2:-}" ] && [ ! -e "$(basename "$1").${2##*.}" ]; then ln -s "$2" "$(basename "$1").${2##*.}"; fi
+        }
+"""
+
+# As upstream: every interval file is an --intervals; the mappability and
+# segmental-duplication tracks are optional and linked beside their indices.
+gatk4_annotateintervals_cmd = shell.create(
+    name="gatk4_annotateintervals",
+    image=GATK4_LITE_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={
+        "intervals": list[File],
+        "fasta": File,
+        "fai": File,
+        "dict": File,
+        "mappable_regions": File | None,
+        "mappable_regions_tbi": File | None,
+        "segmental_duplication_regions": File | None,
+        "segmental_duplication_regions_tbi": File | None,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
+        IN=({{inputs.intervals}}); FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); D=({{inputs.dict}})
+        shopt -s nullglob
+        MAP=({{inputs.mappable_regions}}); MAP_TBI=({{inputs.mappable_regions_tbi}})
+        SEGDUP=({{inputs.segmental_duplication_regions}}); SEGDUP_TBI=({{inputs.segmental_duplication_regions_tbi}})
+        shopt -u nullglob
+        REF_FA="${{FA[0]}}"; REF_FAI="${{FAI[0]}}"; REF_DICT="${{D[0]}}"; REF_GZI=""
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        {LINK_REFERENCE}
+        {LINK_FEATURE}
+        INTERVALS=(); for i in "${{IN[@]}}"; do INTERVALS+=(--intervals "$i"); done
+        TRACKS=()
+        if [ ${{#MAP[@]}} -gt 0 ]; then
+            link_feature "${{MAP[0]}}" "${{MAP_TBI[0]:-}}"; TRACKS+=(--mappability-track "$(basename "${{MAP[0]}}")")
+        fi
+        if [ ${{#SEGDUP[@]}} -gt 0 ]; then
+            link_feature "${{SEGDUP[0]}}" "${{SEGDUP_TBI[0]:-}}"
+            TRACKS+=(--segmental-duplication-track "$(basename "${{SEGDUP[0]}}")")
+        fi
+        gatk --java-options "$JAVA_OPTIONS" AnnotateIntervals \
+            "${{INTERVALS[@]}}" --reference "$REF" --output {{outputs.results}}/{{inputs.prefix}}.tsv \
+            "${{TRACKS[@]}}" --tmp-dir . $ARGS || exit 1
+    """,
+)
+
+# As upstream: HDF5 output unless args ask for `--format TSV`. The alignment
+# is linked beside its index; the reference (for CRAM) is optional.
+gatk4_collectreadcounts_cmd = shell.create(
+    name="gatk4_collectreadcounts",
+    image=GATK4_LITE_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={
+        "alignment": File,
+        "index": File,
+        "intervals": File,
+        "fasta": File | None,
+        "fai": File | None,
+        "dict": File | None,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
+        A=({{inputs.alignment}}); I=({{inputs.index}}); BED=({{inputs.intervals}})
+        shopt -s nullglob; FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); D=({{inputs.dict}}); shopt -u nullglob
+        ARGS={{inputs.args}}
+        EXTENSION=hdf5
+        if [[ "$ARGS" != *"--format HDF5"* && "$ARGS" == *"--format TSV"* ]]; then EXTENSION=tsv; fi
+        W=$(mktemp -d); cd "$W"
+        ALN=$(basename "${{A[0]}}"); IDX_EXT=bai; [[ "$ALN" == *.cram ]] && IDX_EXT=crai
+        ln -s "${{A[0]}}" "$ALN"; ln -s "${{I[0]}}" "$ALN.$IDX_EXT"
+        REFERENCE=()
+        if [ ${{#FA[@]}} -gt 0 ]; then
+            REF_FA="${{FA[0]}}"; REF_FAI="${{FAI[0]}}"; REF_DICT="${{D[0]}}"; REF_GZI=""
+            {LINK_REFERENCE}
+            REFERENCE=(--reference "$REF")
+        fi
+        gatk --java-options "$JAVA_OPTIONS" CollectReadCounts \
+            --input "$ALN" --intervals "${{BED[0]}}" --output {{outputs.results}}/{{inputs.prefix}}.$EXTENSION \
+            "${{REFERENCE[@]}}" --tmp-dir . $ARGS || exit 1
+    """,
+)
+
+# As upstream: annotations and read counts are each optional.
+gatk4_filterintervals_cmd = shell.create(
+    name="gatk4_filterintervals",
+    image=GATK4_LITE_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={
+        "intervals": File,
+        "read_counts": list[File],
+        "annotated_intervals": File | None,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
+        IN=({{inputs.intervals}})
+        shopt -s nullglob
+        COUNTS=({{inputs.read_counts}}); ANNOTATED=({{inputs.annotated_intervals}})
+        shopt -u nullglob
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        OPTIONAL=()
+        if [ ${{#ANNOTATED[@]}} -gt 0 ]; then OPTIONAL+=(--annotated-intervals "${{ANNOTATED[0]}}"); fi
+        for c in "${{COUNTS[@]}}"; do OPTIONAL+=(--input "$c"); done
+        gatk --java-options "$JAVA_OPTIONS" FilterIntervals \
+            "${{OPTIONAL[@]}}" --intervals "${{IN[0]}}" --output {{outputs.results}}/{{inputs.prefix}}.interval_list \
+            $ARGS || exit 1
+    """,
+)
+
+gatk4_createreadcountpanelofnormals_cmd = shell.create(
+    name="gatk4_createreadcountpanelofnormals",
+    image=GATK4_MAIN_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"counts": list[File], "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
+        COUNTS=({{inputs.counts}})
+        ARGS={{inputs.args}}
+        INPUTS=(); for c in "${{COUNTS[@]}}"; do INPUTS+=(--input "$c"); done
+        W=$(mktemp -d); cd "$W"
+        gatk --java-options "$JAVA_OPTIONS" CreateReadCountPanelOfNormals \
+            $ARGS "${{INPUTS[@]}}" --output {{outputs.results}}/{{inputs.prefix}}.hdf5 || exit 1
+    """,
+)
+
+# The gCNV tools' python kernel compiles into, and caches under, the working
+# directory, and its BLAS/OpenMP threads follow the task's CPUs, as upstream.
+GCNV_ENVIRONMENT = r"""
+        export THEANO_FLAGS="base_compiledir=$PWD"
+        export PYTENSOR_FLAGS="base_compiledir=$PWD"
+        export MPLCONFIGDIR="$PWD"
+        export XDG_CACHE_HOME="$PWD"
+        export OMP_NUM_THREADS=$TASK_CPUS
+        export MKL_NUM_THREADS=$TASK_CPUS
+"""
+
+# As upstream: the counts are --inputs, and the intervals, excluded intervals,
+# ploidy priors and a model (case mode) are optional. Writes <prefix>-calls
+# and, in cohort mode, <prefix>-model.
+gatk4_determinegermlinecontigploidy_cmd = shell.create(
+    name="gatk4_determinegermlinecontigploidy",
+    image=GATK4_GCNV_IMAGE,
+    resources=GCNV_RESOURCES,
+    inputs={
+        "counts": list[File],
+        "intervals": File | None,
+        "exclude_intervals": list[File],
+        "contig_ploidy_priors": File | None,
+        "model": Dir | None,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
+        COUNTS=({{inputs.counts}})
+        shopt -s nullglob
+        BED=({{inputs.intervals}}); EXCLUDE=({{inputs.exclude_intervals}}); PRIORS=({{inputs.contig_ploidy_priors}})
+        shopt -u nullglob
+        MODEL={{inputs.model}}
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        W=$(mktemp -d); cd "$W"
+        {GCNV_ENVIRONMENT}
+        INPUTS=(); for c in "${{COUNTS[@]}}"; do INPUTS+=(--input "$c"); done
+        OPTIONAL=()
+        if [ ${{#BED[@]}} -gt 0 ]; then OPTIONAL+=(--intervals "${{BED[0]}}"); fi
+        for e in "${{EXCLUDE[@]}}"; do OPTIONAL+=(--exclude-intervals "$e"); done
+        if [ ${{#PRIORS[@]}} -gt 0 ]; then OPTIONAL+=(--contig-ploidy-priors "${{PRIORS[0]}}"); fi
+        if [ -d "$MODEL" ]; then OPTIONAL+=(--model "$MODEL"); fi
+        gatk --java-options "$JAVA_OPTIONS" DetermineGermlineContigPloidy \
+            "${{INPUTS[@]}}" --output ./ --output-prefix "$P" "${{OPTIONAL[@]}}" --tmp-dir . $ARGS || exit 1
+        mv "$P-calls" "$OUT/"
+        if [ -d "$P-model" ]; then mv "$P-model" "$OUT/"; fi
+    """,
+)
+
+# As upstream: without a model (cohort mode) the output is
+# <prefix>-cnv-model/{<prefix>-calls,<prefix>-model}; with one (case mode) it
+# is <prefix>-cnv-calls/<prefix>-calls.
+gatk4_germlinecnvcaller_cmd = shell.create(
+    name="gatk4_germlinecnvcaller",
+    image=GATK4_GCNV_IMAGE,
+    resources=GCNV_RESOURCES,
+    inputs={
+        "counts": list[File],
+        "intervals": File | None,
+        "contig_ploidy_calls": Dir | None,
+        "model": Dir | None,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
+        COUNTS=({{inputs.counts}})
+        shopt -s nullglob; BED=({{inputs.intervals}}); shopt -u nullglob
+        PLOIDY={{inputs.contig_ploidy_calls}}
+        MODEL={{inputs.model}}
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        W=$(mktemp -d); cd "$W"
+        {GCNV_ENVIRONMENT}
+        INPUTS=(); for c in "${{COUNTS[@]}}"; do INPUTS+=(--input "$c"); done
+        PLOIDY_CALLS=(); if [ -d "$PLOIDY" ]; then PLOIDY_CALLS=(--contig-ploidy-calls "$PLOIDY"); fi
+        OUTPUT_DIR="$P-cnv-model"; MODEL_ARGS=()
+        if [ -d "$MODEL" ]; then OUTPUT_DIR="$P-cnv-calls"; MODEL_ARGS=(--model "$MODEL"); fi
+        INTERVALS=(); if [ ${{#BED[@]}} -gt 0 ]; then INTERVALS=(--intervals "${{BED[0]}}"); fi
+        gatk --java-options "$JAVA_OPTIONS" GermlineCNVCaller \
+            "${{INPUTS[@]}}" "${{PLOIDY_CALLS[@]}}" --output "$OUTPUT_DIR" --output-prefix "$P" \
+            $ARGS "${{INTERVALS[@]}}" "${{MODEL_ARGS[@]}}" || exit 1
+        mv "$OUTPUT_DIR" "$OUT/"
+    """,
+)
+
+# Unpacks the GenomicsDB workspace archive $WORKSPACE_TAR (one top-level
+# directory) into the working directory; sets WS to the directory's name.
+UNPACK_WORKSPACE = r"""
+        mkdir workspace_unpacked; tar -xzf "$WORKSPACE_TAR" -C workspace_unpacked
+        WS_DIRS=(workspace_unpacked/*)
+        if [ ${#WS_DIRS[@]} -ne 1 ] || [ ! -d "${WS_DIRS[0]}" ]; then
+            echo "the GenomicsDB archive must hold one workspace directory" >&2; exit 1
+        fi
+        WS=$(basename "${WS_DIRS[0]}"); mv "${WS_DIRS[0]}" "$WS"; rmdir workspace_unpacked
+"""
+
+# As upstream, three modes: `create` imports the GVCFs (or a sample-name map)
+# into a new workspace <prefix> over the intervals (a file, else a value);
+# `interval_list` writes an existing workspace's intervals to
+# <prefix>.interval_list; `update` adds the GVCFs to an existing workspace.
+# Workspaces go in and out as .tar.gz archives of their directory.
+gatk4_genomicsdbimport_cmd = shell.create(
+    name="gatk4_genomicsdbimport",
+    image=GATK4_LITE_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={
+        "vcfs": list[File],
+        "tbis": list[File],
+        "sample_name_map": File | None,
+        "intervals": File | None,
+        "interval_value": str,
+        "workspace": File | None,
+        "mode": str,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"interval_value": "", "args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
+        shopt -s nullglob
+        VCFS=({{inputs.vcfs}}); TBIS=({{inputs.tbis}}); NAME_MAP=({{inputs.sample_name_map}})
+        BED=({{inputs.intervals}}); WORKSPACE=({{inputs.workspace}})
+        shopt -u nullglob
+        MODE={{inputs.mode}}; P={{inputs.prefix}}; INTERVAL_VALUE={{inputs.interval_value}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        W=$(mktemp -d); cd "$W"
+        if [ ${{#WORKSPACE[@]}} -gt 0 ]; then
+            WORKSPACE_TAR="${{WORKSPACE[0]}}"
+            {UNPACK_WORKSPACE}
+        fi
+        INPUTS=()
+        if [ ${{#NAME_MAP[@]}} -gt 0 ]; then
+            INPUTS=(--sample-name-map "${{NAME_MAP[0]}}")
+        else
+            for v in "${{VCFS[@]}}"; do ln -s "$v" "$(basename "$v")"; INPUTS+=(--variant "$(basename "$v")"); done
+            for t in "${{TBIS[@]}}"; do ln -s "$t" "$(basename "$t")"; done
+        fi
+        case "$MODE" in
+            create)
+                TARGET=(--genomicsdb-workspace-path "$P")
+                INTERVALS=(--intervals "$INTERVAL_VALUE")
+                if [ ${{#BED[@]}} -gt 0 ]; then INTERVALS=(--intervals "${{BED[0]}}"); fi
+                ;;
+            interval_list)
+                TARGET=(--genomicsdb-update-workspace-path "$WS")
+                INTERVALS=(--output-interval-list-to-file "$P.interval_list")
+                ;;
+            update)
+                TARGET=(--genomicsdb-update-workspace-path "$WS"); INTERVALS=()
+                ;;
+            *)
+                echo "unknown mode $MODE" >&2; exit 1
+                ;;
+        esac
+        gatk --java-options "$JAVA_OPTIONS" GenomicsDBImport \
+            "${{INPUTS[@]}}" "${{TARGET[@]}}" "${{INTERVALS[@]}}" --tmp-dir . $ARGS || exit 1
+        case "$MODE" in
+            create) tar -czf "$OUT/$P.tar.gz" "$P" ;;
+            interval_list) mv "$P.interval_list" "$OUT/" ;;
+            update) tar -czf "$OUT/$WS.tar.gz" "$WS" ;;
+        esac
+    """,
+)
+
+# As upstream: the workspace (a .tar.gz of its directory) is read through
+# gendb://, and the reference is linked beside its .fai and .dict.
+gatk4_createsomaticpanelofnormals_cmd = shell.create(
+    name="gatk4_createsomaticpanelofnormals",
+    image=GATK4_LITE_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"genomicsdb": File, "fasta": File, "fai": File, "dict": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
+        DB=({{inputs.genomicsdb}}); FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); D=({{inputs.dict}})
+        REF_FA="${{FA[0]}}"; REF_FAI="${{FAI[0]}}"; REF_DICT="${{D[0]}}"; REF_GZI=""
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        WORKSPACE_TAR="${{DB[0]}}"
+        {UNPACK_WORKSPACE}
+        {LINK_REFERENCE}
+        gatk --java-options "$JAVA_OPTIONS" CreateSomaticPanelOfNormals \
+            --variant "gendb://$WS" --output {{outputs.results}}/{{inputs.prefix}}.vcf.gz --reference "$REF" \
+            --tmp-dir . $ARGS || exit 1
+    """,
+)
+
+# GATK writes the index beside the feature file, so the file is linked into
+# the working directory under its own name first.
+gatk4_indexfeaturefile_cmd = shell.create(
+    name="gatk4_indexfeaturefile",
+    image=GATK4_LITE_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"feature_file": File, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
+        IN=({{inputs.feature_file}})
+        NAME=$(basename "${{IN[0]}}")
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        ln -s "${{IN[0]}}" "$NAME"
+        gatk --java-options "$JAVA_OPTIONS" IndexFeatureFile --input "$NAME" --tmp-dir . $ARGS || exit 1
+        INDICES=(); for EXT in tbi idx; do if [ -e "$NAME.$EXT" ]; then INDICES+=("$NAME.$EXT"); fi; done
+        if [ ${{#INDICES[@]}} -eq 0 ]; then echo "IndexFeatureFile wrote no index" >&2; exit 1; fi
+        mv "${{INDICES[@]}}" {{outputs.results}}/
+    """,
+)
+
+# As upstream: the lists go to <prefix>/<nnnn>-scattered.interval_list; the
+# reference (with its .fai and .dict beside it) is optional.
+gatk4_splitintervals_cmd = shell.create(
+    name="gatk4_splitintervals",
+    image=GATK4_LITE_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={
+        "intervals": File,
+        "fasta": File | None,
+        "fai": File | None,
+        "dict": File | None,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
+        IN=({{inputs.intervals}})
+        shopt -s nullglob; FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); D=({{inputs.dict}}); shopt -u nullglob
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        REFERENCE=()
+        if [ ${{#FA[@]}} -gt 0 ]; then
+            REF_FA="${{FA[0]}}"; REF_FAI="${{FAI[0]}}"; REF_DICT="${{D[0]}}"; REF_GZI=""
+            {LINK_REFERENCE}
+            REFERENCE=(--reference "$REF")
+        fi
+        gatk --java-options "$JAVA_OPTIONS" SplitIntervals \
+            --output "$P" --intervals "${{IN[0]}}" "${{REFERENCE[@]}}" --tmp-dir . $ARGS || exit 1
+        mv "$P" {{outputs.results}}/
+    """,
+)
+
+# One image per environment: MarkDuplicates', CNNScoreVariants', the lite tools', IntervalListTools', the full
+# GATK's and the gCNV tools' differ, so `env` has seven.
 gatk4_env = flyte.TaskEnvironment.from_task(
     "gatk4_tools",
     gatk4_createsequencedictionary_cmd.as_task(),
@@ -735,11 +1221,31 @@ gatk4_lite_env = flyte.TaskEnvironment.from_task(
     gatk4_variantfiltration_cmd.as_task(),
     gatk4_combinegvcfs_cmd.as_task(),
     gatk4_splitncigarreads_cmd.as_task(),
+    gatk4_preprocessintervals_cmd.as_task(),
+    gatk4_annotateintervals_cmd.as_task(),
+    gatk4_collectreadcounts_cmd.as_task(),
+    gatk4_filterintervals_cmd.as_task(),
+    gatk4_genomicsdbimport_cmd.as_task(),
+    gatk4_createsomaticpanelofnormals_cmd.as_task(),
+    gatk4_indexfeaturefile_cmd.as_task(),
+    gatk4_splitintervals_cmd.as_task(),
 )
 gatk4_lite_python_env = flyte.TaskEnvironment.from_task("gatk4_lite_python", gatk4_intervallisttools_cmd.as_task())
+gatk4_main_env = flyte.TaskEnvironment.from_task("gatk4_main", gatk4_createreadcountpanelofnormals_cmd.as_task())
+gatk4_gcnv_env = flyte.TaskEnvironment.from_task(
+    "gatk4_gcnv", gatk4_determinegermlinecontigploidy_cmd.as_task(), gatk4_germlinecnvcaller_cmd.as_task()
+)
 env = flyte.TaskEnvironment(
     name="gatk4",
-    depends_on=[gatk4_env, gatk4_samtools_env, gatk4_cnn_env, gatk4_lite_env, gatk4_lite_python_env],
+    depends_on=[
+        gatk4_env,
+        gatk4_samtools_env,
+        gatk4_cnn_env,
+        gatk4_lite_env,
+        gatk4_lite_python_env,
+        gatk4_main_env,
+        gatk4_gcnv_env,
+    ],
 )
 
 
@@ -1155,3 +1661,303 @@ async def gatk4_splitncigarreads(
         bam=bam, bai=bai, intervals=intervals, fasta=fasta, fai=fai, dict=dict, prefix=prefix, args=args
     )
     return await only_file(results, f"{prefix}.bam", "SplitNCigarReads")
+
+
+async def gatk4_preprocessintervals(
+    fasta: File,
+    fai: File,
+    dict: File,
+    prefix: str,
+    intervals: File | None = None,
+    exclude_intervals: File | None = None,
+    args: str = "",
+) -> File:
+    """``<prefix>.interval_list``: the reference (or ``intervals`` of it) padded and binned for read counting."""
+    results = await gatk4_preprocessintervals_cmd(
+        fasta=fasta,
+        fai=fai,
+        dict=dict,
+        intervals=intervals,
+        exclude_intervals=exclude_intervals,
+        prefix=prefix,
+        args=args,
+    )
+    return await only_file(results, f"{prefix}.interval_list", "PreprocessIntervals")
+
+
+async def gatk4_annotateintervals(
+    intervals: list[File],
+    fasta: File,
+    fai: File,
+    dict: File,
+    prefix: str,
+    mappable_regions: File | None = None,
+    mappable_regions_tbi: File | None = None,
+    segmental_duplication_regions: File | None = None,
+    segmental_duplication_regions_tbi: File | None = None,
+    args: str = "",
+) -> File:
+    """``<prefix>.tsv``: ``intervals`` annotated with GC content, and mappability and segmental duplication if given.
+
+    The tracks are bgzipped BEDs with their ``.tbi``.
+    """
+    results = await gatk4_annotateintervals_cmd(
+        intervals=intervals,
+        fasta=fasta,
+        fai=fai,
+        dict=dict,
+        mappable_regions=mappable_regions,
+        mappable_regions_tbi=mappable_regions_tbi,
+        segmental_duplication_regions=segmental_duplication_regions,
+        segmental_duplication_regions_tbi=segmental_duplication_regions_tbi,
+        prefix=prefix,
+        args=args,
+    )
+    return await only_file(results, f"{prefix}.tsv", "AnnotateIntervals")
+
+
+async def gatk4_collectreadcounts(
+    alignment: File,
+    index: File,
+    intervals: File,
+    prefix: str,
+    fasta: File | None = None,
+    fai: File | None = None,
+    dict: File | None = None,
+    args: str = "",
+) -> File:
+    """Read counts of ``alignment`` (BAM/CRAM) per interval: ``<prefix>.hdf5``, or ``<prefix>.tsv`` with
+    ``args`` ``--format TSV``.
+
+    A CRAM needs ``fasta`` with its ``fai`` and ``dict``.
+    """
+    if fasta is not None and (fai is None or dict is None):
+        raise ValueError("the reference fasta needs its fai and dict")
+    results = await gatk4_collectreadcounts_cmd(
+        alignment=alignment,
+        index=index,
+        intervals=intervals,
+        fasta=fasta,
+        fai=fai,
+        dict=dict,
+        prefix=prefix,
+        args=args,
+    )
+    extension = "tsv" if "--format TSV" in args and "--format HDF5" not in args else "hdf5"
+    return await only_file(results, f"{prefix}.{extension}", "CollectReadCounts")
+
+
+async def gatk4_filterintervals(
+    intervals: File,
+    prefix: str,
+    read_counts: list[File] | None = None,
+    annotated_intervals: File | None = None,
+    args: str = "",
+) -> File:
+    """``<prefix>.interval_list``: ``intervals`` filtered by their annotations and/or the samples' read counts."""
+    results = await gatk4_filterintervals_cmd(
+        intervals=intervals,
+        read_counts=read_counts or [],
+        annotated_intervals=annotated_intervals,
+        prefix=prefix,
+        args=args,
+    )
+    return await only_file(results, f"{prefix}.interval_list", "FilterIntervals")
+
+
+async def gatk4_createreadcountpanelofnormals(counts: list[File], prefix: str, args: str = "") -> File:
+    """``<prefix>.hdf5``: a panel of normals for somatic CNV calling, from normals' read counts.
+
+    Counts are staged under their own names, so they must be distinct.
+    """
+    results = await gatk4_createreadcountpanelofnormals_cmd(counts=counts, prefix=prefix, args=args)
+    return await only_file(results, f"{prefix}.hdf5", "CreateReadCountPanelOfNormals")
+
+
+def subdir(results: Dir, name: str) -> Dir:
+    return Dir.from_existing_remote(results.path.rstrip("/") + f"/{name}")
+
+
+async def has_subdir(results: Dir, name: str) -> bool:
+    prefix = results.path.rstrip("/") + f"/{name}/"
+    return any([f async for f in results.walk() if f.path.startswith(prefix)])
+
+
+@dataclass
+class ContigPloidyResult:
+    calls: Dir  # <prefix>-calls: SAMPLE_<n>/ per input, in input order
+    model: Dir | None  # <prefix>-model, in cohort mode (no model given)
+
+
+async def gatk4_determinegermlinecontigploidy(
+    counts: list[File],
+    prefix: str,
+    intervals: File | None = None,
+    exclude_intervals: list[File] | None = None,
+    contig_ploidy_priors: File | None = None,
+    model: Dir | None = None,
+    args: str = "",
+) -> ContigPloidyResult:
+    """Contig ploidy calls for the samples' read counts, and (cohort mode, no ``model``) the fitted model.
+
+    ``contig_ploidy_priors`` is required in cohort mode; case mode takes a
+    cohort's ``model`` instead.
+    """
+    results = await gatk4_determinegermlinecontigploidy_cmd(
+        counts=counts,
+        intervals=intervals,
+        exclude_intervals=exclude_intervals or [],
+        contig_ploidy_priors=contig_ploidy_priors,
+        model=model,
+        prefix=prefix,
+        args=args,
+    )
+    model_out = subdir(results, f"{prefix}-model") if await has_subdir(results, f"{prefix}-model") else None
+    return ContigPloidyResult(calls=subdir(results, f"{prefix}-calls"), model=model_out)
+
+
+@dataclass
+class GermlineCnvResult:
+    calls: Dir  # <prefix>-calls: SAMPLE_<n>/ per input, plus the run's configs
+    model: Dir | None  # <prefix>-model, in cohort mode (no model given)
+
+
+async def gatk4_germlinecnvcaller(
+    counts: list[File],
+    prefix: str,
+    intervals: File | None = None,
+    contig_ploidy_calls: Dir | None = None,
+    model: Dir | None = None,
+    args: str = "",
+) -> GermlineCnvResult:
+    """Germline CNV calls for the samples' read counts and, in cohort mode (no ``model``), the cohort model.
+
+    ``contig_ploidy_calls`` come from :func:`gatk4_determinegermlinecontigploidy`.
+    Cohort mode needs ``--run-mode COHORT`` in ``args`` and ``intervals``;
+    case mode ``--run-mode CASE`` and a cohort's ``model``.
+    """
+    results = await gatk4_germlinecnvcaller_cmd(
+        counts=counts,
+        intervals=intervals,
+        contig_ploidy_calls=contig_ploidy_calls,
+        model=model,
+        prefix=prefix,
+        args=args,
+    )
+    if model is not None:
+        return GermlineCnvResult(calls=subdir(results, f"{prefix}-cnv-calls/{prefix}-calls"), model=None)
+    return GermlineCnvResult(
+        calls=subdir(results, f"{prefix}-cnv-model/{prefix}-calls"),
+        model=subdir(results, f"{prefix}-cnv-model/{prefix}-model"),
+    )
+
+
+async def gatk4_genomicsdbimport(
+    vcfs: list[File],
+    tbis: list[File],
+    prefix: str,
+    intervals: File | None = None,
+    interval_value: str = "",
+    sample_name_map: File | None = None,
+    args: str = "",
+) -> File:
+    """``<prefix>.tar.gz``: a new GenomicsDB workspace ``<prefix>/`` of the GVCFs over the intervals.
+
+    The intervals are a file, else ``interval_value`` (e.g. ``chr22``). With
+    ``sample_name_map`` the GVCFs come from the map instead of ``vcfs``.
+    GVCFs are paired with their ``.tbi`` by name, so the names must be
+    distinct.
+    """
+    if intervals is None and not interval_value:
+        raise ValueError("GenomicsDBImport needs intervals or an interval_value")
+    results = await gatk4_genomicsdbimport_cmd(
+        vcfs=vcfs,
+        tbis=tbis,
+        sample_name_map=sample_name_map,
+        intervals=intervals,
+        interval_value=interval_value,
+        workspace=None,
+        mode="create",
+        prefix=prefix,
+        args=args,
+    )
+    return await only_file(results, f"{prefix}.tar.gz", "GenomicsDBImport")
+
+
+async def gatk4_genomicsdbimport_update(
+    workspace: File,
+    vcfs: list[File],
+    tbis: list[File],
+    sample_name_map: File | None = None,
+    args: str = "",
+) -> File:
+    """``workspace`` (a ``.tar.gz`` of a GenomicsDB workspace) with the GVCFs added: ``<workspace dir>.tar.gz``."""
+    results = await gatk4_genomicsdbimport_cmd(
+        vcfs=vcfs,
+        tbis=tbis,
+        sample_name_map=sample_name_map,
+        intervals=None,
+        interval_value="",
+        workspace=workspace,
+        mode="update",
+        prefix="",
+        args=args,
+    )
+    return await only_file(results, ".tar.gz", "GenomicsDBImport")
+
+
+async def gatk4_genomicsdbimport_interval_list(workspace: File, prefix: str, args: str = "") -> File:
+    """``<prefix>.interval_list``: the intervals of ``workspace`` (a ``.tar.gz`` of a GenomicsDB workspace)."""
+    results = await gatk4_genomicsdbimport_cmd(
+        vcfs=[],
+        tbis=[],
+        sample_name_map=None,
+        intervals=None,
+        interval_value="",
+        workspace=workspace,
+        mode="interval_list",
+        prefix=prefix,
+        args=args,
+    )
+    return await only_file(results, f"{prefix}.interval_list", "GenomicsDBImport")
+
+
+async def gatk4_createsomaticpanelofnormals(
+    genomicsdb: File, fasta: File, fai: File, dict: File, prefix: str, args: str = ""
+) -> IndexedVcf:
+    """``<prefix>.vcf.gz`` (+ ``.tbi``): a Mutect2 panel of normals from ``genomicsdb``.
+
+    ``genomicsdb`` is a ``.tar.gz`` of a GenomicsDB workspace of normals'
+    Mutect2 calls (as :func:`gatk4_genomicsdbimport` writes).
+    """
+    results = await gatk4_createsomaticpanelofnormals_cmd(
+        genomicsdb=genomicsdb, fasta=fasta, fai=fai, dict=dict, prefix=prefix, args=args
+    )
+    return await vcf_and_index(results, f"{prefix}.vcf.gz", "CreateSomaticPanelOfNormals")
+
+
+async def gatk4_indexfeaturefile(feature_file: File, args: str = "") -> File:
+    """The index of ``feature_file`` (VCF, BED, ...): ``<name>.tbi`` if bgzipped, else ``<name>.idx``."""
+    results = await gatk4_indexfeaturefile_cmd(feature_file=feature_file, args=args)
+    indices = [f async for f in results.walk() if f.path.endswith((".tbi", ".idx"))]
+    if len(indices) != 1:
+        raise FileNotFoundError(f"GATK IndexFeatureFile wrote {len(indices)} indices, expected one")
+    return indices[0]
+
+
+async def gatk4_splitintervals(
+    intervals: File,
+    prefix: str,
+    fasta: File | None = None,
+    fai: File | None = None,
+    dict: File | None = None,
+    args: str = "",
+) -> list[File]:
+    """``intervals`` split as ``args`` say (e.g. ``--scatter-count 2``): the ``<nnnn>-scattered.interval_list``s."""
+    if fasta is not None and (fai is None or dict is None):
+        raise ValueError("the reference fasta needs its fai and dict")
+    results = await gatk4_splitintervals_cmd(
+        intervals=intervals, fasta=fasta, fai=fai, dict=dict, prefix=prefix, args=args
+    )
+    lists = [f async for f in results.walk() if f.path.endswith(".interval_list")]
+    return sorted(lists, key=lambda f: f.name)
