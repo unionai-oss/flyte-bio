@@ -1,13 +1,31 @@
 [project]
 name = "flyte-bio"
-version = "0.0.1"
+version = "0.1.0"
 description = "The Flyte 2 open-source library for biology: ~900 containerized scientific tools and end-to-end workflows, ready for scientists and AI agents"
 readme = "README.md"
 authors = [{ name = "Kyle Hazen", email = "kyle@union.ai" }]
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
+keywords = ["flyte", "biology", "bioinformatics", "genomics", "single-cell", "workflows", "ai-agents"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
 dependencies = [
     "flyte>=2.13.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/unionai-oss/flyte-bio"
+Documentation = "https://github.com/unionai-oss/flyte-bio/tree/main/docs"
+Repository = "https://github.com/unionai-oss/flyte-bio"
+Issues = "https://github.com/unionai-oss/flyte-bio/issues"
 
 [project.optional-dependencies]
 # flyte_bio.config: OmegaConf configs as task inputs. Hydra (`flyte hydra

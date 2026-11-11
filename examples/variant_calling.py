@@ -42,10 +42,9 @@ from flyte_bio import env as bio_env
 from flyte_bio.config import run_pipeline
 from flyte_bio.pipelines.variant_calling import variant_calling
 
-# flyte-bio isn't on PyPI yet: install it from GitHub. To run your local
-# checkout instead, use `.with_uv_project("pyproject.toml",
+# To run your local checkout instead, use `.with_uv_project("pyproject.toml",
 # project_install_mode="install_project")` from the repo root.
-FLYTE_BIO = "flyte-bio[config] @ https://github.com/unionai-oss/flyte-bio/archive/refs/heads/main.zip"
+FLYTE_BIO = "flyte-bio[config]"
 
 env = flyte.TaskEnvironment(
     name="variant_calling_example",

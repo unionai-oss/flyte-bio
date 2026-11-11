@@ -20,10 +20,8 @@ agent is reproducible from the first run.
 
 ## Install
 
-flyte-bio isn't on PyPI yet. Install it from GitHub:
-
 ```bash
-uv add "flyte-bio @ https://github.com/unionai-oss/flyte-bio/archive/refs/heads/main.zip"
+uv add flyte-bio        # or: pip install flyte-bio
 ```
 
 It needs `flyte>=2.13.1`. Two extras configure workflows from YAML files
@@ -47,11 +45,9 @@ import flyte
 
 from flyte_bio import env as bio_env
 
-FLYTE_BIO = "flyte-bio @ https://github.com/unionai-oss/flyte-bio/archive/refs/heads/main.zip"
-
 env = flyte.TaskEnvironment(
     name="my_analysis",
-    image=flyte.Image.from_debian_base().with_pip_packages(FLYTE_BIO),
+    image=flyte.Image.from_debian_base().with_pip_packages("flyte-bio"),
     resources=flyte.Resources(cpu=2, memory="4Gi"),
     depends_on=[bio_env],
 )
