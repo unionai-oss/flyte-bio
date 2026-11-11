@@ -52,8 +52,9 @@ async def rundbcan_archive_entries(archive: File) -> list[str]:
 async def test_rundbcan_database() -> None:
     archive = await rundbcan_database()
     assert archive.name == "dbcan_db.tar.gz", f"database archive is {archive.name}"
-    # The database is a few GiB: list it in a pod with room for it.
-    lister = rundbcan_archive_entries.override(resources=flyte.Resources(cpu=1, memory="2Gi", disk="20Gi"))
+    # The database is a few GiB: list it in a pod with room for it (downloading it
+    # needs more than 2Gi of memory).
+    lister = rundbcan_archive_entries.override(resources=flyte.Resources(cpu=1, memory="8Gi", disk="20Gi"))
     entries = await lister(archive=archive)
     assert entries == DATABASE_ENTRIES, f"dbcan_db holds {entries}"
 

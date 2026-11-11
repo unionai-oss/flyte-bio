@@ -37,7 +37,7 @@ from flyte_bio.limits import TASK_LIMITS
 HIFIASM_IMAGE = "quay.io/biocontainers/hifiasm:0.25.0--h5ca1c30_0"
 
 # Upstream's label asks for 12 CPUs and 72 GB. These defaults fit the test
-# data and small genomes; raise them with hifiasm_cmd.as_task().override(...)
+# data and small genomes; raise them with hifiasm_cmd.override(...)
 # for real assemblies. The 4 CPUs match upstream's test CPUs.
 DEFAULT_RESOURCES = flyte.Resources(cpu=4, memory="16Gi")
 

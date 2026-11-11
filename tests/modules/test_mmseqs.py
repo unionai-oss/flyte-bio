@@ -105,7 +105,7 @@ async def test_mmseqs_createdb_gzipped_proteome() -> None:
 
 def two_cpu_task(cmd):
     # The cache key ignores resources, so salt it to keep the 2-CPU run apart from a default one.
-    return cmd.as_task().override(resources=TWO_CPUS, cache=flyte.Cache(behavior="auto", salt="cpu=2"))
+    return cmd.override(resources=TWO_CPUS, cache=flyte.Cache(behavior="auto", salt="cpu=2"))
 
 
 @env.task

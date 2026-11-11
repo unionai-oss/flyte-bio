@@ -54,7 +54,7 @@ async def run_trinity(reads: list[File], single_end: bool) -> TrinityResult:
     else:
         left, right = names[0::2], names[1::2]
     # The cache key ignores resources, so salt it to keep this run apart from a default one.
-    task = trinity_cmd.as_task().override(
+    task = trinity_cmd.override(
         resources=flyte.Resources(cpu=1, memory="15Gi"), cache=flyte.Cache(behavior="auto", salt="cpu=1,mem=15Gi")
     )
     results = await task(reads=reads, left=",".join(left), right=",".join(right), seq_type="fq", prefix="test", args="")

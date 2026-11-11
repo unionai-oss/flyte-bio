@@ -7,7 +7,7 @@ component), as upstream. ``args`` are extra ``aria2c`` options (for example
 checked (``--check-certificate=false``).
 
 The task is cached on the URL and ``args``, so a URL downloads once. Raise its
-disk with ``aria2_cmd.as_task().override(resources=...)`` for large files.
+disk with ``aria2_cmd.override(resources=...)`` for large files.
 """
 
 import flyte

@@ -30,7 +30,7 @@ from flyte_bio.limits import TASK_LIMITS
 # /opt/models; bioconda's build packages none).
 CLAIR3_IMAGE = "docker.io/hkubal/clair3:v2.0.0"
 # Upstream labels it process_high (12 CPUs, 72 GB); its tests ran on 4 CPUs.
-# A whole genome needs more: override with clair3_cmd.as_task().override(resources=...).
+# A whole genome needs more: override with clair3_cmd.override(resources=...).
 DEFAULT_RESOURCES = flyte.Resources(cpu=4, memory="16Gi", disk="20Gi")
 
 OUTPUT_NAMES = (

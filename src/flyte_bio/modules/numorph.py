@@ -18,7 +18,7 @@ directory is read from inside that directory.
 - :func:`numorph_3dunet` counts cell nuclei in stitched images with NuMorph's
   3D U-Net and a trained model (``.h5``), returning ``<sample>.csv`` (the
   centroids) and ``<sample>_counts.csv``. It uses the GPU when the task has
-  one (request one with ``numorph_3dunet_cmd.as_task().override(...)``) and
+  one (request one with ``numorph_3dunet_cmd.override(...)``) and
   otherwise runs on CPU. ``args`` passes extra options (``--chunk_size``,
   ``--pred_threshold``, ...). As upstream, it takes no parameter CSV.
 

@@ -39,7 +39,7 @@ CELLRANGER_IMAGE = "quay.io/nf-core/cellranger:10.1.0"
 NO_TELEMETRY = {"TENX_DISABLE_TELEMETRY": "1"}
 # Upstream's process_high asks for 12 CPUs and 72 GB; its tests run in 6 GB.
 # Real samples want 16-64 GiB (10x recommends 64 GB or more for vdj): raise
-# with <cmd>.as_task().override(resources=...).
+# with <cmd>.override(resources=...).
 MKVDJREF_RESOURCES = flyte.Resources(cpu=4, memory="8Gi", disk="20Gi")
 VDJ_RESOURCES = flyte.Resources(cpu=4, memory="16Gi", disk="50Gi")
 

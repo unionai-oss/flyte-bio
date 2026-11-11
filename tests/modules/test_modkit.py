@@ -134,7 +134,7 @@ async def test_modkit_repair() -> None:
         fixture(ARABIDOPSIS + "trimmed_ont_Col-0_tets_data_Chr1_5mb_7mb.bam"),
     )
     # The cache key ignores resources, so salt it to keep the 2-CPU run apart from a default one.
-    task = modkit_repair_cmd.as_task().override(
+    task = modkit_repair_cmd.override(
         resources=flyte.Resources(cpu=2, memory="8Gi"), cache=flyte.Cache(behavior="auto", salt="cpu=2")
     )
     results = await task(donor_bam=donor, acceptor_bam=acceptor, prefix="test", args="")

@@ -28,7 +28,7 @@ TWO_CPUS = {"resources": flyte.Resources(cpu=2, memory="8Gi"), "cache": flyte.Ca
 
 
 async def pbcpgtools_two_cpus(bam: File, bai: File) -> PbcpgtoolsResult:
-    task = pbcpgtools_alignedbamtocpgscores_cmd.as_task().override(**TWO_CPUS)
+    task = pbcpgtools_alignedbamtocpgscores_cmd.override(**TWO_CPUS)
     return await pbcpgtools_scores(await task(bam=bam, bai=bai, prefix="test", args=""), "test")
 
 

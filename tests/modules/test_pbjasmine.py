@@ -19,7 +19,7 @@ PACBIO_BAM = "genomics/homo_sapiens/pacbio/bam/NA03697B2_downsampled.pbmm2.repea
 async def test_pbjasmine() -> None:
     # upstream case: pbjasmine "homo_sapiens - bam"
     # The cache key ignores resources, so salt it to keep the 2-CPU run apart from a default one.
-    task = pbjasmine_cmd.as_task().override(
+    task = pbjasmine_cmd.override(
         resources=flyte.Resources(cpu=2, memory="8Gi"), cache=flyte.Cache(behavior="auto", salt="cpu=2")
     )
     results = await task(bam=await fixture(PACBIO_BAM), prefix="test_jasmine", args="")

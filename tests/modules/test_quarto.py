@@ -52,7 +52,7 @@ async def render_at_one_cpu(path: str, parameters: dict | None, args: str = "") 
     """quarto/notebook at 1 CPU, as upstream's tests pin it."""
     notebook = await fixture(path)
     input_files = [await fixture("generic/txt/hello.txt")] if parameters else []
-    task = quarto_notebook_cmd.as_task().override(
+    task = quarto_notebook_cmd.override(
         resources=flyte.Resources(cpu=1, memory="8Gi"), cache=flyte.Cache(behavior="auto", salt="cpu=1")
     )
     results = await task(

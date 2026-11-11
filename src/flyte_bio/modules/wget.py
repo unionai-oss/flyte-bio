@@ -5,7 +5,7 @@ Exposes :func:`wget`, which downloads ``url`` inside the task and returns it as
 extra ``wget`` options.
 
 The task is cached on the URL, the name and ``args``, so a URL downloads once.
-Raise its disk with ``wget_cmd.as_task().override(resources=...)`` for large
+Raise its disk with ``wget_cmd.override(resources=...)`` for large
 files.
 """
 

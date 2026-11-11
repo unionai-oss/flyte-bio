@@ -516,7 +516,7 @@ wheels = [
 
 [[package]]
 name = "flyte"
-version = "2.12.5"
+version = "2.13.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
@@ -543,7 +543,7 @@ dependencies = [
     { name = "toml" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/28/25/d73637ab7867e97024ba7643dd185706ed50668f1b0c178b88170e18d17c/flyte-2.12.5-py3-none-any.whl", hash = "sha256:56347afd79d0ef1647d39031a861df7477276b5ba40ff8ca60a5f5435d047896", size = 1239298, upload-time = "2026-11-05T17:39:37.333Z" },
+    { url = "https://files.pythonhosted.org/packages/57/56/5f08a2f2930e0d68630fa68d437501d2f0b4e0cdb54aca6f80826c9428f7/flyte-2.13.1-py3-none-any.whl", hash = "sha256:b81d60c396d0205a88485a97deed2c8e51e02d8cc92e09e49d746963bd8580a3", size = 1252268, upload-time = "2026-11-09T20:20:53.526Z" },
 ]
 
 [[package]]
@@ -573,9 +573,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "flyte", specifier = ">=2.12.5" },
-    { name = "flyteplugins-hydra", marker = "extra == 'hydra'", specifier = ">=2.12.5" },
-    { name = "flyteplugins-omegaconf", marker = "extra == 'config'", specifier = ">=2.12.5" },
+    { name = "flyte", specifier = ">=2.13.1" },
+    { name = "flyteplugins-hydra", marker = "extra == 'hydra'", specifier = ">=2.13.1" },
+    { name = "flyteplugins-omegaconf", marker = "extra == 'config'", specifier = ">=2.13.1" },
 ]
 provides-extras = ["config", "hydra"]
 
@@ -583,8 +583,8 @@ provides-extras = ["config", "hydra"]
 dev = [
     { name = "aiohttp" },
     { name = "anndata", specifier = ">=0.13.4" },
-    { name = "flyteplugins-hydra", specifier = ">=2.12.5" },
-    { name = "flyteplugins-omegaconf", specifier = ">=2.12.5" },
+    { name = "flyteplugins-hydra", specifier = ">=2.13.1" },
+    { name = "flyteplugins-omegaconf", specifier = ">=2.13.1" },
     { name = "requests" },
 ]
 
@@ -604,7 +604,7 @@ wheels = [
 
 [[package]]
 name = "flyteplugins-hydra"
-version = "2.12.5"
+version = "2.13.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "flyte" },
@@ -613,19 +613,19 @@ dependencies = [
     { name = "kubernetes" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/11/ec/ca29512a03d97b773e1df7b29f768c3c60a11c757b3fbdfa0addf11765dc/flyteplugins_hydra-2.12.5-py3-none-any.whl", hash = "sha256:ed396790d613bf7e2e5a653c74594c99c63dbc025a575e5016d4d8012a91e3dc", size = 21630, upload-time = "2026-11-05T17:33:43.656Z" },
+    { url = "https://files.pythonhosted.org/packages/94/01/68f8521c421a91a51346651e590e3f0938072dd390eda56752050841a141/flyteplugins_hydra-2.13.1-py3-none-any.whl", hash = "sha256:e27a0dd5f0218377bb7f3fa4d4bb3fb623e42c95832a70d97b33bdb769a97aa1", size = 21627, upload-time = "2026-11-09T20:15:57.01Z" },
 ]
 
 [[package]]
 name = "flyteplugins-omegaconf"
-version = "2.12.5"
+version = "2.13.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "flyte" },
     { name = "omegaconf" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c7/50/4aa857eda6a72e9741b1ea712a568837aa847552769f19c8835a77ef0a6e/flyteplugins_omegaconf-2.12.5-py3-none-any.whl", hash = "sha256:35a03ae06bac0647741b883e43b566e3cb3698eeeaa037b824c4bea47cc97d8c", size = 8714, upload-time = "2026-11-05T17:33:43.128Z" },
+    { url = "https://files.pythonhosted.org/packages/2e/38/cd47e8d59ec4ca470ae088a36a63c2b71fa42ff1198e21e96b4a99d4816e/flyteplugins_omegaconf-2.13.1-py3-none-any.whl", hash = "sha256:08dd7f4a6db80784e661c2c76f1090371c7dc0cb57301358e01327fb0f30887c", size = 8714, upload-time = "2026-11-09T20:15:59.947Z" },
 ]
 
 [[package]]

@@ -40,7 +40,7 @@ Conventions shared by every module:
   read from the container's limits when it runs (`flyte_bio.limits`), as
   upstream's are from `task.cpus` and `task.memory`. So a tool that runs with
   overridden resources uses them. A tool's task can be overridden
-  (`bwa.bwa_mem_cmd.as_task().override(resources=...)`), but the module
+  (`bwa.bwa_mem_cmd.override(resources=...)`), but the module
   functions don't take resources yet.
 - **Helper scripts are vendored unchanged.** Python, R and Perl helpers that a
   container doesn't include live in `flyte_bio.scripts` and are passed to the

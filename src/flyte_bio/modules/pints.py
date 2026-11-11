@@ -23,7 +23,7 @@ from flyte.io import Dir, File
 from flyte_bio.limits import TASK_LIMITS
 
 PINTS_IMAGE = "community.wave.seqera.io/library/pybedtools_bedtools_htslib_pip_pypints:39699b96998ec5f6"
-# Upstream's process_medium asks for more; raise with pints_caller_cmd.as_task().override(resources=...).
+# Upstream's process_medium asks for more; raise with pints_caller_cmd.override(resources=...).
 DEFAULT_RESOURCES = flyte.Resources(cpu=2, memory="8Gi")
 
 # A list[File] is staged under the files' names and globbed alphabetically, so

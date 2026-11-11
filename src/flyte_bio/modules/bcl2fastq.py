@@ -42,7 +42,7 @@ from flyte_bio.limits import TASK_LIMITS
 # Upstream's own build of Illumina's bcl2fastq.
 BCL2FASTQ_IMAGE = "quay.io/nf-core/bcl2fastq:2.20.0.422"
 # Upstream's process_high asks for 12 CPUs and 72 GB; raise for big runs with
-# bcl2fastq_cmd.as_task().override(resources=...).
+# bcl2fastq_cmd.override(resources=...).
 DEFAULT_RESOURCES = flyte.Resources(cpu=8, memory="16Gi", disk="50Gi")
 
 bcl2fastq_cmd = shell.create(

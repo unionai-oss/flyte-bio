@@ -38,7 +38,7 @@ from flyte_bio.limits import TASK_LIMITS
 # Upstream's own build of Illumina's BCL Convert.
 BCLCONVERT_IMAGE = "quay.io/nf-core/bclconvert:4.6.2"
 # Upstream's process_high asks for 12 CPUs and 72 GB; raise for big runs with
-# bclconvert_cmd.as_task().override(resources=...).
+# bclconvert_cmd.override(resources=...).
 DEFAULT_RESOURCES = flyte.Resources(cpu=8, memory="16Gi", disk="50Gi")
 
 bclconvert_cmd = shell.create(

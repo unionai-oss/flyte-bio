@@ -54,11 +54,11 @@ TWO_CPUS = {"resources": flyte.Resources(cpu=2, memory="8Gi"), "cache": flyte.Ca
 
 
 async def last_lastdb_two_cpus(fastx: File, prefix: str, args: str) -> Dir:
-    return await last_lastdb_cmd.as_task().override(**TWO_CPUS)(fastx=fastx, prefix=prefix, args=args)
+    return await last_lastdb_cmd.override(**TWO_CPUS)(fastx=fastx, prefix=prefix, args=args)
 
 
 async def last_train_two_cpus(fastx: File, index: Dir, prefix: str) -> LastTrainResult:
-    task = last_train_cmd.as_task().override(**TWO_CPUS)
+    task = last_train_cmd.override(**TWO_CPUS)
     results = await task(fastx=fastx, index=index, index_dir_name="lastdb", prefix=prefix, args="")
     param_file, multiqc = await asyncio.gather(
         results.get_file(f"{prefix}.train"), results.get_file(f"{prefix}.train.tsv")

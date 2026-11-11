@@ -60,7 +60,7 @@ from flyte_bio.limits import TASK_LIMITS
 DEEPVARIANT_IMAGE = "gcr.io/deepvariant-docker/deepvariant:1.10.0"
 # Upstream's label is process_high (12 CPUs, 72 GB). This is enough for the test
 # data; a whole genome needs far more CPUs (and memory to match) to finish in
-# reasonable time: override with deepvariant_rundeepvariant_cmd.as_task().override(resources=...).
+# reasonable time: override with deepvariant_rundeepvariant_cmd.override(resources=...).
 DEFAULT_RESOURCES = flyte.Resources(cpu=4, memory="16Gi", disk="20Gi")
 
 deepvariant_rundeepvariant_cmd = shell.create(

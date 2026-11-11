@@ -34,7 +34,7 @@ TRINITY_IMAGE = "quay.io/biocontainers/trinity:2.15.2--pl5321hdcf5f25_1"
 # Upstream labels Trinity process_high and process_high_memory (12 CPUs,
 # 200 GB). These defaults fit small assemblies such as the tests'; Trinity
 # wants roughly 1 GB of memory per million read pairs, so raise them with
-# trinity_cmd.as_task().override(resources=...) for real data.
+# trinity_cmd.override(resources=...) for real data.
 DEFAULT_RESOURCES = flyte.Resources(cpu=4, memory="16Gi")
 
 FASTA_NAME = re.compile(r"(.*fasta(.gz)?$)|(.*fa(.gz)?$)")

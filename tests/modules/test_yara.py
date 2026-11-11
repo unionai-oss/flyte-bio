@@ -56,7 +56,7 @@ async def check_bams(result: YaraMapperResult, expected: dict[str, str], label: 
 
 async def map_on_one_cpu(reads_1: File, reads_2: File | None, index: Dir) -> YaraMapperResult:
     # The cache key ignores resources, so salt it to keep the 1-CPU run apart from a default one.
-    task = yara_mapper_cmd.as_task().override(
+    task = yara_mapper_cmd.override(
         resources=flyte.Resources(cpu=1, memory="8Gi"), cache=flyte.Cache(behavior="auto", salt="cpu=1")
     )
     results = await task(reads_1=reads_1, reads_2=reads_2, index=index, prefix="test", args="")

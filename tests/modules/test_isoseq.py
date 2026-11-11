@@ -37,7 +37,7 @@ async def test_isoseq_refine() -> None:
         fixture(PACBIO + "bam/alz.ccs.fl.NEB_5p--NEB_Clontech_3p.bam"), fixture(PACBIO + "fasta/primers.fasta")
     )
     # The cache key ignores resources, so salt it to keep the 4-CPU run apart from another one.
-    task = isoseq_refine_cmd.as_task().override(
+    task = isoseq_refine_cmd.override(
         resources=flyte.Resources(cpu=4, memory="8Gi"), cache=flyte.Cache(behavior="auto", salt="cpu=4")
     )
     results = await task(bam=bam, primers=primers, prefix="test.refine", args="")

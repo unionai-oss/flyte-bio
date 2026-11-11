@@ -14,7 +14,7 @@ paired-end with ``reads_2``) against ``db``, a Dir holding the database's
 
 kraken2 loads the whole database into memory, so a real database (the
 standard one is tens of GiB) needs ``memory`` raised with
-``kraken2_cmd.as_task().override(resources=...)``; the default fits small
+``kraken2_cmd.override(resources=...)``; the default fits small
 databases like the test one.
 
 Building a custom database takes two steps, as upstream:

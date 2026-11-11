@@ -41,7 +41,7 @@ HOMER_IMAGE = (
     "community.wave.seqera.io/library/bioconductor-deseq2_bioconductor-edger_homer_samtools_pruned:a8f4c58755bb281b"
 )
 # Upstream's process_medium asks for more; HOMER on a test-sized genome needs little.
-# Raise with <cmd>.as_task().override(resources=...) for whole genomes.
+# Raise with <cmd>.override(resources=...) for whole genomes.
 DEFAULT_RESOURCES = flyte.Resources(cpu=2, memory="8Gi")
 
 # Shared by the commands that take a tag directory (and findPeaks' uniqmap):

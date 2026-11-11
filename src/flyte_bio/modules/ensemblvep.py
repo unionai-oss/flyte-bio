@@ -42,7 +42,7 @@ VEP_IMAGE = "community.wave.seqera.io/library/ensembl-vep_perl-math-cdf_htslib_g
 DOWNLOAD_ARGS = "--AUTO c --NO_BIOPERL --NO_HTSLIB --NO_TEST --NO_UPDATE"
 # Small caches (the C. elegans test one is about 50 MB) fit easily; the human
 # cache is a ~25 GB tarball that unpacks to more, so raise disk with
-# ensemblvep_download_cmd.as_task().override(resources=...).
+# ensemblvep_download_cmd.override(resources=...).
 DOWNLOAD_RESOURCES = flyte.Resources(cpu=1, memory="4Gi", disk="20Gi")
 # Upstream's label asks for 6 CPUs and 36 GB. Each VEP fork holds its share of
 # the cache in memory, so a human cache with many forks needs more memory.

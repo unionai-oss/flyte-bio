@@ -32,7 +32,7 @@ async def test_pbccs() -> None:
     # upstream case: pbccs "PacBio pbccs - Compute CSS test"
     bam, pbi = await asyncio.gather(fixture(PACBIO_BAM + "alz.bam"), fixture(PACBIO_BAM + "alz.bam.pbi"))
     # The cache key ignores resources, so salt it to keep the 4-CPU run apart from another one.
-    task = pbccs_cmd.as_task().override(
+    task = pbccs_cmd.override(
         resources=flyte.Resources(cpu=4, memory="8Gi"), cache=flyte.Cache(behavior="auto", salt="cpu=4")
     )
     results = await task(bam=bam, pbi=pbi, chunk_num=2, chunk_on=3, prefix="alz", args="--min-rq 0.9")

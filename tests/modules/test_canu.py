@@ -26,7 +26,7 @@ ARGS = (
 async def test_canu_hicanu() -> None:
     # upstream case: "test_hicanu"
     reads = await fixture("genomics/homo_sapiens/pacbio/fastq/test_hifi.fastq.gz")
-    task = canu_cmd.as_task().override(
+    task = canu_cmd.override(
         resources=flyte.Resources(cpu=1, memory="8Gi"), cache=flyte.Cache(behavior="auto", salt="cpu=1")
     )
     results = await task(reads=[reads], mode="-pacbio-hifi", genome_size="10k", prefix="test", args=ARGS)

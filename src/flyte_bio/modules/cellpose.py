@@ -15,7 +15,7 @@ at run time (into the task's working directory, as ``HOME`` in the container
 isn't writable). Pass a model file to use it with ``--pretrained_model``.
 Cellpose uses the GPU (``--use_gpu``) when the task has one, as upstream when
 the process has an accelerator; request one with
-``cellpose_cmd.as_task().override(resources=...)``. On CPU, PyTorch's threads
+``cellpose_cmd.override(resources=...)``. On CPU, PyTorch's threads
 follow the task's CPUs.
 """
 

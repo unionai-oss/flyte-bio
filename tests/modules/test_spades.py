@@ -110,7 +110,7 @@ async def test_spades_paired_end_hmm() -> None:
     reads = [await fixture(SISPA + "SRR11140744_R1.fastq.gz"), await fixture(SISPA + "SRR11140744_R2.fastq.gz")]
     hmm = await fixture("genomics/sarscov2/genome/proteome.hmm.gz")
     # The cache key ignores resources, so salt it to keep the 2-CPU run apart from a default one.
-    task = spades_cmd.as_task().override(
+    task = spades_cmd.override(
         resources=flyte.Resources(cpu=2, memory="16Gi"), cache=flyte.Cache(behavior="auto", salt="cpu=2")
     )
     results = await task(

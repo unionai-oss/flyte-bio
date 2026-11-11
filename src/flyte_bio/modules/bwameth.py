@@ -27,7 +27,7 @@ BWAMETH_IMAGE = "community.wave.seqera.io/library/bwameth:0.2.10--a589797f382631
 BWAMETH_SAMTOOLS_IMAGE = "community.wave.seqera.io/library/bwameth_samtools:1ff0dd4d9a699bdc"
 
 # Upstream labels both process_high. These defaults fit small genomes; raise
-# them with <cmd>.as_task().override(resources=...) for larger ones.
+# them with <cmd>.override(resources=...) for larger ones.
 DEFAULT_RESOURCES = flyte.Resources(cpu=4, memory="16Gi")
 
 bwameth_index_cmd = shell.create(

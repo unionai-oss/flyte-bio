@@ -31,7 +31,7 @@ from flyte_bio.limits import TASK_LIMITS
 CANU_IMAGE = "community.wave.seqera.io/library/canu_minimap2_samtools:995ba74386646698"
 
 # Upstream's label asks for 12 CPUs and 72 GB; these defaults fit bacterial
-# genomes. Raise them with canu_cmd.as_task().override(resources=...).
+# genomes. Raise them with canu_cmd.override(resources=...).
 DEFAULT_RESOURCES = flyte.Resources(cpu=4, memory="16Gi")
 
 MODES = ("-pacbio", "-nanopore", "-pacbio-hifi")

@@ -24,7 +24,7 @@ async def text(file: File) -> str:
 async def test_fastplong_pacbio() -> None:
     reads = await fixture("genomics/homo_sapiens/pacbio/fastq/alz.ccs.fastq.gz")
     # The cache key ignores resources, so salt it to keep the 2-CPU run apart from a default one.
-    task = fastplong_cmd.as_task().override(
+    task = fastplong_cmd.override(
         resources=flyte.Resources(cpu=2, memory="8Gi"), cache=flyte.Cache(behavior="auto", salt="cpu=2")
     )
     results = await task(

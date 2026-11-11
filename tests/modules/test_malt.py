@@ -35,10 +35,10 @@ BIG_DISK = flyte.Resources(cpu=1, memory="4Gi", disk="40Gi")
 async def malt_mapping_file(url: str, suffix: str) -> File:
     """Download and extract a zipped mapping file; returns the file ending in ``suffix``."""
     name = url.rsplit("/", maxsplit=1)[-1]
-    download = aria2_cmd.as_task().override(resources=BIG_DISK)
+    download = aria2_cmd.override(resources=BIG_DISK)
     downloaded = await (await download(source_url=url, file_name=name, args="-x 4")).get_file(name)
     assert downloaded is not None, f"aria2 downloaded no {name}"
-    extract = unzip_cmd.as_task().override(resources=BIG_DISK)
+    extract = unzip_cmd.override(resources=BIG_DISK)
     extracted = await extract(archive=downloaded, args="")
     files = [f async for f in extracted.walk(recursive=True) if f.name.endswith(suffix)]
     assert len(files) == 1, f"{name}: expected one *{suffix}, got {[f.name for f in files]}"

@@ -11,7 +11,7 @@ be writable. StarDist's options (``--n_tiles``, ``--prob_thresh``, ...) go in
 
 Upstream labels it process_gpu; the image carries CUDA libraries, and
 TensorFlow uses a GPU when the task has one (request one with
-``stardist_cmd.as_task().override(resources=...)``). On CPU, TensorFlow's
+``stardist_cmd.override(resources=...)``). On CPU, TensorFlow's
 threads follow the task's CPUs.
 """
 

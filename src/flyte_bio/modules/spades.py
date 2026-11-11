@@ -30,7 +30,7 @@ SPADES_IMAGE = "community.wave.seqera.io/library/spades:4.1.0--77799c52e1d1054a"
 
 # Upstream's label asks for 12 CPUs and 72 GB. These defaults fit viral and
 # small bacterial assemblies; raise them with
-# spades_cmd.as_task().override(resources=...) for larger genomes or
+# spades_cmd.override(resources=...) for larger genomes or
 # metagenomes. The 4 CPUs match upstream's tests.
 DEFAULT_RESOURCES = flyte.Resources(cpu=4, memory="16Gi")
 

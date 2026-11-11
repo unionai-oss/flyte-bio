@@ -34,7 +34,7 @@ from flyte_bio.limits import TASK_LIMITS
 # Element's own image, as upstream.
 BASES2FASTQ_IMAGE = "docker.io/elembio/bases2fastq:2.3.0"
 # Upstream's process_high asks for 12 CPUs and 72 GB; raise for big runs with
-# bases2fastq_cmd.as_task().override(resources=...).
+# bases2fastq_cmd.override(resources=...).
 DEFAULT_RESOURCES = flyte.Resources(cpu=8, memory="16Gi", disk="50Gi")
 
 bases2fastq_cmd = shell.create(

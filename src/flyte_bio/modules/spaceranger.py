@@ -44,7 +44,7 @@ NO_TELEMETRY = {"TENX_DISABLE_TELEMETRY": "1"}
 # Upstream's process_high asks for 12 CPUs and 72 GB. Its tests' tiny genome
 # and reads run in 4 CPUs and 7 GB; real genomes and samples want 32-64 GiB
 # (10x recommends 64 GB or more): raise with
-# <cmd>.as_task().override(resources=...).
+# <cmd>.override(resources=...).
 MKREF_RESOURCES = flyte.Resources(cpu=4, memory="16Gi", disk="50Gi")
 COUNT_RESOURCES = flyte.Resources(cpu=4, memory="16Gi", disk="50Gi")
 

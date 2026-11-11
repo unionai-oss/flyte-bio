@@ -134,7 +134,7 @@ async def merge_setup() -> tuple[File, File]:
 
 async def merge_with_4_cpus() -> File:
     transcripts, gtf = await merge_setup()
-    task = stringtie_merge_cmd.as_task().override(
+    task = stringtie_merge_cmd.override(
         resources=flyte.Resources(cpu=4, memory="4Gi"), cache=flyte.Cache(behavior="auto", salt="cpu=4")
     )
     results = await task(gtfs=[transcripts], annotation_gtf=gtf, prefix="test", args="")

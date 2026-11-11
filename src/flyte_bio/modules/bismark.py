@@ -62,7 +62,7 @@ BISMARK_IMAGE = "community.wave.seqera.io/library/bismark:3.1.0--9557d6ab108a83e
 
 # Upstream labels genome preparation, alignment, deduplication and extraction
 # process_high, the rest process_low. These defaults fit small genomes; raise
-# them with <cmd>.as_task().override(resources=...) for larger ones. The 4 CPUs
+# them with <cmd>.override(resources=...) for larger ones. The 4 CPUs
 # match upstream's tests (alignment records its per-instance -p in its report).
 HIGH_RESOURCES = flyte.Resources(cpu=4, memory="16Gi")
 LOW_RESOURCES = flyte.Resources(cpu=1, memory="4Gi")

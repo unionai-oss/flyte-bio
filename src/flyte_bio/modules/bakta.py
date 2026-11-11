@@ -37,7 +37,7 @@ from flyte_bio.limits import TASK_LIMITS
 BAKTA_IMAGE = "community.wave.seqera.io/library/bakta_diamond:7830b94718da4f96"
 # Both tasks hold the database twice, packed and unpacked: the light database
 # (a few GiB unpacked) fits in 20Gi of disk. The full one is tens of GiB, so
-# raise both tasks' disk with <cmd>.as_task().override(resources=...).
+# raise both tasks' disk with <cmd>.override(resources=...).
 DOWNLOAD_RESOURCES = flyte.Resources(cpu=1, memory="4Gi", disk="20Gi")
 # Upstream's label asks for 6 CPUs and 36 GB; its test runs bakta in 7 GB with
 # the light database. Real genomes with the full database need more memory.

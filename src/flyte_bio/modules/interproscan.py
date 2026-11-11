@@ -16,7 +16,7 @@ Without ``data``, InterProScan runs with the small sample data in the
 container, which is for testing only. Pick the member databases with
 ``--applications`` in ``args``. A full release also needs its data's disk
 (``disk=``) and more memory than the defaults: raise them with
-``interproscan_cmd.as_task().override(resources=...)``.
+``interproscan_cmd.override(resources=...)``.
 
 As upstream, InterProScan runs with ``--cpu`` set to the task's CPUs and a
 single CPU by default: it fails with more.

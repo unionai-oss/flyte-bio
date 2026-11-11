@@ -95,7 +95,7 @@ async def bcl2fastq_check_files(results: Dir, folder: str, expected: dict[str, s
 async def test_bcl2fastq_flowcell() -> None:
     # upstream case: "homo sapiens illumina [bcl]"
     sheet, run_dir = await fixture(BCL + "flowcell_samplesheet.csv"), await fixture(BCL + "flowcell.tar.gz")
-    task = bcl2fastq_cmd.as_task().override(**TWO_CPUS)
+    task = bcl2fastq_cmd.override(**TWO_CPUS)
     results = await task(samplesheet=sheet, run_dir=run_dir, args="--tiles s_1_1101", args2="", args3="")
     fastq, reports = await asyncio.gather(results.get_file("fastq.tar.gz"), results.get_file("Reports.tar.gz"))
     assert fastq is not None and reports is not None, "bcl2fastq wrote no fastq.tar.gz or Reports.tar.gz"

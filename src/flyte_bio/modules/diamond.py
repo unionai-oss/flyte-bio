@@ -41,7 +41,7 @@ from flyte_bio.limits import TASK_LIMITS
 DIAMOND_IMAGE = "community.wave.seqera.io/library/diamond:2.2.2--910ae987965d0d4d"
 # Upstream's process_medium asks for 6 CPUs and 36 GB; a proteome of tens of
 # thousands of proteins clusters in a few GiB. Raise with
-# diamond_cluster_cmd.as_task().override(resources=...) for large databases.
+# diamond_cluster_cmd.override(resources=...) for large databases.
 DEFAULT_RESOURCES = flyte.Resources(cpu=4, memory="8Gi")
 # The build upstream's makedb, blastp and blastx modules pin.
 DIAMOND_SEARCH_IMAGE = "quay.io/biocontainers/diamond:2.2.1--he361c42_0"

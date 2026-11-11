@@ -40,7 +40,7 @@ async def text(file: File) -> str:
 async def test_humann3_humann_fastq() -> None:
     reads = await fixture("genomics/sarscov2/illumina/fastq/test_1.fastq.gz")
     profile = await metaphlan_metaphlan([reads], await fixture("delete_me/metaphlan4_database.tar.gz"), prefix="test")
-    task = humann3_humann_cmd.as_task().override(**TWO_CPUS)
+    task = humann3_humann_cmd.override(**TWO_CPUS)
     results = await task(
         input=reads,
         profile=profile.profile,

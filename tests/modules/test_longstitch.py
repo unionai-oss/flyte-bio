@@ -146,7 +146,7 @@ async def check(dataset: int, genomesize: str, command: str, expected: dict[str,
     assembly = await fixture(f"{DATA}test_scaffolds{dataset}.fa")
     reads = await fixture(f"{DATA}test_reads{dataset}.fa.gz")
     # The cache key ignores resources, so salt it to keep the 2-CPU run apart from a default one.
-    task = longstitch_cmd.as_task().override(
+    task = longstitch_cmd.override(
         resources=flyte.Resources(cpu=2, memory="16Gi"), cache=flyte.Cache(behavior="auto", salt="cpu=2")
     )
     results = await task(

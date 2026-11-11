@@ -47,7 +47,7 @@ CATPACK_IMAGE = "community.wave.seqera.io/library/cat_gzip:0ab95a62b35744c9"
 CATPACK_ADDNAMES_IMAGE = "community.wave.seqera.io/library/cat:6.0.1--45eb3de71f06f426"
 
 # Upstream: process_single + process_long. The nr database is well over 100 GB; raise the disk with
-# catpack_download_cmd.as_task().override(resources=...) if it doesn't fit.
+# catpack_download_cmd.override(resources=...) if it doesn't fit.
 DOWNLOAD_RESOURCES = flyte.Resources(cpu=1, memory="4Gi", disk="200Gi")
 # Upstream labels prepare process_medium + process_high_memory; these fit test-sized databases. A full nr
 # database needs far more memory and disk.

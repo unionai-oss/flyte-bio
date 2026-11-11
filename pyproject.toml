@@ -6,14 +6,14 @@ readme = "README.md"
 authors = [{ name = "Kyle Hazen", email = "kyle@union.ai" }]
 requires-python = ">=3.12"
 dependencies = [
-    "flyte>=2.12.5",
+    "flyte>=2.13.1",
 ]
 
 [project.optional-dependencies]
 # flyte_bio.config: OmegaConf configs as task inputs. Hydra (`flyte hydra
 # run`) is only needed where runs are launched, not in the task image.
-config = ["flyteplugins-omegaconf>=2.12.5"]
-hydra = ["flyteplugins-hydra>=2.12.5"]
+config = ["flyteplugins-omegaconf>=2.13.1"]
+hydra = ["flyteplugins-hydra>=2.13.1"]
 
 [build-system]
 requires = ["hatchling"]
@@ -35,8 +35,8 @@ include = ["src/flyte_bio", "README.md", "LICENSE"]
 dev = [
     "aiohttp",
     "anndata>=0.13.4",
-    "flyteplugins-hydra>=2.12.5",
-    "flyteplugins-omegaconf>=2.12.5",
+    "flyteplugins-hydra>=2.13.1",
+    "flyteplugins-omegaconf>=2.13.1",
     "requests",
 ]
 

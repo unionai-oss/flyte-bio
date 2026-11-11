@@ -29,7 +29,7 @@ from flyte_bio.limits import TASK_LIMITS
 FLYE_IMAGE = "community.wave.seqera.io/library/flye:2.9.5--d577924c8416ccd8"
 
 # Upstream's label asks for 12 CPUs and 72 GB. These defaults fit bacterial
-# genomes and the test data; raise them with flye_cmd.as_task().override(resources=...)
+# genomes and the test data; raise them with flye_cmd.override(resources=...)
 # for larger genomes (a human assembly needs several hundred GB). The 4 CPUs
 # match upstream's tests.
 DEFAULT_RESOURCES = flyte.Resources(cpu=4, memory="16Gi")

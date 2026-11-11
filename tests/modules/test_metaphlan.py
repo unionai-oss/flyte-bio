@@ -31,7 +31,7 @@ async def text(file: File) -> str:
 
 
 async def metaphlan_two_cpus(input: list[File], save_samfile: bool = False) -> MetaphlanResult:
-    task = metaphlan_metaphlan_cmd.as_task().override(**TWO_CPUS)
+    task = metaphlan_metaphlan_cmd.override(**TWO_CPUS)
     database = await fixture(DATABASE)
     results = await task(input=input, database=database, save_samfile=save_samfile, prefix="test", args="")
     return await metaphlan_result(results, "test")

@@ -25,7 +25,7 @@ BWAMEM2_IMAGE = "community.wave.seqera.io/library/bwa-mem2_htslib_samtools:db98f
 # Indexing is single-threaded and needs ~28 bytes of memory per reference
 # base (upstream sizes it at 280 MB per 10 MB of FASTA, x4 when gzipped).
 # The default covers genomes up to ~1 Gbp; a human genome needs ~96 GiB:
-# bwamem2_index_cmd.as_task().override(resources=flyte.Resources(cpu=1, memory="96Gi")).
+# bwamem2_index_cmd.override(resources=flyte.Resources(cpu=1, memory="96Gi")).
 INDEX_RESOURCES = flyte.Resources(cpu=1, memory="32Gi")
 # Upstream labels this process_high; the human index takes ~16 GB in memory.
 MEM_RESOURCES = flyte.Resources(cpu=8, memory="24Gi")

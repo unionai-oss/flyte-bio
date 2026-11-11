@@ -52,7 +52,7 @@ async def read_text(file: File) -> str:
 
 @env.task
 async def test_override_resources() -> None:
-    task = limits_cmd.as_task().override(resources=flyte.Resources(cpu=2, memory="3Gi"))
+    task = limits_cmd.override(resources=flyte.Resources(cpu=2, memory="3Gi"))
     cpu, mem = (await read_text(await task())).split("\n")[:2]
     quota, period = (int(x) for x in cpu.split())
     assert quota / period == 2, f"CPU limit {cpu!r}, expected 2 CPUs"
@@ -64,7 +64,7 @@ async def test_task_limits() -> None:
     # A tool's threads and memory follow the resources the task got, overridden or not.
     limits = (await read_text(await task_limits_cmd())).split()
     assert limits == ["1", "1024", "819"], limits
-    task = task_limits_cmd.as_task().override(resources=flyte.Resources(cpu=1.5, memory="3Gi"))
+    task = task_limits_cmd.override(resources=flyte.Resources(cpu=1.5, memory="3Gi"))
     limits = (await read_text(await task())).split()
     assert limits == ["2", "3072", "2457"], limits
 

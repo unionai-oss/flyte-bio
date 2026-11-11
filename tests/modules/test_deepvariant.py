@@ -194,7 +194,7 @@ async def deepvariant_makeexamples_two_cpus(
     with_phasing: bool = False,
     args: str = WGS_EXAMPLES_ARGS,
 ) -> DeepVariantExamples:
-    task = deepvariant_makeexamples_cmd.as_task().override(**TWO_CPUS)
+    task = deepvariant_makeexamples_cmd.override(**TWO_CPUS)
     results = await task(
         reads=reads,
         index=index,
@@ -268,7 +268,7 @@ async def test_deepvariant_makeexamples_bam_phasing() -> None:
 @env.task
 async def test_deepvariant_callvariants_wgs() -> None:
     examples = await bam_examples_two_cpus()
-    task = deepvariant_callvariants_cmd.as_task().override(**TWO_CPUS)
+    task = deepvariant_callvariants_cmd.override(**TWO_CPUS)
     results = await task(examples=examples.examples, prefix="test", args="--checkpoint /opt/models/wgs")
     names = sorted([f.name async for f in results.walk()])
     assert names == ["test.call-00000-of-00001.tfrecord.gz"], names

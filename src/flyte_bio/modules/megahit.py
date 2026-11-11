@@ -29,7 +29,7 @@ from flyte_bio.limits import TASK_LIMITS
 MEGAHIT_IMAGE = "community.wave.seqera.io/library/megahit_pigz:87a590163e594224"
 
 # Upstream's label asks for 12 CPUs and 72 GB. These defaults fit small genomes
-# and the test data; raise them with megahit_cmd.as_task().override(resources=...)
+# and the test data; raise them with megahit_cmd.override(resources=...)
 # for metagenomes. The 4 CPUs match upstream's tests.
 DEFAULT_RESOURCES = flyte.Resources(cpu=4, memory="16Gi")
 

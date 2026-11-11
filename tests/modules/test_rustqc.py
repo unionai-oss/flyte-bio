@@ -109,7 +109,7 @@ async def rustqc_text(file: File) -> str:
 async def test_rustqc_paired_end_bam() -> None:
     # upstream case: rustqc "homo_sapiens paired-end [bam]"
     # The cache key ignores resources, so salt it to keep the 2-CPU run apart from a default one.
-    task = rustqc_cmd.as_task().override(
+    task = rustqc_cmd.override(
         resources=flyte.Resources(cpu=2, memory="16Gi"), cache=flyte.Cache(behavior="auto", salt="cpu=2")
     )
     output = await task(

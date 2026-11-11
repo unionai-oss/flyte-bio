@@ -24,7 +24,7 @@ from flyte.io import Dir, File
 FILTLONG_IMAGE = "quay.io/biocontainers/filtlong:0.2.1--h9a82719_0"
 
 # Filtlong holds the long reads' scores in memory and, with Illumina reads,
-# their k-mers; raise memory with filtlong_cmd.as_task().override(resources=...)
+# their k-mers; raise memory with filtlong_cmd.override(resources=...)
 # for large read sets.
 DEFAULT_RESOURCES = flyte.Resources(cpu=1, memory="8Gi")
 
