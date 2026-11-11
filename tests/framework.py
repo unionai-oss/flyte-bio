@@ -322,6 +322,25 @@ def test_name(t: Test) -> str:
     return getattr(t, "name", None) or getattr(t, "__name__", repr(t))
 
 
+NOT_TESTED_MARKER = "NOT TESTED:"
+
+
+class NotTested(Exception):
+    """Raised by a placeholder test for a module that can't be tested here.
+
+    ``gather_tests`` reports it as SKIP with the reason, not as a pass or a
+    failure. The marker in the message survives the trip across a remote task
+    boundary, where the exception arrives as a generic error type.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(f"{NOT_TESTED_MARKER} {reason}")
+
+
+def is_not_tested(err: BaseException) -> bool:
+    return isinstance(err, NotTested) or NOT_TESTED_MARKER in str(err)
+
+
 async def gather_tests(tests: list[Test]) -> str:
     """Run ``tests`` concurrently, print a summary, raise if any failed.
 
@@ -345,10 +364,13 @@ async def gather_tests(tests: list[Test]) -> str:
         return_exceptions=True,
     )
     passed: list[str] = []
+    skipped: list[tuple[str, BaseException]] = []
     failed: list[tuple[str, BaseException]] = []
     for t, r in zip(tests, results):
         name = test_name(t)
-        if isinstance(r, BaseException):
+        if isinstance(r, BaseException) and is_not_tested(r):
+            skipped.append((name, r))
+        elif isinstance(r, BaseException):
             failed.append((name, r))
         else:
             passed.append(name)
@@ -357,11 +379,15 @@ async def gather_tests(tests: list[Test]) -> str:
     lines = [
         "",
         bar,
-        f"{len(passed)} passed, {len(failed)} failed (of {len(tests)})",
+        f"{len(passed)} passed, {len(failed)} failed, {len(skipped)} not tested (of {len(tests)})",
         bar,
     ]
     for name in passed:
         lines.append(f"  PASS  {name}")
+    for name, err in skipped:
+        reason = str(err)[str(err).find(NOT_TESTED_MARKER) :]
+        lines.append(f"  SKIP  {name}")
+        lines.append(f"        {reason}")
     for name, err in failed:
         lines.append(f"  FAIL  {name}")
         lines.append(f"        {type(err).__name__}: {err}")
@@ -373,4 +399,12 @@ async def gather_tests(tests: list[Test]) -> str:
     return summary
 
 
-__all__ = ["assert_dir_nonempty", "assert_md5", "assert_nonempty", "env", "fixture", "gather_tests"]
+__all__ = [
+    "NotTested",
+    "assert_dir_nonempty",
+    "assert_md5",
+    "assert_nonempty",
+    "env",
+    "fixture",
+    "gather_tests",
+]
