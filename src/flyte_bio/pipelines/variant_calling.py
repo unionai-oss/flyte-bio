@@ -90,7 +90,7 @@ class Reference:
 
 
 def base_name(f: File) -> str:
-    """A file's name without its last extension (Nextflow's ``baseName``)."""
+    """A file's name without its last extension."""
     n = name(f)
     return n.rsplit(".", 1)[0] if "." in n else n
 
@@ -429,7 +429,7 @@ class Recalibrated:
 
 
 def simple_name(f: File) -> str:
-    """A file's name without any extension (Nextflow's ``simpleName``)."""
+    """A file's name without any extension."""
     return name(f).split(".", 1)[0]
 
 

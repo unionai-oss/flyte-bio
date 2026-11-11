@@ -422,7 +422,7 @@ class TcoffeeTcsResult:
 
 
 def base_name(file: File) -> str:
-    """The file's name without its last extension, like Nextflow's ``baseName``."""
+    """The file's name without its last extension."""
     name = file.name
     return name.rsplit(".", 1)[0] if "." in name else name
 

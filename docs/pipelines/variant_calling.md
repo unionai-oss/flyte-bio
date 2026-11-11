@@ -3,7 +3,7 @@
 `flyte_bio.pipelines.variant_calling`: germline short-variant calling from
 FASTQ, with BWA-MEM alignment, GATK preprocessing and GATK HaplotypeCaller.
 
-It ports the germline HaplotypeCaller route of
+Based on the germline HaplotypeCaller route of
 [nf-core/sarek 3.10.0](https://nf-co.re/sarek/3.10.0/): upstream's default
 preprocessing with `--tools haplotypecaller`.
 

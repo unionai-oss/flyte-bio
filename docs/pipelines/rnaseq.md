@@ -3,8 +3,8 @@
 `flyte_bio.pipelines.rnaseq`: RNA-seq read QC, STAR alignment, salmon
 quantification, and alignment and expression QC.
 
-It ports the default `star_salmon` route of
-[nf-core/rnaseq 3.26.0](https://nf-co.re/rnaseq/3.26.0/), and its optional
+Based on the default `star_salmon` route of
+[nf-core/rnaseq 3.26.0](https://nf-co.re/rnaseq/3.26.0/), with its optional
 UMI deduplication.
 
 ## Example
@@ -167,8 +167,8 @@ multiqc/star_salmon/
   - fastp trimming, RustQC, Sentieon and Parabricks.
 - **Reference prep:** without `transcript_fasta`, transcripts are extracted
   with gffread, where upstream uses RSEM's extractor.
-- **MultiQC:** the Nextflow-specific report sections (run parameters,
-  software versions, methods) are left out. The report includes samtools
+- **MultiQC:** the run-parameter, software-version and methods sections
+  are left out. The report includes samtools
   stats for both the sorted and the duplicate-marked BAM, where upstream
   includes one set.
 - **Sample IDs** can't contain whitespace.

@@ -1,12 +1,14 @@
-# Modules
+# Tools
 
-`flyte_bio.modules` wraps bioinformatics tools as Flyte tasks, one Python file
-per tool family.
+`flyte_bio.modules` provides scientific tools as typed Flyte tasks, one
+Python module per tool family. To find a tool, search the
+[catalog](#available-modules) below; each module's docstring documents its
+inputs, outputs and file names.
 
-## How a module works
+## How a tool works
 
 Each tool is a Flyte shell task (`flyte.extras.shell`) that runs the tool's
-command line in the container upstream pins for it. Usually that's a
+command line in a pinned container. Usually that's a
 [biocontainer](https://biocontainers.pro/) or a Seqera Wave image. Your own
 image never needs the tools installed.
 
@@ -28,31 +30,31 @@ Conventions shared by every module:
 - **Files keep their names.** Input files are staged under their original
   names, and tools that care about names (indexes next to their files, tools
   that record names in their outputs) get the inputs they expect.
-- **Outputs keep upstream's names.** When a tool writes several files, they
-  land in one output directory under the names the upstream module gives them
+- **Outputs keep conventional names.** When a tool writes several files,
+  they land in one output directory under the names the community uses
   (e.g. `<prefix>.md.cram`, `<prefix>.md.cram.metrics`).
-- **`args` passes extra options straight to the tool**, as upstream's
-  `ext.args` does. It's split on whitespace, so a single option value can't
+- **`args` passes extra options straight to the tool.** It's split on whitespace, so a single option value can't
   contain spaces.
 - **Resources are sized for typical inputs.** Each module sets its tasks'
   CPU and memory near the top of its file, e.g. `bwa.MEM_RESOURCES`. A
   tool's thread count and memory options (`-t`, `-Xmx`, sort buffers) are
-  read from the container's limits when it runs (`flyte_bio.limits`), as
-  upstream's are from `task.cpus` and `task.memory`. So a tool that runs with
-  overridden resources uses them. A tool's task can be overridden
-  (`bwa.bwa_mem_cmd.override(resources=...)`), but the module
-  functions don't take resources yet.
+  read from the container's limits when it runs (`flyte_bio.limits`), so a
+  tool that runs with overridden resources uses them. Override a tool for
+  one call with `await tool.override(resources=flyte.Resources(...))(...)`
+  (e.g. `bwa.bwa_mem_cmd`); the wrapper functions don't take resources yet.
+- **Licensed tools are opt-in.** Tools with restrictive licences (vendor
+  EULAs, non-commercial terms) name the licence in the catalog and are in
+  `flyte_bio.modules.licensed_env`, which `flyte_bio.env` leaves out.
 - **Helper scripts are vendored unchanged.** Python, R and Perl helpers that a
   container doesn't include live in `flyte_bio.scripts` and are passed to the
   task as files.
 
-Each module's tests check its outputs against the upstream module's own test
-cases (md5 snapshots wherever the output is reproducible). See
-[contributing](contributing.md).
+Each tool is tested against known-good outputs (md5s wherever the output is
+reproducible). See [contributing](contributing.md).
 
 ## Available modules
 
-Pipeline columns show which pipelines use each module.
+The last column shows which flyte-bio workflows use each tool.
 
 | Module | What it does | Functions | Used by |
 |---|---|---|---|

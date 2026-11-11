@@ -1,6 +1,8 @@
 # Module porting plan
 
-The order in which we port the remaining upstream modules, most used first.
+How nf-core modules were ranked for porting, most used first. The tables
+are the ranking as taken on 2026-11-05; for current status, see the
+`ported` column of [`module-popularity.csv`](module-popularity.csv).
 
 ## How modules are ranked
 
@@ -141,7 +143,7 @@ A rough guide for sizing and ordering work within a tranche:
 
 ## Done means
 
-The same as for every module so far ([contributing](contributing.md#porting-a-module)):
+The same as for every module so far ([migrating from Nextflow](migrating-from-nextflow.md)):
 
 1. a shell task in the container upstream pins;
 2. tests against upstream's own test cases, with md5s wherever the output is

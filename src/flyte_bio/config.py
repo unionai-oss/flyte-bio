@@ -1,4 +1,4 @@
-"""Configure a pipeline from an OmegaConf config, like Nextflow's ``-params-file``.
+"""Configure a workflow from an OmegaConf config file.
 
 A pipeline's config is flat: one key per keyword argument of the pipeline
 function, with the same name and default. Files and directories are given as

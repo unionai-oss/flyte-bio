@@ -1,50 +1,14 @@
 # Contributing
 
-flyte-bio's modules and pipelines are ports of
-[nf-core](https://nf-co.re/) modules and pipelines: same containers, same
-command lines, same test data. Following upstream that closely keeps the
-behaviour familiar. It also gives us a regression oracle: each upstream
-module ships test cases with snapshot md5s we can assert against.
+flyte-bio's tools are Flyte shell tasks that run each tool's command line in
+a pinned container, and its workflows are plain async Python that composes
+them. Every tool is tested against known-good outputs.
 
-## Porting a module
-
-### 1. Find the upstream version
-
-Port the module **at the version the target pipeline pins**, not upstream's
-latest. The pipeline's `modules.json` gives each module's `git_sha`. Take the
-container and the snapshot from that same SHA, so the md5s match the
-container:
-
-```bash
-SHA=$(curl -s https://raw.githubusercontent.com/nf-core/sarek/3.10.0/modules.json \
-  | jq -r '.repos["https://github.com/nf-core/modules.git"].modules["nf-core"]["bwa/index"].git_sha')
-for f in main.nf tests/main.nf.test tests/main.nf.test.snap tests/nextflow.config; do
-  curl -s https://raw.githubusercontent.com/nf-core/modules/$SHA/modules/nf-core/bwa/index/$f
-done
-```
-
-What to take from each:
-
-- **`main.nf`:** the container and the command line.
-  - Use the Docker branch of the `container` line, not the Singularity URL.
-    That's usually `community.wave.seqera.io/...`. A bare
-    `biocontainers/...` resolves to Docker Hub, which the cluster can't pull
-    from, so rewrite it to its `quay.io/biocontainers/...` mirror.
-  - The `process_*` label hints at resources.
-- **The pipeline's `conf/modules/*.config`:** the `ext.args` and `ext.prefix`
-  the pipeline uses. They often matter as much as the module itself.
-- **`tests/main.nf.test`, `tests/nextflow.config`:** the test cases, their
-  inputs (paths under
-  [nf-core/test-datasets@modules](https://github.com/nf-core/test-datasets/tree/modules)),
-  and any `ext.args` the tests set.
-- **`tests/main.nf.test.snap`:** the expected outputs. Never use a `- stub`
-  case's md5s: stub runs only `touch` their outputs.
-
-### 2. Write the shell task
+## Writing a tool
 
 One file per tool family under `src/flyte_bio/modules/`. Each file has a
-module docstring that describes the tools and their output names. Follow an
-existing module of the same shape: `bwa.py` for a simple tool,
+module docstring that describes the tools and their output names. Start from
+an existing module of the same shape: `bwa.py` for a simple tool,
 `gatk4.py` for several tools with multiple images, `umitools.py` for tools
 with an output directory and a wrapper.
 
@@ -93,8 +57,8 @@ Rules that keep tasks correct:
     it can carry several options. If options can contain regex characters
     (`*`, `?`), run `set -f` after expanding the file globs.
 - **Outputs:**
-  - **When there are several, write them under their upstream names into one
-    output `Dir`.** The wrapper then picks files out with
+  - **When there are several, write them under their conventional names into
+    one output `Dir`.** The wrapper then picks files out with
     `results.get_file(name)`. A bare `File` output is named after its output
     key and has no extension, which breaks tools that sniff extensions.
   - **Tools that look for companion files** (an index next to its BAM, a
@@ -108,53 +72,65 @@ Rules that keep tasks correct:
   different images has one environment per image and an aggregate `env` (see
   `gatk4.py`). Add the module's `env` to `flyte_bio.modules.env` in
   `src/flyte_bio/modules/__init__.py`, and its tests to `tests/run_all.py`.
-- **Helper scripts** that upstream ships in `bin/` or `templates/` (Python,
-  R, Perl) are vendored unchanged under `src/flyte_bio/scripts/`:
-  - Undo Groovy's escaping (`\\` → `\`, `\$` → `$`).
-  - Turn templated values into CLI arguments.
+- **Helper scripts** (Python, R, Perl) that a container doesn't include are
+  vendored unchanged under `src/flyte_bio/scripts/`:
   - Register the file in `ship_in_bundle(...)`.
   - The wrapper passes the script to a stock interpreter image as a `File`
     input (see `tx2gene.py`). Don't rewrite a helper in another language.
-- **Naming:** name things by what they do, not by the upstream project.
-  Provenance goes in docs and functional URLs.
+- **Threads and memory** come from the container's limits at run time:
+  start the script with `{TASK_LIMITS}` and use `$TASK_CPUS` and
+  `$TASK_MEMORY_MB` (see [`limits.py`](../src/flyte_bio/limits.py)), so a
+  resource override reaches the tool.
+- **Exit codes:** end commands that can exit 255 with `|| exit 1`; Flyte
+  retries exit code 255 as a system error.
+- **Naming:** name things by what they do. Provenance goes in docs and
+  functional URLs.
+- **Licences:** tools with restrictive licences (EULAs, non-commercial,
+  vendor-only) go in `licensed_env` in `src/flyte_bio/modules/__init__.py`,
+  with the reason in the comment above it, and the licence named in their
+  row of the [modules table](modules.md#available-modules).
+- **Docs:** add a row to the [modules table](modules.md#available-modules).
 
-### 3. Test it
+## Testing a tool
 
-Port the upstream module's test cases into `tests/modules/test_<module>.py`.
-Tests are Flyte tasks (below). Which assertion to use depends on whether the
-upstream md5 can be reproduced:
+Tests live in `tests/modules/test_<module>.py` as Flyte tasks (below), with a
+module-level `tests` list that `tests/run_all.py` collects. Each test runs
+the tool on small fixture data and checks its outputs:
 
 | Output | Assertion |
 |---|---|
 | Pure data: tables, indexes, counts, BED/VCF bodies without dates | `assert_md5(file, md5)` |
-| `.gz` outputs (nf-test hashes them decompressed) | `assert_gunzipped_md5` |
-| BAM/CRAM where upstream snapshots `getReadsMD5` / `md5Reads` | `assert_reads_md5` (the read sequences' md5) |
-| Files whose header records a command line, path or date: BAM headers, samtools stats, most VCFs, MarkDuplicates metrics | content checks: the expected header, record counts, invariants (e.g. BQSR doesn't change sequences) |
+| `.gz` outputs | `assert_gunzipped_md5` (md5 of the decompressed bytes) |
+| BAM/CRAM | `assert_reads_md5` (the read sequences' md5) |
+| Files whose header records a command line, path or date: BAM headers, samtools stats, most VCFs | content checks: the expected header, record counts, invariants |
+| Floating-point values whose trailing digits vary by CPU | value checks within a tolerance (see `tests/modules/test_dupradar.py`) |
 
 Thread counts can change outputs: for example, featureCounts' header records
-`-T`. When an md5 doesn't match, check upstream's test `ext.args` and thread
-counts before suspecting the tool.
+`-T`. Pin such a test's CPUs with `tool.override(resources=...)` and a cache
+salt. Test task names must be unique across the suite: prefix them
+`test_<module>_`. A test that can't run yet (licensed data, missing
+fixtures) raises `NotTested(reason)` and is reported as skipped.
 
-## Porting a pipeline
+Bringing a tool over from Nextflow? [Migrating from
+Nextflow](migrating-from-nextflow.md) covers finding the upstream version and
+reusing its test snapshots.
 
-A pipeline is a module under `src/flyte_bio/pipelines/` made of plain async
-functions, not tasks. They run in the caller's task and call module tasks.
-To match the existing pipelines:
+## Writing a workflow
 
-- **One public function per upstream subworkflow** (`prepare_reference`,
-  `map_reads`, …), plus a main function that takes the samplesheet `File`,
-  like `--input`, and the upstream parameters as keyword arguments.
+A workflow (`src/flyte_bio/pipelines/`) is a module of plain async
+functions, not tasks: they run in the caller's task and call tool tasks.
+
+- **One public function per stage** (`prepare_reference`, `map_reads`, …),
+  plus a main function that takes the samplesheet `File` and the options as
+  keyword arguments.
 - **Read the samplesheet with `flyte_bio.samplesheet.read_samplesheet`** and
-  index the upstream columns directly. Validate everything before starting
-  work.
+  validate everything before starting work.
 - **Return a result dataclass** of `File`s and `Dir`s. Write a `*_layout()`
-  mapping it onto upstream's `--outdir` folders, and publish with
+  mapping it onto an output folder tree, and publish with
   `flyte_bio.publish.publish` when `outdir` or `publish_results` is set.
-- **Keep upstream's file names** (prefixes from the pipeline's
-  `conf/modules`): MultiQC and users both depend on them.
-- **Pipeline tests** (`tests/pipelines/`) run upstream's test profiles end to
-  end. List every divergence from upstream in the pipeline's module docstring
-  and its page under `docs/pipelines/`.
+- **Add a Hydra config** under `src/flyte_bio/conf/<workflow>/`.
+- **Tests** (`tests/pipelines/`) run the workflow end to end on a small test
+  profile.
 
 ## Running the tests
 
@@ -191,17 +167,18 @@ flyte run tests/modules/run_bwa.py run
 Helpers in [`tests/framework.py`](../tests/framework.py):
 
 - **Fixtures:**
-  - `fixture(path)` fetches a test-data file, by a path under the
-    test-datasets `modules` branch or by absolute URL. It's cached, so each
+  - `fixture(path)` fetches a test-data file, by a path under the shared
+    test-datasets repository or by absolute URL. It's cached, so each
     file downloads once.
   - `fixture_dir(url, member)` does the same for a `.tar.gz` fixture,
     extracted to a `Dir`.
-  - `stage_samplesheet(url, file_columns)` copies an upstream samplesheet,
+  - `stage_samplesheet(url, file_columns)` copies a samplesheet,
     swapping its file URLs for cached fixtures.
 - **Assertions:** `assert_md5`, `assert_gunzipped_md5`, `assert_reads_md5`
   (with `reads_md5`), `assert_nonempty`, `assert_dir_nonempty`.
 - **Running:** `gather_tests(tests)` runs tests in parallel, prints a summary
-  and fails if any test failed.
+  (passed, failed, not tested) and fails if any test failed.
+- **Skipping:** `NotTested(reason)` marks a test that can't run yet.
 
 ### Debugging a failing tool
 

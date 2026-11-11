@@ -11,9 +11,9 @@ Exposes:
   query's reads or sequences (``mash screen``), as ``<prefix>.screen``.
 
 Mash records and prints its inputs' paths, so they're staged in a working
-directory under their own names and passed by name, as Nextflow stages
-them. Several inputs are taken in their names' alphabetical order. As
-upstream, ``-p`` is the task's CPUs; options go in ``args``.
+directory under their own names and passed by name. Several inputs are taken
+in their names' alphabetical order. ``-p`` is the task's CPUs; options go in
+``args``.
 """
 
 import flyte

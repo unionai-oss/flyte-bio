@@ -4,7 +4,7 @@
 count matrices, with simpleaf (alevin-fry) quantification, QCatch cell QC,
 CellBender background removal, and h5ad and RDS outputs.
 
-It ports the default `simpleaf` route of
+Based on the default `simpleaf` route of
 [nf-core/scrnaseq 4.2.0](https://nf-co.re/scrnaseq/4.2.0/).
 
 ## Example
@@ -150,7 +150,7 @@ multiqc/
 - **MultiQC:**
   - it's 1.33, upstream's 1.34;
   - the report has no software-versions, workflow-summary or methods
-    sections, which come from Nextflow;
+    sections;
   - of each `af_quant`, only its JSON summaries go to MultiQC. No MultiQC
     module reads alevin-fry's output, so the report is the same.
 - **`pipeline_info/`** isn't published.

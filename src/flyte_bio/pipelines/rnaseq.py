@@ -43,8 +43,7 @@ task and fan out to the module tasks, so the caller's
 - :func:`multiqc_report` — one MultiQC report over every QC output, with
   upstream's config and custom content (failed-sample tables, strandedness
   checks, paired-end sample merging, FASTQ-to-sample name replacements).
-  Nextflow-specific sections (run parameters, software versions, methods
-  text) are omitted. rRNA removal (off upstream by default) isn't ported
+  Run-parameter, software-version and methods sections are omitted. rRNA removal (off upstream by default) isn't ported
   either, nor is UMICollapse (UMI-tools is upstream's default deduplicator).
 """
 

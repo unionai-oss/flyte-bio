@@ -2,8 +2,7 @@
 
 A tool's thread count and memory (``-t``, ``-Xmx``, sort buffers) must follow
 the resources the task actually got, not the module's defaults, so that a
-``task.override(resources=...)`` reaches the tool too. Upstream's modules get
-the same from Nextflow's ``task.cpus`` and ``task.memory``.
+``task.override(resources=...)`` reaches the tool too.
 
 Start a shell task's script with :data:`TASK_LIMITS` to set two variables:
 
