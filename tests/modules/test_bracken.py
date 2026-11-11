@@ -12,13 +12,18 @@ SARS-CoV-2 genome and proteome added to a Kraken2 library over the test
 protein taxonomy, built with kraken2 without cleaning (and, as that test,
 without ``--protein``), then with ``bracken-build``'s defaults. As upstream,
 it checks the database directory's listing.
+
+The combine case is upstream's bracken/combinebrackenoutputs test (same
+commit): test_1.fastq.gz classified with kraken2 and re-estimated with
+Bracken's defaults (upstream's setup channel holds one sample, ``test``),
+then combined as ``db``.
 """
 
 import tarfile
 
 from flyte.io import Dir, File
 
-from flyte_bio.modules.bracken import bracken, bracken_build
+from flyte_bio.modules.bracken import bracken, bracken_build, bracken_combinebrackenoutputs
 from flyte_bio.modules.gunzip import gunzip
 from flyte_bio.modules.kraken2 import kraken2, kraken2_add, kraken2_build
 from tests.framework import assert_md5, env, fixture, fixture_dir
@@ -99,9 +104,20 @@ async def test_bracken_build() -> None:
     assert distrib is not None, "bracken_build's db has no database100mers.kmer_distrib"
 
 
+@env.task
+async def test_bracken_combinebrackenoutputs() -> None:
+    # upstream case: bracken/combinebrackenoutputs "sarscov2 - fastq - fastq"
+    db = await database()
+    result = await bracken(await kraken_report(db, False), db, prefix="test")
+    combined = await bracken_combinebrackenoutputs([result.report], prefix="db")
+    assert combined.name == "db.txt", combined.name
+    await assert_md5(combined, "fb22ad13f9685d5bf5026542b9b2a6b8", label="db.txt")
+
+
 tests = [
     test_bracken_single_end,
     test_bracken_paired_end_genus,
     test_bracken_paired_end,
     test_bracken_build,
+    test_bracken_combinebrackenoutputs,
 ]

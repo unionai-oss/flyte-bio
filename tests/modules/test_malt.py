@@ -7,15 +7,24 @@ an accession-to-taxon binary (``-a2t``). The mapping files are large zips
 (0.8 and 2.2 GB): they're downloaded with aria2 and extracted with unzip, as
 upstream's setup does, on enough disk. As upstream, the log's last line must
 report the peak memory, and the index files are checked by md5.
+
+The run case is upstream's malt/run test (same commit): test_1.fastq.gz
+aligned with ``-m BlastN -a . -f SAM`` to an index of the SARS-CoV-2 genome
+built with the MEGAN mapping database. As upstream, the alignments are
+checked by md5 (decompressed, as nf-test's; their header records the command
+line, which the module keeps relative as upstream's, and ``-t``: the run pins
+2 CPUs, as upstream's snapshot was taken with), the RMA6 and log by
+name, and the log's last line for the peak memory. Upstream sets ``-J-Xmx``
+to the task's memory; here the module sets it to 80% of it.
 """
 
 import flyte
 from flyte.io import File
 
 from flyte_bio.modules.aria2 import aria2_cmd
-from flyte_bio.modules.malt import MaltBuildResult, malt_build
+from flyte_bio.modules.malt import MaltBuildResult, malt_build, malt_run_cmd, malt_run_result
 from flyte_bio.modules.unzip import unzip_cmd
-from tests.framework import assert_md5, env, fixture
+from tests.framework import assert_gunzipped_md5, assert_md5, env, fixture
 
 ARGS = "-J-Xmx6G --sequenceType DNA"
 MDB_URL = "https://nf-core-test-datasets.s3.amazonaws.com/modules/data/delete_me/malt/megan-nucl-Feb2022.db.zip"
@@ -83,4 +92,28 @@ async def test_malt_build_abin() -> None:
     )
 
 
-tests = [test_malt_build_mdb, test_malt_build_abin]
+@env.task
+async def test_malt_run() -> None:
+    # upstream case: malt/run "sarscov2 - fastq"
+    genome = await fixture("genomics/sarscov2/genome/genome.fasta")
+    mapping = await malt_mapping_file(MDB_URL, ".db")
+    built = await malt_build(genome, mapping_db=mapping, map_type="mdb", args="--sequenceType DNA")
+    reads = await fixture("genomics/sarscov2/illumina/fastq/test_1.fastq.gz")
+    # The SAM header records -t, so pin the 2 CPUs upstream's snapshot was taken with.
+    run = malt_run_cmd.override(
+        resources=flyte.Resources(cpu=2, memory="16Gi", disk="50Gi"), cache=flyte.Cache(behavior="auto", salt="cpu=2")
+    )
+    results = await run(
+        reads=[reads], reads_order=reads.name, index=built.index, prefix="test_1", args="-m BlastN -a . -f SAM"
+    )
+    result = await malt_run_result(results, "test_1")
+    assert [f.name for f in result.rma6] == ["test_1.rma6"], [f.name for f in result.rma6]
+    assert [f.name for f in result.alignments] == ["test_1.blastn.sam.gz"], [f.name for f in result.alignments]
+    await assert_gunzipped_md5(result.alignments[0], "8ad56803c1674e1a8cd42fe8801e71fd", label="test_1.blastn.sam.gz")
+    assert result.log.name == "test_1-malt-run.log", result.log.name
+    async with result.log.open("rb") as fh:
+        last = bytes(await fh.read()).decode().rstrip("\n").splitlines()[-1]
+    assert "Peak memory" in last, f"test_1-malt-run.log's last line: {last!r}"
+
+
+tests = [test_malt_build_mdb, test_malt_build_abin, test_malt_run]

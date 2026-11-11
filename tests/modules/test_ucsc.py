@@ -3,11 +3,12 @@
 Expected md5s are the upstream bedtools/genomecov, ucsc/bedclip,
 ucsc/bedgraphtobigwig, ucsc/wigtobigwig, ucsc/gtftogenepred and
 ucsc/bigwigaverageoverbed snapshot values; the gtftogenepred case uses its test config's ``-genePredExt
--geneNameAsName2`` (modules commit 9a1cc9f, UCSC 482).
+-geneNameAsName2`` (modules commit 9a1cc9f, UCSC 482). The ucsc/liftover case
+checks the lifted BED's md5 and the unlifted BED's name, as upstream.
 """
 
 from flyte_bio.modules.bedtools import bedtools_genomecov
-from flyte_bio.modules.ucsc import bedclip, bedgraphtobigwig, bigwigaverageoverbed, gtftogenepred, wigtobigwig
+from flyte_bio.modules.ucsc import bedclip, bedgraphtobigwig, bigwigaverageoverbed, gtftogenepred, liftover, wigtobigwig
 from tests.framework import assert_md5, env, fixture
 
 SARSCOV2 = "genomics/sarscov2/"
@@ -70,6 +71,16 @@ async def test_ucsc_bigwigaverageoverbed() -> None:
     await assert_md5(out, "d92334d90353577571eaf777933dce9b", label="bigWigAverageOverBed")
 
 
+@env.task
+async def test_ucsc_liftover() -> None:
+    # upstream case: ucsc/liftover "genome - bed"
+    bed = await fixture("genomics/homo_sapiens/genome/genome.bed")
+    chain = await fixture("genomics/homo_sapiens/genome/genome.chain.gz")
+    result = await liftover(bed, chain, prefix="test")
+    await assert_md5(result.lifted, "fd5878470257a8a0edeaa8b9374bd520", label="lifted")
+    assert result.unlifted.name == "test.unlifted.bed", result.unlifted.name
+
+
 tests = [
     test_genomecov_bam_sorted,
     test_bedclip,
@@ -77,4 +88,5 @@ tests = [
     test_ucsc_wigtobigwig,
     test_ucsc_gtftogenepred_gtf,
     test_ucsc_bigwigaverageoverbed,
+    test_ucsc_liftover,
 ]

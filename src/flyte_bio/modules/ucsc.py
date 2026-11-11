@@ -15,6 +15,10 @@ It also exposes :func:`gtftogenepred`, which converts a GTF to genePred,
 ``<prefix>.genepred``. As upstream, when ``args`` has both ``-genePredExt``
 and ``-geneNameAsName2`` it also writes ``<prefix>.refflat``, the refFlat
 table (gene name first) Picard's CollectRnaSeqMetrics reads.
+
+:func:`liftover` converts a BED's coordinates to another assembly with a
+chain file (``liftOver``), writing ``<prefix>.lifted.bed`` and the records it
+couldn't convert, ``<prefix>.unlifted.bed``.
 """
 
 from dataclasses import dataclass
@@ -30,6 +34,7 @@ BEDGRAPHTOBIGWIG_IMAGE = "quay.io/biocontainers/ucsc-bedgraphtobigwig:469--h9b8f
 WIGTOBIGWIG_IMAGE = "community.wave.seqera.io/library/ucsc-wigtobigwig:482--4eb74e15915ee878"
 GTFTOGENEPRED_IMAGE = "community.wave.seqera.io/library/ucsc-gtftogenepred:482--ace98be9f7cb069f"
 BIGWIGAVERAGEOVERBED_IMAGE = "community.wave.seqera.io/library/ucsc-bigwigaverageoverbed:482--09b4685dee7c8b33"
+LIFTOVER_IMAGE = "community.wave.seqera.io/library/ucsc-liftover:482--f8639164c0f3b5bf"
 
 DEFAULT_RESOURCES = flyte.Resources(cpu=1, memory="4Gi")
 
@@ -103,6 +108,22 @@ bigwigaverageoverbed_cmd = shell.create(
     """,
 )
 
+liftover_cmd = shell.create(
+    name="ucsc_liftover",
+    image=LIFTOVER_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"bed": File, "chain": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        BED=({inputs.bed}); CHAIN=({inputs.chain})
+        P={inputs.prefix}
+        ARGS={inputs.args}
+        OUT={outputs.results}
+        liftOver $ARGS "${BED[0]}" "${CHAIN[0]}" "$OUT/$P.lifted.bed" "$OUT/$P.unlifted.bed" || exit 1
+    """,
+)
+
 # One image per tool, so one env each; `env` aggregates them.
 bedclip_env = flyte.TaskEnvironment.from_task("ucsc_bedclip", bedclip_cmd.as_task())
 bedgraphtobigwig_env = flyte.TaskEnvironment.from_task("ucsc_bedgraphtobigwig", bedgraphtobigwig_cmd.as_task())
@@ -111,9 +132,17 @@ gtftogenepred_env = flyte.TaskEnvironment.from_task("ucsc_gtftogenepred", gtftog
 bigwigaverageoverbed_env = flyte.TaskEnvironment.from_task(
     "ucsc_bigwigaverageoverbed", bigwigaverageoverbed_cmd.as_task()
 )
+liftover_env = flyte.TaskEnvironment.from_task("ucsc_liftover", liftover_cmd.as_task())
 env = flyte.TaskEnvironment(
     name="ucsc",
-    depends_on=[bedclip_env, bedgraphtobigwig_env, wigtobigwig_env, gtftogenepred_env, bigwigaverageoverbed_env],
+    depends_on=[
+        bedclip_env,
+        bedgraphtobigwig_env,
+        wigtobigwig_env,
+        gtftogenepred_env,
+        bigwigaverageoverbed_env,
+        liftover_env,
+    ],
 )
 
 
@@ -160,3 +189,17 @@ async def gtftogenepred(gtf: File, prefix: str, args: str = "") -> GtfToGenePred
     if "-genePredExt" in flags and "-geneNameAsName2" in flags:
         refflat = await pick(results, f"{prefix}.refflat")
     return GtfToGenePredResult(genepred=await pick(results, f"{prefix}.genepred"), refflat=refflat, results=results)
+
+
+@dataclass
+class LiftoverResult:
+    lifted: File  # <prefix>.lifted.bed
+    unlifted: File  # <prefix>.unlifted.bed: the records liftOver couldn't convert, with the reason
+
+
+async def liftover(bed: File, chain: File, prefix: str, args: str = "") -> LiftoverResult:
+    """Convert ``bed``'s coordinates to another assembly with ``chain`` (plain or gzipped)."""
+    results = await liftover_cmd(bed=bed, chain=chain, prefix=prefix, args=args)
+    return LiftoverResult(
+        lifted=await pick(results, f"{prefix}.lifted.bed"), unlifted=await pick(results, f"{prefix}.unlifted.bed")
+    )

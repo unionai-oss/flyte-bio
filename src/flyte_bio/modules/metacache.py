@@ -9,6 +9,12 @@ database is ``<prefix>.meta`` and one or more ``<prefix>.cache<N>``
 (``-parts`` in ``args`` splits it).
 
 ``metacache build`` is single-threaded, so the task gets one CPU.
+
+:func:`metacache_query` maps one sample's reads (single- or paired-end,
+``-pairfiles``) against a database Dir (found by its ``*.meta``): the
+per-read mappings ``<prefix>.mapping.txt`` and, with ``abundances``, the
+per-taxon counts ``<prefix>.abundances.txt``. ``-threads`` is the task's
+CPUs; options go in ``args``.
 """
 
 from dataclasses import dataclass
@@ -16,6 +22,8 @@ from dataclasses import dataclass
 import flyte
 from flyte.extras import shell
 from flyte.io import Dir, File
+
+from flyte_bio.limits import TASK_LIMITS
 
 METACACHE_IMAGE = "quay.io/biocontainers/metacache:2.5.0--h077b44d_0"
 # Upstream labels it process_single; real databases need far more memory.
@@ -59,7 +67,46 @@ metacache_build_cmd = shell.create(
     """,
 )
 
-env = flyte.TaskEnvironment.from_task("metacache", metacache_build_cmd.as_task())
+# Upstream labels it process_medium.
+QUERY_RESOURCES = flyte.Resources(cpu=4, memory="8Gi")
+
+metacache_query_cmd = shell.create(
+    name="metacache_query",
+    image=METACACHE_IMAGE,
+    resources=QUERY_RESOURCES,
+    inputs={"reads_1": File, "reads_2": File | None, "db": Dir, "abundances": bool, "prefix": str, "args": str},
+    defaults={"abundances": False, "args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        R1=({{inputs.reads_1}})
+        shopt -s nullglob; R2=({{inputs.reads_2}}); shopt -u nullglob
+        DB={{inputs.db}}
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        DB_META=$(find -L "$DB" -name "*.meta" | head -n 1)
+        if [ -z "$DB_META" ]; then echo 'Database file "*.meta" not found!' >&2; exit 1; fi
+        W=$(mktemp -d); cd "$W"
+        INPUT=("${{R1[0]}}")
+        if [ ${{#R2[@]}} -gt 0 ]; then INPUT=("${{R1[0]}}" "${{R2[0]}}" -pairfiles); fi
+        ABUNDANCES=()
+        if [ {{inputs.abundances}} = true ]; then ABUNDANCES=(-abundances "$P.abundances.txt"); fi
+        metacache \
+            query \
+            "$DB_META" \
+            "${{INPUT[@]}}" \
+            "${{ABUNDANCES[@]}}" \
+            -threads $TASK_CPUS \
+            $ARGS \
+            -out "$P.mapping.txt" \
+            || exit 1
+        shopt -s nullglob
+        mv ./*mapping.txt ./*abundances.txt "$OUT"/
+    """,
+)
+
+env = flyte.TaskEnvironment.from_task("metacache", metacache_build_cmd.as_task(), metacache_query_cmd.as_task())
 
 
 @dataclass
@@ -89,3 +136,30 @@ async def metacache_build(
     while (cache := await db.get_file(f"{prefix}.cache{len(caches)}")) is not None:
         caches.append(cache)
     return MetacacheBuildResult(meta=meta, caches=caches, db=db)
+
+
+@dataclass
+class MetacacheQueryResult:
+    mapping: File  # <prefix>.mapping.txt
+    abundances: File | None  # <prefix>.abundances.txt, with abundances
+    results: Dir  # both of the above
+
+
+async def metacache_query(
+    reads_1: File,
+    db: Dir,
+    reads_2: File | None = None,
+    abundances: bool = False,
+    prefix: str = "sample",
+    args: str = "",
+) -> MetacacheQueryResult:
+    """Map one sample's reads (``reads_2`` None for single-end) against the MetaCache database ``db``."""
+    results = await metacache_query_cmd(
+        reads_1=reads_1, reads_2=reads_2, db=db, abundances=abundances, prefix=prefix, args=args
+    )
+    mapping = await results.get_file(f"{prefix}.mapping.txt")
+    if mapping is None:
+        raise FileNotFoundError(f"metacache query wrote no {prefix}.mapping.txt")
+    return MetacacheQueryResult(
+        mapping=mapping, abundances=await results.get_file(f"{prefix}.abundances.txt"), results=results
+    )

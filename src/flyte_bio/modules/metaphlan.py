@@ -18,6 +18,10 @@ upstream finds it in its database directory. Outputs keep upstream's names:
 - with ``save_samfile``: ``<prefix>.sam``, the bowtie2 alignments.
 
 MetaPhlAn runs on the task's CPUs (``--nproc``).
+
+:func:`metaphlan_mergemetaphlantables` merges several samples' profiles into
+one table (``merge_metaphlan_tables.py``), ``<prefix>.txt``; the samples are
+named after the files.
 """
 
 from dataclasses import dataclass
@@ -86,7 +90,39 @@ metaphlan_metaphlan_cmd = shell.create(
     """,
 )
 
-env = flyte.TaskEnvironment.from_task("metaphlan", metaphlan_metaphlan_cmd.as_task())
+# Upstream: process_single.
+MERGE_RESOURCES = flyte.Resources(cpu=1, memory="2Gi")
+
+metaphlan_mergemetaphlantables_cmd = shell.create(
+    name="metaphlan_mergemetaphlantables",
+    image=METAPHLAN_IMAGE,
+    resources=MERGE_RESOURCES,
+    inputs={"profiles": list[File], "profiles_order": str, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        PROFILES=({inputs.profiles})
+        # Staged list inputs expand in name order; restore the order they were given in.
+        read -ra PROFILES_NAMES <<< {inputs.profiles_order}; PROFILES_DIR=$(dirname "${PROFILES[0]}")
+        PROFILES=(); for N in "${PROFILES_NAMES[@]}"; do PROFILES+=("$PROFILES_DIR/$N"); done
+        P={inputs.prefix}
+        ARGS={inputs.args}
+        OUT={outputs.results}
+        W=$(mktemp -d); cd "$W"
+        NAMES=()
+        for F in "${PROFILES[@]}"; do NAMES+=("$(basename "$F")"); ln -s "$F" "$(basename "$F")"; done
+        merge_metaphlan_tables.py \
+            $ARGS \
+            -o "$P.txt" \
+            "${NAMES[@]}" \
+            || exit 1
+        mv "$P.txt" "$OUT"/
+    """,
+)
+
+env = flyte.TaskEnvironment.from_task(
+    "metaphlan", metaphlan_metaphlan_cmd.as_task(), metaphlan_mergemetaphlantables_cmd.as_task()
+)
 
 
 @dataclass
@@ -121,3 +157,14 @@ async def metaphlan_result(results: Dir, prefix: str) -> MetaphlanResult:
         sam=await results.get_file(f"{prefix}.sam"),
         results=results,
     )
+
+
+async def metaphlan_mergemetaphlantables(profiles: list[File], prefix: str = "sample", args: str = "") -> File:
+    """Several samples' MetaPhlAn profiles merged into one table: ``<prefix>.txt``."""
+    results = await metaphlan_mergemetaphlantables_cmd(
+        profiles=profiles, profiles_order=" ".join(f.name for f in profiles), prefix=prefix, args=args
+    )
+    merged = await results.get_file(f"{prefix}.txt")
+    if merged is None:
+        raise FileNotFoundError(f"merge_metaphlan_tables.py wrote no {prefix}.txt")
+    return merged

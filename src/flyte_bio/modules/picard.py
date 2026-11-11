@@ -37,6 +37,10 @@ Exposes:
   ``<prefix>`` chart PDF when ``args`` sets ``--CHART_OUTPUT``).
 - :func:`picard_bedtointervallist`, which converts a BED to a Picard interval
   list, ``<prefix>.intervallist``, with a sequence dictionary.
+- :func:`picard_liftovervcf`, which lifts a VCF over to another assembly with
+  a chain file, writing ``<prefix>.lifted.vcf.gz`` and the records it couldn't
+  lift, ``<prefix>.unlifted.vcf.gz``. The target reference's FASTA and
+  ``.dict`` are linked side by side, as upstream stages them.
 
 Upstream pins a newer Picard (3.5.0) for every tool but MarkDuplicates and
 CollectWgsMetrics, so those share a second environment. CollectWgsMetrics
@@ -505,6 +509,36 @@ picard_bedtointervallist_cmd = shell.create(
 )
 
 
+picard_liftovervcf_cmd = shell.create(
+    name="picard_liftovervcf",
+    image=COLLECTMULTIPLEMETRICS_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"vcf": File, "sequence_dict": File, "fasta": File, "chain": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        VCF=({{inputs.vcf}}); DICT=({{inputs.sequence_dict}}); FA=({{inputs.fasta}}); CHAIN=({{inputs.chain}})
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        for f in "${{VCF[0]}}" "${{DICT[0]}}" "${{FA[0]}}" "${{CHAIN[0]}}"; do
+            ln -s "$f" "$(basename "$f")"
+        done
+        picard \
+            -Xmx{JAVA_HEAP_MB}M \
+            LiftoverVcf \
+            $ARGS \
+            --INPUT "$(basename "${{VCF[0]}}")" \
+            --OUTPUT "$P.lifted.vcf.gz" \
+            --CHAIN "$(basename "${{CHAIN[0]}}")" \
+            --REJECT "$P.unlifted.vcf.gz" \
+            --REFERENCE_SEQUENCE "$(basename "${{FA[0]}}")" || exit 1
+        mv "$P.lifted.vcf.gz" "$P.unlifted.vcf.gz" {{outputs.results}}/
+    """,
+)
+
+
 # One image per environment: every tool but MarkDuplicates and CollectWgsMetrics uses the newer Picard, so `env`
 # aggregates three.
 picard_markduplicates_env = flyte.TaskEnvironment.from_task(
@@ -527,6 +561,7 @@ picard_collectmultiplemetrics_env = flyte.TaskEnvironment.from_task(
     picard_collectinsertsizemetrics_cmd.as_task(),
     picard_collectrnaseqmetrics_cmd.as_task(),
     picard_bedtointervallist_cmd.as_task(),
+    picard_liftovervcf_cmd.as_task(),
 )
 env = flyte.TaskEnvironment(
     name="picard",
@@ -796,3 +831,22 @@ async def picard_bedtointervallist(
         bed=bed, sequence_dict=sequence_dict, arguments_file=arguments_file, prefix=prefix, args=args
     )
     return await pick_file(results, f"{prefix}.intervallist", "BedToIntervalList")
+
+
+@dataclass
+class LiftoverVcfResult:
+    lifted: File  # <prefix>.lifted.vcf.gz
+    unlifted: File  # <prefix>.unlifted.vcf.gz: the records that couldn't be lifted
+
+
+async def picard_liftovervcf(
+    vcf: File, sequence_dict: File, fasta: File, chain: File, prefix: str, args: str = ""
+) -> LiftoverVcfResult:
+    """Lift ``vcf`` over to ``fasta``'s assembly with ``chain``; ``sequence_dict`` is ``fasta``'s ``.dict``."""
+    results = await picard_liftovervcf_cmd(
+        vcf=vcf, sequence_dict=sequence_dict, fasta=fasta, chain=chain, prefix=prefix, args=args
+    )
+    return LiftoverVcfResult(
+        lifted=await pick_file(results, f"{prefix}.lifted.vcf.gz", "LiftoverVcf"),
+        unlifted=await pick_file(results, f"{prefix}.unlifted.vcf.gz", "LiftoverVcf"),
+    )

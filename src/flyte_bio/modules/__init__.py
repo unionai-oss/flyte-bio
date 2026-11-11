@@ -3,7 +3,10 @@
 Each submodule wraps one tool family, sharing a single biocontainer image
 across its tasks:
 
+- :mod:`flyte_bio.modules.aardvark` — aardvark small-variant benchmarking.
 - :mod:`flyte_bio.modules.abacas` — ABACAS contig ordering.
+- :mod:`flyte_bio.modules.adapterremoval` — AdapterRemoval trimming.
+- :mod:`flyte_bio.modules.affy` — affy RMA normalisation.
 - :mod:`flyte_bio.modules.agat` — AGAT annotation conversion.
 - :mod:`flyte_bio.modules.amulety` — AIRR translation and sequence embeddings.
 - :mod:`flyte_bio.modules.anndata` — subset an h5ad to listed barcodes.
@@ -16,6 +19,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.ashlar` — ASHLAR image stitching and registration.
 - :mod:`flyte_bio.modules.assemblyscan` — assembly summary statistics.
 - :mod:`flyte_bio.modules.ataqv` — ATAC-seq quality metrics and interactive reports.
+- :mod:`flyte_bio.modules.atlasgeneannotationmanipulation` — GTF feature annotation tables.
 - :mod:`flyte_bio.modules.autocycler` — Autocycler consensus assembly.
 - :mod:`flyte_bio.modules.backsub` — multiplexed image background subtraction.
 - :mod:`flyte_bio.modules.bakta` — bacterial genome annotation (database download, annotate).
@@ -59,6 +63,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.cdhit` — CD-HIT clustering.
 - :mod:`flyte_bio.modules.cellbender` — ambient RNA and empty droplet removal (CPU or GPU).
 - :mod:`flyte_bio.modules.cellpose` — cell segmentation of microscopy images.
+- :mod:`flyte_bio.modules.cellrangerarc` — 10x Cell Ranger ARC (licensed; in ``licensed_env``).
 - :mod:`flyte_bio.modules.cellsnp` — cellsnp-lite per-cell allele counts.
 - :mod:`flyte_bio.modules.centrifuge` — Centrifuge index building.
 - :mod:`flyte_bio.modules.centrifuger` — Centrifuger index building.
@@ -85,12 +90,16 @@ across its tasks:
 - :mod:`flyte_bio.modules.csvtk` — table joins and concatenation.
 - :mod:`flyte_bio.modules.ctatsplicing` — CTAT-Splicing cancer introns.
 - :mod:`flyte_bio.modules.ctree` — clone trees.
+- :mod:`flyte_bio.modules.custom` — differential-table and GSEA format helpers.
 - :mod:`flyte_bio.modules.cutadapt` — adapter, primer and quality trimming.
 - :mod:`flyte_bio.modules.cutesv` — cuteSV SV calling.
 - :mod:`flyte_bio.modules.damageprofiler` — ancient-DNA damage patterns.
+- :mod:`flyte_bio.modules.datavzrd` — datavzrd HTML reports.
+- :mod:`flyte_bio.modules.decoupler` — decoupler activity inference.
 - :mod:`flyte_bio.modules.deeptools` — coverage matrices, heatmaps and fingerprint plots.
 - :mod:`flyte_bio.modules.deepvariant` — germline small-variant calling.
 - :mod:`flyte_bio.modules.demuxem` — demuxEM cell-hashing demultiplexing.
+- :mod:`flyte_bio.modules.deseq2` — DESeq2 differential expression.
 - :mod:`flyte_bio.modules.dexseq` — differential exon and transcript usage.
 - :mod:`flyte_bio.modules.diamond` — protein sequence clustering.
 - :mod:`flyte_bio.modules.dragmap` — DRAGMAP short-read alignment (hash table, align).
@@ -132,6 +141,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.gawk` — run an awk program over files.
 - :mod:`flyte_bio.modules.genmap` — FM index building for mappability.
 - :mod:`flyte_bio.modules.genomescope2` — GenomeScope2 genome profiling.
+- :mod:`flyte_bio.modules.geoquery` — GEOquery downloads.
 - :mod:`flyte_bio.modules.gfaffix` — collapsing of shared affixes in variation graphs.
 - :mod:`flyte_bio.modules.gfatools` — gfatools GFA conversion.
 - :mod:`flyte_bio.modules.gffread` — GFF/GTF conversion + transcript FASTA.
@@ -140,13 +150,16 @@ across its tasks:
 - :mod:`flyte_bio.modules.glnexus` — GLnexus joint genotyping.
 - :mod:`flyte_bio.modules.gmmdemux` — GMM-Demux cell-hashing demultiplexing.
 - :mod:`flyte_bio.modules.gnusort` — GNU sort of text files.
+- :mod:`flyte_bio.modules.gprofiler2` — g:Profiler enrichment.
 - :mod:`flyte_bio.modules.graphtyper` — population-scale small-variant genotyping.
+- :mod:`flyte_bio.modules.gsea` — Broad GSEA.
 - :mod:`flyte_bio.modules.gstama` — TAMA transcript collapse, merge and poly(A) cleanup.
 - :mod:`flyte_bio.modules.gtf2bed` — derive a BED12 gene model from a GTF.
 - :mod:`flyte_bio.modules.gtffilter` — restrict a GTF to a genome's sequences.
 - :mod:`flyte_bio.modules.gtfgenefilter` — keep GTF lines on a genome's sequences (scRNA-seq).
 - :mod:`flyte_bio.modules.gunzip` — single-file gzip decompression.
 - :mod:`flyte_bio.modules.gzrt` — recover data from corrupt gzipped FASTQs.
+- :mod:`flyte_bio.modules.happy` — hap.py benchmarking.
 - :mod:`flyte_bio.modules.hasheddrops` — DropletUtils hashedDrops demultiplexing.
 - :mod:`flyte_bio.modules.hhsuite` — multiple-alignment format conversion.
 - :mod:`flyte_bio.modules.hifiasm` — hifiasm HiFi assembly.
@@ -170,6 +183,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.kaiju` — Kaiju index building.
 - :mod:`flyte_bio.modules.kalign` — Kalign alignment.
 - :mod:`flyte_bio.modules.kallisto` — kallisto index build.
+- :mod:`flyte_bio.modules.kallistobustools` — kallisto|bustools single-cell counts.
 - :mod:`flyte_bio.modules.khmer` — k-mer counting, including unique-k-mer genome size.
 - :mod:`flyte_bio.modules.kmcp` — KMCP database building.
 - :mod:`flyte_bio.modules.knotannotsv` — knotAnnotSV reports.
@@ -183,6 +197,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.learnmsa` — learnMSA alignment.
 - :mod:`flyte_bio.modules.liftoff` — Liftoff annotation lift-over.
 - :mod:`flyte_bio.modules.lima` — PacBio primer and barcode removal.
+- :mod:`flyte_bio.modules.limma` — limma differential abundance.
 - :mod:`flyte_bio.modules.links` — LINKS scaffolding.
 - :mod:`flyte_bio.modules.longphase` — LongPhase phasing.
 - :mod:`flyte_bio.modules.longstitch` — LongStitch correction and scaffolding.
@@ -201,6 +216,8 @@ across its tasks:
 - :mod:`flyte_bio.modules.mdust` — mdust low-complexity masking.
 - :mod:`flyte_bio.modules.medaka` — consensus polishing of nanopore assemblies.
 - :mod:`flyte_bio.modules.megahit` — short-read and metagenome assembly.
+- :mod:`flyte_bio.modules.megan` — MEGAN Community Edition reports.
+- :mod:`flyte_bio.modules.melon` — melon long-read profiling.
 - :mod:`flyte_bio.modules.memote` — memote model QC.
 - :mod:`flyte_bio.modules.merqury` — Merqury assembly QV.
 - :mod:`flyte_bio.modules.meryl` — meryl k-mer databases.
@@ -224,6 +241,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.mobster` — MOBSTER subclonal deconvolution.
 - :mod:`flyte_bio.modules.modkit` — ONT modified-base calling, pileup and repair (licensed; in ``licensed_env``).
 - :mod:`flyte_bio.modules.mosdepth` — read-depth summaries.
+- :mod:`flyte_bio.modules.motus` — mOTUs profiling.
 - :mod:`flyte_bio.modules.msisensorpro` — microsatellite site scanning.
 - :mod:`flyte_bio.modules.mtmalign` — mTM-align structure alignment (no published licence; in ``licensed_env``).
 - :mod:`flyte_bio.modules.multiqc` — aggregate QC report.
@@ -235,8 +253,10 @@ across its tasks:
 - :mod:`flyte_bio.modules.nanocomp` — long-read dataset comparison.
 - :mod:`flyte_bio.modules.nanolyse` — lambda phage read removal.
 - :mod:`flyte_bio.modules.nanoplot` — long-read QC plots and statistics.
+- :mod:`flyte_bio.modules.nanoq` — nanoq read filtering.
 - :mod:`flyte_bio.modules.ncbigenomedownload` — NCBI genome downloads.
 - :mod:`flyte_bio.modules.nextclade` — Nextclade clade assignment.
+- :mod:`flyte_bio.modules.nonpareil` — Nonpareil coverage estimates.
 - :mod:`flyte_bio.modules.numorph` — light-sheet preprocessing, resampling and nuclei counting.
 - :mod:`flyte_bio.modules.odgi` — building, sorting, layout, drawing and stats of variation graphs.
 - :mod:`flyte_bio.modules.openms` — OpenMS proteomics tools.
@@ -247,6 +267,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.pairix` — indexing of contact pairs files.
 - :mod:`flyte_bio.modules.pairtools` — Hi-C contact pair parsing, sorting, deduplication and filtering.
 - :mod:`flyte_bio.modules.pangolin` — Pangolin lineage assignment.
+- :mod:`flyte_bio.modules.parabricks` — NVIDIA Parabricks on GPUs (NVIDIA licence; in ``licensed_env``).
 - :mod:`flyte_bio.modules.parsesdrf` — SDRF sample sheet conversion.
 - :mod:`flyte_bio.modules.pbccs` — PacBio HiFi consensus reads.
 - :mod:`flyte_bio.modules.pbcpgtools` — pb-CpG-tools methylation (PacBio licence; in ``licensed_env``).
@@ -270,6 +291,8 @@ across its tasks:
 - :mod:`flyte_bio.modules.prinseqplusplus` — PRINSEQ++ read filtering.
 - :mod:`flyte_bio.modules.prodigal` — prokaryotic gene prediction.
 - :mod:`flyte_bio.modules.prokka` — prokaryotic and viral genome annotation.
+- :mod:`flyte_bio.modules.propr` — propr proportionality.
+- :mod:`flyte_bio.modules.proteus` — proteus protein groups.
 - :mod:`flyte_bio.modules.pyclonevi` — PyClone-VI clustering.
 - :mod:`flyte_bio.modules.pycoqc` — pycoQC nanopore QC.
 - :mod:`flyte_bio.modules.pydamage` — per-contig ancient-DNA damage estimates.
@@ -319,6 +342,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.seqwish` — variation graph induction from alignments.
 - :mod:`flyte_bio.modules.sgdemux` — Singular G4 demultiplexing (licensed; in ``licensed_env``).
 - :mod:`flyte_bio.modules.shapeit5` — SHAPEIT5 phasing.
+- :mod:`flyte_bio.modules.shinyngs` — shinyngs reports and apps.
 - :mod:`flyte_bio.modules.sigprofiler` — SigProfiler mutational signatures.
 - :mod:`flyte_bio.modules.smoothxg` — variation graph smoothing.
 - :mod:`flyte_bio.modules.sniffles` — Sniffles2 SV calling.
@@ -341,10 +365,15 @@ across its tasks:
 - :mod:`flyte_bio.modules.subread` — featureCounts.
 - :mod:`flyte_bio.modules.summarizedexperiment` — bundle matrices into an RDS.
 - :mod:`flyte_bio.modules.suppa` — alternative splicing events and differential splicing.
+- :mod:`flyte_bio.modules.survivor` — SURVIVOR SV utilities.
+- :mod:`flyte_bio.modules.svanalyzer` — SVanalyzer benchmarking.
 - :mod:`flyte_bio.modules.svim` — SVIM SV calling.
+- :mod:`flyte_bio.modules.svtk` — svtk SV standardisation.
+- :mod:`flyte_bio.modules.svync` — svync SV harmonisation.
 - :mod:`flyte_bio.modules.sylph` — metagenomic profiling by k-mer containment ANI.
 - :mod:`flyte_bio.modules.sylphtax` — taxonomic profiles from sylph results.
 - :mod:`flyte_bio.modules.taxonkit` — NCBI taxonomy lineages.
+- :mod:`flyte_bio.modules.taxpasta` — taxpasta profile standardisation.
 - :mod:`flyte_bio.modules.tcoffee` — T-Coffee alignment and scoring.
 - :mod:`flyte_bio.modules.thermorawfileparser` — Thermo RAW conversion.
 - :mod:`flyte_bio.modules.tiara` — Tiara contig classification.
@@ -359,6 +388,7 @@ across its tasks:
 - :mod:`flyte_bio.modules.trinity` — de novo transcriptome assembly.
 - :mod:`flyte_bio.modules.trnascanse` — tRNAscan-SE tRNA detection.
 - :mod:`flyte_bio.modules.trust4` — TCR/BCR repertoire reconstruction.
+- :mod:`flyte_bio.modules.truvari` — Truvari SV benchmarking.
 - :mod:`flyte_bio.modules.tx2gene` — transcript → gene table from a GTF.
 - :mod:`flyte_bio.modules.tximport` — count/TPM matrices from quantifications.
 - :mod:`flyte_bio.modules.ucsc` — bedClip / bedGraphToBigWig.
@@ -371,6 +401,8 @@ across its tasks:
 - :mod:`flyte_bio.modules.unzip` — zip archive extraction.
 - :mod:`flyte_bio.modules.unzipfiles` — archive extraction with a file list.
 - :mod:`flyte_bio.modules.upp` — UPP alignment.
+- :mod:`flyte_bio.modules.variancepartition` — variancePartition dream.
+- :mod:`flyte_bio.modules.variantextractor` — variant-extractor normalisation.
 - :mod:`flyte_bio.modules.vcf2maf` — VCF to MAF conversion.
 - :mod:`flyte_bio.modules.vcflib` — VCF filtering by field expressions.
 - :mod:`flyte_bio.modules.vcftools` — VCF summaries (Ts/Tv, filters).
@@ -382,10 +414,12 @@ across its tasks:
 - :mod:`flyte_bio.modules.wfmash` — all-to-all genome alignment for pangenome graphs.
 - :mod:`flyte_bio.modules.wget` — file download with GNU Wget.
 - :mod:`flyte_bio.modules.wipertools` — repair malformed FASTQs in parallel chunks.
+- :mod:`flyte_bio.modules.wittyer` — Illumina witty.er (Illumina licence; in ``licensed_env``).
 - :mod:`flyte_bio.modules.xeniumranger` — 10x Xenium Ranger (licensed; in ``licensed_env``).
 - :mod:`flyte_bio.modules.xz` — xz decompression.
 - :mod:`flyte_bio.modules.yahs` — YaHS Hi-C scaffolding.
 - :mod:`flyte_bio.modules.yara` — read mapping (index, mapper).
+- :mod:`flyte_bio.modules.zip` — 7-Zip archives.
 
 The module-level :data:`env` here is an aggregate
 :class:`flyte.TaskEnvironment` depending on every submodule's env.
@@ -396,7 +430,10 @@ Pipelines depend on it once to gain access to every wrapped tool::
 
 import flyte
 
+from .aardvark import env as aardvark_env
 from .abacas import env as abacas_env
+from .adapterremoval import env as adapterremoval_env
+from .affy import env as affy_env
 from .agat import env as agat_env
 from .amulety import env as amulety_env
 from .anndata import env as anndata_env
@@ -409,6 +446,7 @@ from .artic import env as artic_env
 from .ashlar import env as ashlar_env
 from .assemblyscan import env as assemblyscan_env
 from .ataqv import env as ataqv_env
+from .atlasgeneannotationmanipulation import env as atlasgeneannotationmanipulation_env
 from .autocycler import env as autocycler_env
 from .backsub import env as backsub_env
 from .bakta import env as bakta_env
@@ -447,6 +485,7 @@ from .cdhit import env as cdhit_env
 from .cellbender import env as cellbender_env
 from .cellpose import env as cellpose_env
 from .cellranger import env as cellranger_env
+from .cellrangerarc import env as cellrangerarc_env
 from .cellsnp import env as cellsnp_env
 from .centrifuge import env as centrifuge_env
 from .centrifuger import env as centrifuger_env
@@ -473,13 +512,17 @@ from .crisprcleanr import env as crisprcleanr_env
 from .csvtk import env as csvtk_env
 from .ctatsplicing import env as ctatsplicing_env
 from .ctree import env as ctree_env
+from .custom import env as custom_env
 from .cutadapt import env as cutadapt_env
 from .cutesv import env as cutesv_env
 from .damageprofiler import env as damageprofiler_env
+from .datavzrd import env as datavzrd_env
+from .decoupler import env as decoupler_env
 from .deepcell import env as deepcell_env
 from .deeptools import env as deeptools_env
 from .deepvariant import env as deepvariant_env
 from .demuxem import env as demuxem_env
+from .deseq2 import env as deseq2_env
 from .deseq2_qc import env as deseq2_qc_env
 from .dexseq import env as dexseq_env
 from .diamond import env as diamond_env
@@ -525,6 +568,7 @@ from .gatk4 import env as gatk4_env
 from .gawk import env as gawk_env
 from .genmap import env as genmap_env
 from .genomescope2 import env as genomescope2_env
+from .geoquery import env as geoquery_env
 from .gfaffix import env as gfaffix_env
 from .gfatools import env as gfatools_env
 from .gffread import env as gffread_env
@@ -533,13 +577,16 @@ from .glimpse2 import env as glimpse2_env
 from .glnexus import env as glnexus_env
 from .gmmdemux import env as gmmdemux_env
 from .gnusort import env as gnusort_env
+from .gprofiler2 import env as gprofiler2_env
 from .graphtyper import env as graphtyper_env
+from .gsea import env as gsea_env
 from .gstama import env as gstama_env
 from .gtf2bed import env as gtf2bed_env
 from .gtffilter import env as gtffilter_env
 from .gtfgenefilter import env as gtfgenefilter_env
 from .gunzip import env as gunzip_env
 from .gzrt import env as gzrt_env
+from .happy import env as happy_env
 from .hasheddrops import env as hasheddrops_env
 from .hhsuite import env as hhsuite_env
 from .hifiasm import env as hifiasm_env
@@ -563,6 +610,7 @@ from .jellyfish import env as jellyfish_env
 from .kaiju import env as kaiju_env
 from .kalign import env as kalign_env
 from .kallisto import env as kallisto_env
+from .kallistobustools import env as kallistobustools_env
 from .khmer import env as khmer_env
 from .kmcp import env as kmcp_env
 from .knotannotsv import env as knotannotsv_env
@@ -576,6 +624,7 @@ from .leafcutter import env as leafcutter_env
 from .learnmsa import env as learnmsa_env
 from .liftoff import env as liftoff_env
 from .lima import env as lima_env
+from .limma import env as limma_env
 from .links import env as links_env
 from .longphase import env as longphase_env
 from .longstitch import env as longstitch_env
@@ -594,6 +643,8 @@ from .md5sum import env as md5sum_env
 from .mdust import env as mdust_env
 from .medaka import env as medaka_env
 from .megahit import env as megahit_env
+from .megan import env as megan_env
+from .melon import env as melon_env
 from .memote import env as memote_env
 from .merqury import env as merqury_env
 from .meryl import env as meryl_env
@@ -617,6 +668,7 @@ from .mmseqs import env as mmseqs_env
 from .mobster import env as mobster_env
 from .modkit import env as modkit_env
 from .mosdepth import env as mosdepth_env
+from .motus import env as motus_env
 from .msisensorpro import env as msisensorpro_env
 from .mtmalign import env as mtmalign_env
 from .multiqc import env as multiqc_env
@@ -628,8 +680,10 @@ from .nacho import env as nacho_env
 from .nanocomp import env as nanocomp_env
 from .nanolyse import env as nanolyse_env
 from .nanoplot import env as nanoplot_env
+from .nanoq import env as nanoq_env
 from .ncbigenomedownload import env as ncbigenomedownload_env
 from .nextclade import env as nextclade_env
+from .nonpareil import env as nonpareil_env
 from .numorph import env as numorph_env
 from .odgi import env as odgi_env
 from .openms import env as openms_env
@@ -640,6 +694,7 @@ from .orthofinder import env as orthofinder_env
 from .pairix import env as pairix_env
 from .pairtools import env as pairtools_env
 from .pangolin import env as pangolin_env
+from .parabricks import env as parabricks_env
 from .parsesdrf import env as parsesdrf_env
 from .pbccs import env as pbccs_env
 from .pbcpgtools import env as pbcpgtools_env
@@ -663,6 +718,8 @@ from .pridepy import env as pridepy_env
 from .prinseqplusplus import env as prinseqplusplus_env
 from .prodigal import env as prodigal_env
 from .prokka import env as prokka_env
+from .propr import env as propr_env
+from .proteus import env as proteus_env
 from .pyclonevi import env as pyclonevi_env
 from .pycoqc import env as pycoqc_env
 from .pydamage import env as pydamage_env
@@ -711,6 +768,7 @@ from .sequali import env as sequali_env
 from .seqwish import env as seqwish_env
 from .sgdemux import env as sgdemux_env
 from .shapeit5 import env as shapeit5_env
+from .shinyngs import env as shinyngs_env
 from .sigprofiler import env as sigprofiler_env
 from .simpleaf import env as simpleaf_env
 from .smoothxg import env as smoothxg_env
@@ -734,10 +792,15 @@ from .stringtie import env as stringtie_env
 from .subread import env as subread_env
 from .summarizedexperiment import env as summarizedexperiment_env
 from .suppa import env as suppa_env
+from .survivor import env as survivor_env
+from .svanalyzer import env as svanalyzer_env
 from .svim import env as svim_env
+from .svtk import env as svtk_env
+from .svync import env as svync_env
 from .sylph import env as sylph_env
 from .sylphtax import env as sylphtax_env
 from .taxonkit import env as taxonkit_env
+from .taxpasta import env as taxpasta_env
 from .tcoffee import env as tcoffee_env
 from .thermorawfileparser import env as thermorawfileparser_env
 from .tiara import env as tiara_env
@@ -752,6 +815,7 @@ from .trimmomatic import env as trimmomatic_env
 from .trinity import env as trinity_env
 from .trnascanse import env as trnascanse_env
 from .trust4 import env as trust4_env
+from .truvari import env as truvari_env
 from .tx2gene import env as tx2gene_env
 from .tximport import env as tximport_env
 from .ucsc import env as ucsc_env
@@ -764,6 +828,8 @@ from .untarfiles import env as untarfiles_env
 from .unzip import env as unzip_env
 from .unzipfiles import env as unzipfiles_env
 from .upp import env as upp_env
+from .variancepartition import env as variancepartition_env
+from .variantextractor import env as variantextractor_env
 from .vcf2maf import env as vcf2maf_env
 from .vcflib import env as vcflib_env
 from .vcftools import env as vcftools_env
@@ -775,15 +841,20 @@ from .vt import env as vt_env
 from .wfmash import env as wfmash_env
 from .wget import env as wget_env
 from .wipertools import env as wipertools_env
+from .wittyer import env as wittyer_env
 from .xeniumranger import env as xeniumranger_env
 from .xz import env as xz_env
 from .yahs import env as yahs_env
 from .yara import env as yara_env
+from .zip import env as zip_env
 
 env = flyte.TaskEnvironment(
     name="flyte_bio_modules",
     depends_on=[
+        aardvark_env,
         abacas_env,
+        adapterremoval_env,
+        affy_env,
         agat_env,
         amulety_env,
         anndata_env,
@@ -795,6 +866,7 @@ env = flyte.TaskEnvironment(
         ashlar_env,
         assemblyscan_env,
         ataqv_env,
+        atlasgeneannotationmanipulation_env,
         autocycler_env,
         backsub_env,
         bakta_env,
@@ -853,12 +925,16 @@ env = flyte.TaskEnvironment(
         csvtk_env,
         ctatsplicing_env,
         ctree_env,
+        custom_env,
         cutadapt_env,
         cutesv_env,
         damageprofiler_env,
+        datavzrd_env,
+        decoupler_env,
         deeptools_env,
         deepvariant_env,
         demuxem_env,
+        deseq2_env,
         deseq2_qc_env,
         dexseq_env,
         diamond_env,
@@ -905,6 +981,7 @@ env = flyte.TaskEnvironment(
         genmap_env,
         genomecov_env,
         genomescope2_env,
+        geoquery_env,
         gfaffix_env,
         gfatools_env,
         gffread_env,
@@ -913,13 +990,16 @@ env = flyte.TaskEnvironment(
         glnexus_env,
         gmmdemux_env,
         gnusort_env,
+        gprofiler2_env,
         graphtyper_env,
+        gsea_env,
         gstama_env,
         gtf2bed_env,
         gtffilter_env,
         gtfgenefilter_env,
         gunzip_env,
         gzrt_env,
+        happy_env,
         hasheddrops_env,
         hhsuite_env,
         hifiasm_env,
@@ -941,6 +1021,7 @@ env = flyte.TaskEnvironment(
         kaiju_env,
         kalign_env,
         kallisto_env,
+        kallistobustools_env,
         khmer_env,
         kmcp_env,
         knotannotsv_env,
@@ -954,6 +1035,7 @@ env = flyte.TaskEnvironment(
         learnmsa_env,
         liftoff_env,
         lima_env,
+        limma_env,
         links_env,
         longphase_env,
         longstitch_env,
@@ -972,6 +1054,8 @@ env = flyte.TaskEnvironment(
         mdust_env,
         medaka_env,
         megahit_env,
+        megan_env,
+        melon_env,
         memote_env,
         merqury_env,
         meryl_env,
@@ -994,6 +1078,7 @@ env = flyte.TaskEnvironment(
         mmseqs_env,
         mobster_env,
         mosdepth_env,
+        motus_env,
         msisensorpro_env,
         multiqc_env,
         multiqccustombiotype_env,
@@ -1004,8 +1089,10 @@ env = flyte.TaskEnvironment(
         nanocomp_env,
         nanolyse_env,
         nanoplot_env,
+        nanoq_env,
         ncbigenomedownload_env,
         nextclade_env,
+        nonpareil_env,
         numorph_env,
         odgi_env,
         openms_env,
@@ -1036,6 +1123,8 @@ env = flyte.TaskEnvironment(
         prinseqplusplus_env,
         prodigal_env,
         prokka_env,
+        propr_env,
+        proteus_env,
         pyclonevi_env,
         pycoqc_env,
         pydamage_env,
@@ -1079,6 +1168,7 @@ env = flyte.TaskEnvironment(
         sequali_env,
         seqwish_env,
         shapeit5_env,
+        shinyngs_env,
         sigprofiler_env,
         simpleaf_env,
         smoothxg_env,
@@ -1101,10 +1191,15 @@ env = flyte.TaskEnvironment(
         subread_env,
         summarizedexperiment_env,
         suppa_env,
+        survivor_env,
+        svanalyzer_env,
         svim_env,
+        svtk_env,
+        svync_env,
         sylph_env,
         sylphtax_env,
         taxonkit_env,
+        taxpasta_env,
         tcoffee_env,
         thermorawfileparser_env,
         tiara_env,
@@ -1118,6 +1213,7 @@ env = flyte.TaskEnvironment(
         trinity_env,
         trnascanse_env,
         trust4_env,
+        truvari_env,
         tx2gene_env,
         tximport_env,
         ucsc_env,
@@ -1130,6 +1226,8 @@ env = flyte.TaskEnvironment(
         unzip_env,
         unzipfiles_env,
         upp_env,
+        variancepartition_env,
+        variantextractor_env,
         vcf2maf_env,
         vcflib_env,
         vcftools_env,
@@ -1144,6 +1242,7 @@ env = flyte.TaskEnvironment(
         xz_env,
         yahs_env,
         yara_env,
+        zip_env,
     ],
 )
 
@@ -1159,7 +1258,9 @@ env = flyte.TaskEnvironment(
 # - sgdemux: licensed for the Singular Genomics G4 platform only.
 # - HiFiCNV, TRGT, HiPhase, pb-CpG-tools, pbsv and sawfish: the PacBio Software
 #   License Agreement (PacBio data only; binary-only; confidentiality).
-# - Xenium Ranger: 10x Genomics' end-user licence.
+# - Xenium Ranger and Cell Ranger ARC: 10x Genomics' end-user licence.
+# - Parabricks: NVIDIA AI Product Agreement (click-through, no redistribution).
+# - witty.er: Illumina licence agreement (not published).
 # - Sentieon: commercial; runs only against a licence server (untested here).
 # - AnnotSV: its annotation bundle includes OMIM- and COSMIC-derived data that
 #   restrict commercial use.
@@ -1176,11 +1277,13 @@ licensed_env = flyte.TaskEnvironment(
         bclconvert_env,
         blat_env,
         cellranger_env,
+        cellrangerarc_env,
         deepcell_env,
         hificnv_env,
         hiphase_env,
         modkit_env,
         mtmalign_env,
+        parabricks_env,
         pbcpgtools_env,
         pbsv_env,
         pear_env,
@@ -1191,12 +1294,16 @@ licensed_env = flyte.TaskEnvironment(
         sgdemux_env,
         spaceranger_env,
         trgt_env,
+        wittyer_env,
         xeniumranger_env,
     ],
 )
 
 __all__ = [
+    "aardvark_env",
     "abacas_env",
+    "adapterremoval_env",
+    "affy_env",
     "agat_env",
     "amulety_env",
     "anndata_env",
@@ -1209,6 +1316,7 @@ __all__ = [
     "ashlar_env",
     "assemblyscan_env",
     "ataqv_env",
+    "atlasgeneannotationmanipulation_env",
     "autocycler_env",
     "backsub_env",
     "bakta_env",
@@ -1246,6 +1354,7 @@ __all__ = [
     "cellbender_env",
     "cellpose_env",
     "cellranger_env",
+    "cellrangerarc_env",
     "cellsnp_env",
     "centrifuge_env",
     "centrifuger_env",
@@ -1272,13 +1381,17 @@ __all__ = [
     "csvtk_env",
     "ctatsplicing_env",
     "ctree_env",
+    "custom_env",
     "cutadapt_env",
     "cutesv_env",
     "damageprofiler_env",
+    "datavzrd_env",
+    "decoupler_env",
     "deepcell_env",
     "deeptools_env",
     "deepvariant_env",
     "demuxem_env",
+    "deseq2_env",
     "deseq2_qc_env",
     "dexseq_env",
     "diamond_env",
@@ -1326,6 +1439,7 @@ __all__ = [
     "genmap_env",
     "genomecov_env",
     "genomescope2_env",
+    "geoquery_env",
     "gfaffix_env",
     "gfatools_env",
     "gffread_env",
@@ -1334,13 +1448,16 @@ __all__ = [
     "glnexus_env",
     "gmmdemux_env",
     "gnusort_env",
+    "gprofiler2_env",
     "graphtyper_env",
+    "gsea_env",
     "gstama_env",
     "gtf2bed_env",
     "gtffilter_env",
     "gtfgenefilter_env",
     "gunzip_env",
     "gzrt_env",
+    "happy_env",
     "hasheddrops_env",
     "hhsuite_env",
     "hifiasm_env",
@@ -1364,6 +1481,7 @@ __all__ = [
     "kaiju_env",
     "kalign_env",
     "kallisto_env",
+    "kallistobustools_env",
     "khmer_env",
     "kmcp_env",
     "knotannotsv_env",
@@ -1378,6 +1496,7 @@ __all__ = [
     "licensed_env",
     "liftoff_env",
     "lima_env",
+    "limma_env",
     "links_env",
     "longphase_env",
     "longstitch_env",
@@ -1396,6 +1515,8 @@ __all__ = [
     "mdust_env",
     "medaka_env",
     "megahit_env",
+    "megan_env",
+    "melon_env",
     "memote_env",
     "merqury_env",
     "meryl_env",
@@ -1419,6 +1540,7 @@ __all__ = [
     "mobster_env",
     "modkit_env",
     "mosdepth_env",
+    "motus_env",
     "msisensorpro_env",
     "mtmalign_env",
     "multiqc_env",
@@ -1430,8 +1552,10 @@ __all__ = [
     "nanocomp_env",
     "nanolyse_env",
     "nanoplot_env",
+    "nanoq_env",
     "ncbigenomedownload_env",
     "nextclade_env",
+    "nonpareil_env",
     "numorph_env",
     "odgi_env",
     "openms_env",
@@ -1442,6 +1566,7 @@ __all__ = [
     "pairix_env",
     "pairtools_env",
     "pangolin_env",
+    "parabricks_env",
     "parsesdrf_env",
     "pbccs_env",
     "pbcpgtools_env",
@@ -1465,6 +1590,8 @@ __all__ = [
     "prinseqplusplus_env",
     "prodigal_env",
     "prokka_env",
+    "propr_env",
+    "proteus_env",
     "pyclonevi_env",
     "pycoqc_env",
     "pydamage_env",
@@ -1513,6 +1640,7 @@ __all__ = [
     "seqwish_env",
     "sgdemux_env",
     "shapeit5_env",
+    "shinyngs_env",
     "sigprofiler_env",
     "simpleaf_env",
     "smoothxg_env",
@@ -1536,10 +1664,15 @@ __all__ = [
     "subread_env",
     "summarizedexperiment_env",
     "suppa_env",
+    "survivor_env",
+    "svanalyzer_env",
     "svim_env",
+    "svtk_env",
+    "svync_env",
     "sylph_env",
     "sylphtax_env",
     "taxonkit_env",
+    "taxpasta_env",
     "tcoffee_env",
     "thermorawfileparser_env",
     "tiara_env",
@@ -1554,6 +1687,7 @@ __all__ = [
     "trinity_env",
     "trnascanse_env",
     "trust4_env",
+    "truvari_env",
     "tx2gene_env",
     "tximport_env",
     "ucsc_env",
@@ -1566,6 +1700,8 @@ __all__ = [
     "unzip_env",
     "unzipfiles_env",
     "upp_env",
+    "variancepartition_env",
+    "variantextractor_env",
     "vcf2maf_env",
     "vcflib_env",
     "vcftools_env",
@@ -1577,8 +1713,10 @@ __all__ = [
     "wfmash_env",
     "wget_env",
     "wipertools_env",
+    "wittyer_env",
     "xeniumranger_env",
     "xz_env",
     "yahs_env",
     "yara_env",
+    "zip_env",
 ]

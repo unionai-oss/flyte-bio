@@ -49,6 +49,9 @@ Exposes:
   ``<prefix>.segmentation.table``, when ``args`` ask for it.
 - :func:`gatk4_learnreadorientationmodel` — orientation-bias priors,
   ``<prefix>.tar.gz``, from Mutect2's f1r2 archives.
+- :func:`gatk4_concordance` — compare a VCF's calls with a truth VCF
+  (optionally within intervals): ``<prefix>.summary.tsv`` and the annotated
+  ``<prefix>.tpfn.vcf`` and ``<prefix>.tpfp.vcf``.
 - :func:`gatk4_variantrecalibrator` — a VQSR recalibration model,
   ``<prefix>.recal`` (+ ``.idx``) and ``<prefix>.tranches``, from labelled
   known-sites resources; it runs in upstream's image with R, for the
@@ -1336,6 +1339,54 @@ gatk4_learnreadorientationmodel_cmd = shell.create(
     """,
 )
 
+# As upstream: the VCFs, their indexes and the reference files are linked side by side.
+gatk4_concordance_cmd = shell.create(
+    name="gatk4_concordance",
+    image=GATK4_LITE_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={
+        "vcf": File,
+        "vcf_tbi": File,
+        "truth": File,
+        "truth_tbi": File,
+        "intervals": File | None,
+        "fasta": File,
+        "fai": File,
+        "sequence_dict": File,
+        "prefix": str,
+        "args": str,
+    },
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        JAVA_OPTIONS="-Xmx{JAVA_HEAP_MB}M -XX:-UsePerfData"
+        VCF=({{inputs.vcf}}); VCF_TBI=({{inputs.vcf_tbi}}); TRUTH=({{inputs.truth}}); TRUTH_TBI=({{inputs.truth_tbi}})
+        FA=({{inputs.fasta}}); FAI=({{inputs.fai}}); DICT=({{inputs.sequence_dict}})
+        shopt -s nullglob; INTERVALS=({{inputs.intervals}}); shopt -u nullglob
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        W=$(mktemp -d); cd "$W"
+        for f in "${{VCF[0]}}" "${{VCF_TBI[0]}}" "${{TRUTH[0]}}" "${{TRUTH_TBI[0]}}" "${{FA[0]}}" "${{FAI[0]}}" \
+            "${{DICT[0]}}" "${{INTERVALS[@]}}"; do
+            ln -s "$f" "$(basename "$f")"
+        done
+        OPTIONAL=()
+        if [ ${{#INTERVALS[@]}} -gt 0 ]; then OPTIONAL+=(--intervals "$(basename "${{INTERVALS[0]}}")"); fi
+        gatk --java-options "$JAVA_OPTIONS" Concordance \
+            -R "$(basename "${{FA[0]}}")" \
+            -eval "$(basename "${{VCF[0]}}")" \
+            --truth "$(basename "${{TRUTH[0]}}")" \
+            --summary "$P.summary.tsv" \
+            -tpfn "$P.tpfn.vcf" \
+            -tpfp "$P.tpfp.vcf" \
+            "${{OPTIONAL[@]}}" \
+            --tmp-dir . \
+            $ARGS || exit 1
+        mv "$P.summary.tsv" "$P.tpfn.vcf" "$P.tpfp.vcf" {{outputs.results}}/
+    """,
+)
+
 # As upstream: the resources are linked under their own names beside their
 # .tbi files, so the labels (`--resource:<name>,<attributes> <file name>`) can
 # name them; the reference is optional. The recalibration VCF is
@@ -1420,6 +1471,7 @@ gatk4_lite_env = flyte.TaskEnvironment.from_task(
     gatk4_gatherpileupsummaries_cmd.as_task(),
     gatk4_calculatecontamination_cmd.as_task(),
     gatk4_learnreadorientationmodel_cmd.as_task(),
+    gatk4_concordance_cmd.as_task(),
 )
 gatk4_lite_python_env = flyte.TaskEnvironment.from_task("gatk4_lite_python", gatk4_intervallisttools_cmd.as_task())
 gatk4_main_env = flyte.TaskEnvironment.from_task("gatk4_main", gatk4_createreadcountpanelofnormals_cmd.as_task())
@@ -2277,4 +2329,43 @@ async def gatk4_variantrecalibrator(
         idx=await only_file(results, ".idx", "VariantRecalibrator"),
         tranches=await only_file(results, f"{prefix}.tranches", "VariantRecalibrator"),
         plots=plots[0] if plots else None,
+    )
+
+
+@dataclass
+class ConcordanceResult:
+    summary: File  # <prefix>.summary.tsv: true/false positives, false negatives, sensitivity and precision
+    tpfn: File  # <prefix>.tpfn.vcf: the truth's records, annotated as true positives or false negatives
+    tpfp: File  # <prefix>.tpfp.vcf: the evaluated records, annotated as true or false positives
+
+
+async def gatk4_concordance(
+    vcf: File,
+    vcf_tbi: File,
+    truth: File,
+    truth_tbi: File,
+    fasta: File,
+    fai: File,
+    sequence_dict: File,
+    prefix: str,
+    intervals: File | None = None,
+    args: str = "",
+) -> ConcordanceResult:
+    """Compare ``vcf``'s calls with ``truth``'s (within ``intervals`` when given)."""
+    results = await gatk4_concordance_cmd(
+        vcf=vcf,
+        vcf_tbi=vcf_tbi,
+        truth=truth,
+        truth_tbi=truth_tbi,
+        intervals=intervals,
+        fasta=fasta,
+        fai=fai,
+        sequence_dict=sequence_dict,
+        prefix=prefix,
+        args=args,
+    )
+    return ConcordanceResult(
+        summary=await only_file(results, f"{prefix}.summary.tsv", "Concordance"),
+        tpfn=await only_file(results, f"{prefix}.tpfn.vcf", "Concordance"),
+        tpfp=await only_file(results, f"{prefix}.tpfp.vcf", "Concordance"),
     )

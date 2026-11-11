@@ -25,6 +25,11 @@ upstream, keeps its ``*.k2d`` and ``*.map`` files, ``library/added/`` and
 directory, library and taxonomy included, also comes back as
 ``bracken-database.tar.gz``. The k-mer length (``-k``) and read length
 (``-l``) go in ``args``; ``-t`` is the task's CPUs.
+
+:func:`bracken_combinebrackenoutputs` combines several samples' Bracken
+outputs into one table (``combine_bracken_outputs.py``), ``<prefix>.txt``.
+The samples are named after the files; options such as ``--names`` go in
+``args``.
 """
 
 from dataclasses import dataclass
@@ -103,7 +108,40 @@ bracken_build_cmd = shell.create(
     """,
 )
 
-env = flyte.TaskEnvironment.from_task("bracken", bracken_cmd.as_task(), bracken_build_cmd.as_task())
+# Upstream labels it process_low.
+COMBINE_RESOURCES = flyte.Resources(cpu=1, memory="2Gi")
+
+bracken_combinebrackenoutputs_cmd = shell.create(
+    name="bracken_combinebrackenoutputs",
+    image=BRACKEN_IMAGE,
+    resources=COMBINE_RESOURCES,
+    inputs={"reports": list[File], "reports_order": str, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        REPORTS=({inputs.reports})
+        # Staged list inputs expand in name order; restore the order they were given in.
+        read -ra REPORTS_NAMES <<< {inputs.reports_order}; REPORTS_DIR=$(dirname "${REPORTS[0]}")
+        REPORTS=(); for N in "${REPORTS_NAMES[@]}"; do REPORTS+=("$REPORTS_DIR/$N"); done
+        P={inputs.prefix}
+        ARGS={inputs.args}
+        OUT={outputs.results}
+        W=$(mktemp -d); cd "$W"
+        # The script names each sample after its file, so link them under their names.
+        NAMES=()
+        for F in "${REPORTS[@]}"; do NAMES+=("$(basename "$F")"); ln -s "$F" "$(basename "$F")"; done
+        combine_bracken_outputs.py \
+            $ARGS \
+            --files "${NAMES[@]}" \
+            -o "$P.txt" \
+            || exit 1
+        mv "$P.txt" "$OUT"/
+    """,
+)
+
+env = flyte.TaskEnvironment.from_task(
+    "bracken", bracken_cmd.as_task(), bracken_build_cmd.as_task(), bracken_combinebrackenoutputs_cmd.as_task()
+)
 
 
 @dataclass
@@ -145,3 +183,14 @@ async def bracken_build(kraken2_db: File, args: str = "") -> BrackenBuildResult:
     return BrackenBuildResult(
         db=Dir.from_existing_remote(results.path.rstrip("/") + "/bracken-database"), archive=archive
     )
+
+
+async def bracken_combinebrackenoutputs(reports: list[File], prefix: str = "sample", args: str = "") -> File:
+    """Combine several samples' Bracken outputs into one table: ``<prefix>.txt``."""
+    results = await bracken_combinebrackenoutputs_cmd(
+        reports=reports, reports_order=" ".join(f.name for f in reports), prefix=prefix, args=args
+    )
+    combined = await results.get_file(f"{prefix}.txt")
+    if combined is None:
+        raise FileNotFoundError(f"combine_bracken_outputs.py wrote no {prefix}.txt")
+    return combined

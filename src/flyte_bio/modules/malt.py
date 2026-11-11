@@ -15,6 +15,14 @@ MALT is Java: the JVM heap is 80% of the task's memory (``-J-Xmx``), and a
 sequence type (``--sequenceType DNA``) and other options go in ``args``.
 Mapping files are several GiB, so the default resources include disk for
 them.
+
+:func:`malt_run` aligns reads (FASTQ or FASTA files) to a MALT index
+(``malt-run``) and writes, per input file, MEGAN's ``<input name>.rma6``
+and, with ``-a .`` in ``args``, the alignments in the format ``-f`` names
+(e.g. ``<input name>.blastn.sam.gz``), plus the log
+``<prefix>-malt-run.log``. The JVM heap and ``-t`` are set as for
+:func:`malt_build`; the alignment mode (``-m BlastN``) and other options go
+in ``args``.
 """
 
 from dataclasses import dataclass
@@ -64,7 +72,44 @@ malt_build_cmd = shell.create(
     """,
 )
 
-env = flyte.TaskEnvironment.from_task("malt", malt_build_cmd.as_task())
+malt_run_cmd = shell.create(
+    name="malt_run",
+    image=MALT_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"reads": list[File], "reads_order": str, "index": Dir, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        READS=({{inputs.reads}})
+        # Staged list inputs expand in name order; restore the order they were given in.
+        read -ra READS_NAMES <<< {{inputs.reads_order}}; READS_DIR=$(dirname "${{READS[0]}}")
+        READS=(); for N in "${{READS_NAMES[@]}}"; do READS+=("$READS_DIR/$N"); done
+        INDEX={{inputs.index}}
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        W=$(mktemp -d); cd "$W"
+        # The SAM header records the command line: give it upstream's relative paths.
+        ln -s "$INDEX" malt_index
+        for F in "${{READS[@]}}"; do ln -s "$F" "$(basename "$F")"; done
+        set -o pipefail
+        malt-run \
+            -J-Xmx{JAVA_HEAP_MB}m \
+            -t $TASK_CPUS \
+            -v \
+            -o . \
+            $ARGS \
+            --inFile "${{READS_NAMES[@]}}" \
+            --index malt_index/ \
+            |& tee "$P-malt-run.log" \
+            || exit 1
+        shopt -s nullglob
+        mv ./*.rma6 ./*.tab ./*.text ./*.sam ./*.tab.gz ./*.text.gz ./*.sam.gz ./*-malt-run.log "$OUT"/
+    """,
+)
+
+env = flyte.TaskEnvironment.from_task("malt", malt_build_cmd.as_task(), malt_run_cmd.as_task())
 
 
 @dataclass
@@ -87,3 +132,35 @@ async def malt_build(
     if log is None:
         raise FileNotFoundError("malt-build wrote no malt-build.log")
     return MaltBuildResult(index=Dir.from_existing_remote(results.path.rstrip("/") + "/malt_index"), log=log)
+
+
+@dataclass
+class MaltRunResult:
+    rma6: list[File]  # <input name>.rma6, one per input file
+    alignments: list[File]  # with -a: <input name>.<mode>.{tab,text,sam}[.gz]
+    log: File  # <prefix>-malt-run.log
+    results: Dir  # everything above
+
+
+async def malt_run(reads: File | list[File], index: Dir, prefix: str = "sample", args: str = "") -> MaltRunResult:
+    """Align ``reads`` to the MALT ``index`` (:func:`malt_build`'s)."""
+    files = reads if isinstance(reads, list) else [reads]
+    results = await malt_run_cmd(
+        reads=files, reads_order=" ".join(f.name for f in files), index=index, prefix=prefix, args=args
+    )
+    return await malt_run_result(results, prefix)
+
+
+async def malt_run_result(results: Dir, prefix: str) -> MaltRunResult:
+    """Pick malt-run's outputs out of ``results``."""
+    log = await results.get_file(f"{prefix}-malt-run.log")
+    if log is None:
+        raise FileNotFoundError(f"malt-run wrote no {prefix}-malt-run.log")
+    everything = await results.list_files()
+    alignment_suffixes = (".tab", ".text", ".sam", ".tab.gz", ".text.gz", ".sam.gz")
+    return MaltRunResult(
+        rma6=sorted((f for f in everything if f.name.endswith(".rma6")), key=lambda f: f.name),
+        alignments=sorted((f for f in everything if f.name.endswith(alignment_suffixes)), key=lambda f: f.name),
+        log=log,
+        results=results,
+    )

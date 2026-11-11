@@ -21,6 +21,7 @@ from flyte_bio.modules.gatk4 import (
     gatk4_cnnscorevariants,
     gatk4_collectreadcounts,
     gatk4_combinegvcfs,
+    gatk4_concordance,
     gatk4_createreadcountpanelofnormals,
     gatk4_createsequencedictionary,
     gatk4_createsomaticpanelofnormals,
@@ -1012,6 +1013,27 @@ async def test_gatk4_variantrecalibrator() -> None:
         await assert_md5(result.tranches, md5, label=f"{label} tranches")
 
 
+@env.task
+async def test_gatk4_concordance() -> None:
+    calls = HS + "illumina/gatk/haplotypecaller_calls/test2_haplotc.vcf.gz"
+    vcf, vcf_tbi, truth, truth_tbi, intervals, fasta, fai, sequence_dict = await asyncio.gather(
+        fixture(MUTECT2_CALLS),
+        fixture(MUTECT2_CALLS + ".tbi"),
+        fixture(calls),
+        fixture(calls + ".tbi"),
+        fixture(HS + "genome/chr21/sequence/multi_intervals.bed"),
+        fixture(CHR21 + ".fasta"),
+        fixture(CHR21 + ".fasta.fai"),
+        fixture(CHR21 + ".dict"),
+    )
+    result = await gatk4_concordance(
+        vcf, vcf_tbi, truth, truth_tbi, fasta, fai, sequence_dict, prefix="test", intervals=intervals
+    )
+    await assert_md5(result.summary, "1fe75583afedc1c743f052f268d790ca", label="summary")
+    await assert_md5(result.tpfn, "d3dffa4c7332a4cc3e01c4a6b1bd27c3", label="tpfn")
+    await assert_md5(result.tpfp, "2aadd34139ee48b71346759b0b05791e", label="tpfp")
+
+
 tests = [
     test_createsequencedictionary,
     test_intervallisttobed,
@@ -1049,4 +1071,5 @@ tests = [
     test_gatk4_calculatecontamination,
     test_gatk4_learnreadorientationmodel,
     test_gatk4_variantrecalibrator,
+    test_gatk4_concordance,
 ]

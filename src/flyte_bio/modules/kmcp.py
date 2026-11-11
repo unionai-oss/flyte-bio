@@ -16,7 +16,18 @@ Exposes the two steps of building a KMCP database, as upstream:
   ``_info.txt`` names the ``.unik`` files by the compute directory's name,
   the archive is extracted under that name, so the two prefixes must differ.
 
-``--threads`` is the task's CPUs; options go in ``args``.
+Then, against :func:`kmcp_index`'s archive:
+
+- :func:`kmcp_search` searches one sample's reads (single- or paired-end)
+  against the database (``kmcp search``): ``<prefix>.gz``.
+- :func:`kmcp_profile` profiles search results (``kmcp profile``) at
+  ``level`` ``strain``, ``assembly`` or ``species``: ``<prefix>.profile``.
+  Species profiles need the taxonomy dump and sequence-to-taxon map that
+  :func:`kmcp_index` copies into the database (``-X``, ``-T``); without them
+  the task fails, as upstream.
+
+``--threads`` (``-j`` for profile) is the task's CPUs; options go in
+``args``.
 """
 
 from dataclasses import dataclass
@@ -101,7 +112,99 @@ kmcp_index_cmd = shell.create(
     """,
 )
 
-env = flyte.TaskEnvironment.from_task("kmcp", kmcp_compute_cmd.as_task(), kmcp_index_cmd.as_task())
+# Upstream labels search process_medium and profile process_low.
+PROFILE_RESOURCES = flyte.Resources(cpu=2, memory="4Gi")
+
+# Extract the database archive into the working directory; DB_DIR is its top directory.
+EXTRACT_DB = r"""
+        tar -xzf "${DB[0]}" || exit 1
+        DB_DIR=$(tar -tzf "${DB[0]}" | awk -F/ 'NR == 1 { print $1 }')
+""".strip()
+
+kmcp_search_cmd = shell.create(
+    name="kmcp_search",
+    image=KMCP_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"reads_1": File, "reads_2": File | None, "db": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        R1=({{inputs.reads_1}})
+        shopt -s nullglob; R2=({{inputs.reads_2}}); shopt -u nullglob
+        DB=({{inputs.db}})
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        W=$(mktemp -d); cd "$W"
+        {EXTRACT_DB}
+        if [ ${{#R2[@]}} -gt 0 ]; then INPUT=(-1 "${{R1[0]}}" -2 "${{R2[0]}}"); else INPUT=("${{R1[0]}}"); fi
+        kmcp \
+            search \
+            $ARGS \
+            --threads $TASK_CPUS \
+            --db-dir "$DB_DIR" \
+            "${{INPUT[@]}}" \
+            --out-file "$P.gz" \
+            || exit 1
+        mv "$P.gz" "$OUT"/
+    """,
+)
+
+kmcp_profile_cmd = shell.create(
+    name="kmcp_profile",
+    image=KMCP_IMAGE,
+    resources=PROFILE_RESOURCES,
+    inputs={"search_results": File, "db": File, "level": str, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        RESULTS=({{inputs.search_results}})
+        DB=({{inputs.db}})
+        LEVEL={{inputs.level}}
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        W=$(mktemp -d); cd "$W"
+        {EXTRACT_DB}
+        ln -s "${{RESULTS[0]}}" "$(basename "${{RESULTS[0]}}")"
+        TAXONOMY=()
+        if [ "$LEVEL" = species ]; then
+            TAXID_MAP=$(find -L . -name '*map' -type f)
+            TAXDMP=$(find -L . -name 'nodes.dmp' -type f | sed 's#nodes.dmp$##g')
+            ERROR="[KMCP_PROFILE] ERROR: --level 'species' requires"
+            MISSING="to be provided in the database directory. These files are not detected."
+            if [ -z "$TAXID_MAP" ]; then echo "$ERROR a reference to taxid map file $MISSING" >> errors.txt; fi
+            if [ -z "$TAXDMP" ]; then echo "$ERROR taxdump files $MISSING" >> errors.txt; fi
+            if [ -s errors.txt ]; then
+                cat errors.txt >&2
+                # stderr goes to a file; the termination log carries the errors into the task's failure.
+                {{ cat errors.txt > /dev/termination-log; }} 2> /dev/null
+                exit 1
+            fi
+            TAXONOMY=(-X "$TAXDMP" -T "$TAXID_MAP")
+        fi
+        kmcp \
+            profile \
+            --level "$LEVEL" \
+            -j $TASK_CPUS \
+            -o "$P.profile" \
+            $ARGS \
+            "${{TAXONOMY[@]}}" \
+            "$(basename "${{RESULTS[0]}}")" \
+            || exit 1
+        mv "$P.profile" "$OUT"/
+    """,
+)
+
+env = flyte.TaskEnvironment.from_task(
+    "kmcp",
+    kmcp_compute_cmd.as_task(),
+    kmcp_index_cmd.as_task(),
+    kmcp_search_cmd.as_task(),
+    kmcp_profile_cmd.as_task(),
+)
 
 
 @dataclass
@@ -152,3 +255,31 @@ async def kmcp_index(
     if archive is None or log is None:
         raise FileNotFoundError(f"kmcp index wrote no {prefix}.tar.gz or {prefix}.log")
     return KmcpIndexResult(archive=archive, log=log)
+
+
+async def kmcp_search(
+    reads_1: File, db: File, reads_2: File | None = None, prefix: str = "sample", args: str = ""
+) -> File:
+    """Search one sample's reads (``reads_2`` None for single-end) against :func:`kmcp_index`'s archive.
+
+    Returns the search results, ``<prefix>.gz``.
+    """
+    results = await kmcp_search_cmd(reads_1=reads_1, reads_2=reads_2, db=db, prefix=prefix, args=args)
+    found = await results.get_file(f"{prefix}.gz")
+    if found is None:
+        raise FileNotFoundError(f"kmcp search wrote no {prefix}.gz")
+    return found
+
+
+PROFILE_LEVELS = ("species", "strain", "assembly")
+
+
+async def kmcp_profile(search_results: File, db: File, level: str, prefix: str = "sample", args: str = "") -> File:
+    """Profile :func:`kmcp_search`'s results at ``level`` (species, strain or assembly): ``<prefix>.profile``."""
+    if level not in PROFILE_LEVELS:
+        raise ValueError("[KMCP_PROFILE] ERROR: --level must be one of 'species', 'strain' or 'assembly'")
+    results = await kmcp_profile_cmd(search_results=search_results, db=db, level=level, prefix=prefix, args=args)
+    profile = await results.get_file(f"{prefix}.profile")
+    if profile is None:
+        raise FileNotFoundError(f"kmcp profile wrote no {prefix}.profile")
+    return profile

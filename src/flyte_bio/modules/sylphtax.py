@@ -5,6 +5,10 @@ Exposes :func:`sylphtax_taxprof`, which runs ``sylph-tax taxprof`` on a
 MetaPhlAn-style profile ``<prefix>.sylphmpa``. As upstream, sylph-tax's config
 lives in ``/tmp/config.json``, so no taxonomy is downloaded unless ``-t``
 names a built-in one.
+
+:func:`sylphtax_merge` merges several samples' ``.sylphmpa`` profiles into one
+table (``sylph-tax merge``), ``<prefix>.tsv``, of the column ``data_type``
+(e.g. ``relative_abundance``).
 """
 
 import flyte
@@ -46,7 +50,35 @@ sylphtax_taxprof_cmd = shell.create(
     """,
 )
 
-env = flyte.TaskEnvironment.from_task("sylphtax", sylphtax_taxprof_cmd.as_task())
+sylphtax_merge_cmd = shell.create(
+    name="sylphtax_merge",
+    image=SYLPHTAX_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"reports": list[File], "reports_order": str, "data_type": str, "prefix": str},
+    outputs={"results": Dir},
+    script=r"""
+        REPORTS=({inputs.reports})
+        # Staged list inputs expand in name order; restore the order they were given in.
+        read -ra REPORTS_NAMES <<< {inputs.reports_order}; REPORTS_DIR=$(dirname "${REPORTS[0]}")
+        REPORTS=(); for N in "${REPORTS_NAMES[@]}"; do REPORTS+=("$REPORTS_DIR/$N"); done
+        DATA_TYPE={inputs.data_type}
+        P={inputs.prefix}
+        OUT={outputs.results}
+        W=$(mktemp -d); cd "$W"
+        NAMES=()
+        for F in "${REPORTS[@]}"; do NAMES+=("$(basename "$F")"); ln -s "$F" "$(basename "$F")"; done
+        export SYLPH_TAXONOMY_CONFIG="/tmp/config.json"
+        sylph-tax \
+            merge \
+            "${NAMES[@]}" \
+            --column "$DATA_TYPE" \
+            --output "$P.tsv" \
+            || exit 1
+        mv "$P.tsv" "$OUT"/
+    """,
+)
+
+env = flyte.TaskEnvironment.from_task("sylphtax", sylphtax_taxprof_cmd.as_task(), sylphtax_merge_cmd.as_task())
 
 
 async def sylphtax_taxprof(
@@ -59,3 +91,15 @@ async def sylphtax_taxprof(
     if profile is None:
         raise FileNotFoundError(f"sylph-tax taxprof wrote no {prefix}.sylphmpa")
     return profile
+
+
+async def sylphtax_merge(reports: File | list[File], data_type: str, prefix: str = "sample") -> File:
+    """Several samples' ``.sylphmpa`` profiles merged into one table of ``data_type``: ``<prefix>.tsv``."""
+    files = reports if isinstance(reports, list) else [reports]
+    results = await sylphtax_merge_cmd(
+        reports=files, reports_order=" ".join(f.name for f in files), data_type=data_type, prefix=prefix
+    )
+    merged = await results.get_file(f"{prefix}.tsv")
+    if merged is None:
+        raise FileNotFoundError(f"sylph-tax merge wrote no {prefix}.tsv")
+    return merged

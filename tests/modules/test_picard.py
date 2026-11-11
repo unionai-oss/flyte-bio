@@ -38,9 +38,13 @@ picard/collecthsmetrics cases are upstream's at the same commit (Picard
   chart is written, with the refFlat from ucsc/gtftogenepred and the test
   config's args, as upstream.
 - BedToIntervalList: the interval list's md5.
+- LiftoverVcf (picard/liftovervcf at the same commit, with the test config's
+  ``--WARN_ON_MISSING_CONTIG true``): nft-vcf's summary of the lifted VCF (no
+  records) and ``variantsMD5`` of the unlifted one.
 """
 
 import asyncio
+import gzip
 import hashlib
 
 from flyte.io import File
@@ -56,6 +60,7 @@ from flyte_bio.modules.picard import (
     picard_collectwgsmetrics,
     picard_createsequencedictionary,
     picard_filtersamreads,
+    picard_liftovervcf,
     picard_markduplicates,
     picard_mergesamfiles,
     picard_sortsam,
@@ -408,6 +413,34 @@ async def test_picard_bedtointervallist() -> None:
     await assert_md5(intervals, "e51101c9357fb2d59fd30e370eefa39c", label="interval list")
 
 
+async def picard_vcf_records(vcf: File) -> tuple[int, list[str]]:
+    """A gzipped VCF's sample count and record lines."""
+    async with vcf.open("rb") as fh:
+        lines = gzip.decompress(bytes(await fh.read())).decode().splitlines()
+    header = next(x for x in lines if x.startswith("#CHROM"))
+    return len(header.split("\t")) - 9, [x for x in lines if not x.startswith("#")]
+
+
+@env.task
+async def test_picard_liftovervcf() -> None:
+    hs = "genomics/homo_sapiens/"
+    vcf, sequence_dict, fasta, chain = await asyncio.gather(
+        fixture(hs + "illumina/gvcf/test.genome.vcf"),
+        fixture(hs + "genome/genome.dict"),
+        fixture(hs + "genome/genome.fasta"),
+        fixture(hs + "genome/genome.chain.gz"),
+    )
+    result = await picard_liftovervcf(
+        vcf, sequence_dict, fasta, chain, prefix="test", args="--WARN_ON_MISSING_CONTIG true"
+    )
+    assert result.lifted.name == "test.lifted.vcf.gz", result.lifted.name
+    samples, records = await picard_vcf_records(result.lifted)
+    assert (samples, len(records)) == (1, 0), f"lifted VCF: {samples} samples, {len(records)} records"
+    samples, records = await picard_vcf_records(result.unlifted)
+    md5 = format(int(hashlib.md5("".join(records).encode()).hexdigest(), 16), "x")
+    assert md5 == "39a9de5185d94289283bd27cfcdeba97", f"unlifted variantsMD5 {md5}"
+
+
 tests = [
     test_markduplicates_sorted_bam,
     test_picard_collectmultiplemetrics,
@@ -429,4 +462,5 @@ tests = [
     test_picard_collectinsertsizemetrics,
     test_picard_collectrnaseqmetrics,
     test_picard_bedtointervallist,
+    test_picard_liftovervcf,
 ]

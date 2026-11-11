@@ -4,11 +4,16 @@ The cases and expected md5s are upstream's metacache/build tests (modules
 commit 9a1cc9f, MetaCache 2.5.0): one FASTA, one gzipped FASTA, two FASTAs,
 one FASTQ, and one FASTA over the test taxonomy, without and with a
 sequence-to-taxon map.
+
+The query cases are upstream's metacache/query tests (same commit): nanopore
+reads mapped against a database of the SARS-CoV-2 genome and the human
+transcriptome, without and with abundances. As upstream, they check the
+first line of the mappings (and of the abundances).
 """
 
 from flyte.io import File
 
-from flyte_bio.modules.metacache import metacache_build
+from flyte_bio.modules.metacache import MetacacheQueryResult, metacache_build, metacache_query
 from tests.framework import assert_md5, env, fixture
 
 SARSCOV2 = "genomics/sarscov2/"
@@ -96,6 +101,42 @@ async def test_metacache_build_taxonomy_seq2taxid() -> None:
     )
 
 
+async def metacache_first_line(file: File) -> str:
+    async with file.open("rb") as fh:
+        return bytes(await fh.read()).decode().splitlines()[0]
+
+
+async def metacache_test_query(abundances: bool) -> MetacacheQueryResult:
+    db = await metacache_build(
+        [await fixture(SARSCOV2 + "genome/genome.fasta"), await fixture(TRANSCRIPTOME)], prefix="test"
+    )
+    reads = await fixture(SARSCOV2 + "nanopore/fastq/test_2.fastq.gz")
+    return await metacache_query(reads, db.db, abundances=abundances, prefix="test")
+
+
+MAPPING_FIRST_LINE = "# Reporting per-read mappings (non-mapping lines start with '# ')."
+
+
+@env.task
+async def test_metacache_query() -> None:
+    # upstream case: metacache/query "sarscov2 nanopore [fastq_gz]"
+    result = await metacache_test_query(abundances=False)
+    assert result.abundances is None
+    first = await metacache_first_line(result.mapping)
+    assert first == MAPPING_FIRST_LINE, f"test.mapping.txt's first line: {first!r}"
+
+
+@env.task
+async def test_metacache_query_abundances() -> None:
+    # upstream case: metacache/query "sarscov2 nanopore [fastq_gz] abundance"
+    result = await metacache_test_query(abundances=True)
+    first = await metacache_first_line(result.mapping)
+    assert first == MAPPING_FIRST_LINE, f"test.mapping.txt's first line: {first!r}"
+    assert result.abundances is not None, "metacache query wrote no test.abundances.txt"
+    first = await metacache_first_line(result.abundances)
+    assert first == "# query summary: number of queries mapped per taxon", f"test.abundances.txt: {first!r}"
+
+
 tests = [
     test_metacache_build_fasta,
     test_metacache_build_fasta_gz,
@@ -103,4 +144,6 @@ tests = [
     test_metacache_build_fastq,
     test_metacache_build_taxonomy,
     test_metacache_build_taxonomy_seq2taxid,
+    test_metacache_query,
+    test_metacache_query_abundances,
 ]

@@ -6,12 +6,23 @@ MetaPhlAn 4.1.1), against upstream's toy database
 upstream, they check lines 3-6 of the profile, that the BIOM table names its
 format, and the bowtie2 mapping by md5; the SAM case checks that a SAM was
 written. The runs pin 2 CPUs, as the snapshot values were reproduced with.
+
+The merge case is upstream's metaphlan/mergemetaphlantables test (same
+commit), checked by md5. Its setup lists two samples (``test``, ``test2``),
+but passes the database as a queue channel with one item, so MetaPhlAn runs
+once and only ``test``'s profile is merged; its snapshot is of that table,
+so here too one profile is merged.
 """
 
 import flyte
 from flyte.io import File
 
-from flyte_bio.modules.metaphlan import MetaphlanResult, metaphlan_metaphlan_cmd, metaphlan_result
+from flyte_bio.modules.metaphlan import (
+    MetaphlanResult,
+    metaphlan_mergemetaphlantables,
+    metaphlan_metaphlan_cmd,
+    metaphlan_result,
+)
 from tests.framework import assert_md5, env, fixture
 
 FASTQ = "genomics/sarscov2/illumina/fastq/"
@@ -30,11 +41,11 @@ async def text(file: File) -> str:
         return bytes(await fh.read()).decode()
 
 
-async def metaphlan_two_cpus(input: list[File], save_samfile: bool = False) -> MetaphlanResult:
+async def metaphlan_two_cpus(input: list[File], save_samfile: bool = False, prefix: str = "test") -> MetaphlanResult:
     task = metaphlan_metaphlan_cmd.override(**TWO_CPUS)
     database = await fixture(DATABASE)
-    results = await task(input=input, database=database, save_samfile=save_samfile, prefix="test", args="")
-    return await metaphlan_result(results, "test")
+    results = await task(input=input, database=database, save_samfile=save_samfile, prefix=prefix, args="")
+    return await metaphlan_result(results, prefix)
 
 
 async def check(result: MetaphlanResult, reads_line: str, bowtie2out_md5: str) -> None:
@@ -78,9 +89,19 @@ async def test_metaphlan_paired_end_fastq_save_sam() -> None:
     assert first.startswith("@"), f"the SAM doesn't start with a header: {first!r}"
 
 
+@env.task
+async def test_metaphlan_mergemetaphlantables() -> None:
+    # upstream case: metaphlan/mergemetaphlantables "sarscov2 - illumina single end [fastq]"
+    first = await metaphlan_two_cpus([await fixture(FASTQ + "test_1.fastq.gz")])
+    merged = await metaphlan_mergemetaphlantables([first.profile], prefix="test")
+    assert merged.name == "test.txt", merged.name
+    await assert_md5(merged, "671ac0cf0c2561154fc44109b6d8b973", label="test.txt")
+
+
 tests = [
     test_metaphlan_single_end_fastq,
     test_metaphlan_paired_end_fastq,
     test_metaphlan_single_end_fasta,
     test_metaphlan_paired_end_fastq_save_sam,
+    test_metaphlan_mergemetaphlantables,
 ]
