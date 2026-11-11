@@ -224,7 +224,7 @@ __marimo__/
 .idea/
 tests/**/_fixtures/
 .DS_Store
-AGENTS.md
+/AGENTS.md
 
 # Hydra writes each launch's composed config here (flyte hydra run)
 outputs/
