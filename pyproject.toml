@@ -4,14 +4,13 @@ version = "0.1.0"
 description = "The Flyte 2 open-source library for biology: ~900 containerized scientific tools and end-to-end workflows, ready for scientists and AI agents"
 readme = "README.md"
 authors = [{ name = "Kyle Hazen", email = "kyle@union.ai" }]
-license = "MIT"
-license-files = ["LICENSE"]
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.12"
 keywords = ["flyte", "biology", "bioinformatics", "genomics", "single-cell", "workflows", "ai-agents"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -41,7 +40,7 @@ build-backend = "hatchling.build"
 packages = ["src/flyte_bio"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/flyte_bio", "README.md", "LICENSE"]
+include = ["src/flyte_bio", "README.md", "LICENSE", "NOTICE"]
 
 [dependency-groups]
 # Test-only: the fixture loader fetches via flyte.storage.get, whose fsspec

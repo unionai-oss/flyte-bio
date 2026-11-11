@@ -133,3 +133,9 @@ agent's context.
   Nextflow module or pipeline to flyte-bio.
 - **[Known issues](docs/known-issues.md):** temporary workarounds for
   upstream bugs.
+
+## License
+
+flyte-bio is licensed under [Apache-2.0](LICENSE), like Flyte. It includes
+MIT-licensed code adapted from the nf-core project; see [NOTICE](NOTICE).
+Each tool runs from its own container under its own licence.
