@@ -14,6 +14,7 @@ import gzip
 import hashlib
 import os
 
+import flyte
 from flyte.io import Dir, File
 
 from flyte_bio.modules.traitar import traitar_pfamget, traitar_run
@@ -37,14 +38,25 @@ async def pfam_file(pfam: Dir, name: str) -> File:
 
 
 @env.task
+async def traitar_pfam_md5s(pfam: Dir) -> dict[str, str]:
+    """The md5 of each Pfam file (``.gz`` decompressed), hashed in a pod with room for the download."""
+    md5s = {}
+    for f in await pfam.list_files():
+        name = os.path.basename(f.path)
+        local = str(await (await pfam_file(pfam, name)).download())
+        md5s[name] = await asyncio.to_thread(md5_of, local, name.endswith(".gz"))
+    return md5s
+
+
+@env.task
 async def test_traitar_pfamget() -> None:
     # upstream case: traitar/pfamget "Download PFAM database - default version"
     pfam = await traitar_pfamget()
-    names = sorted(os.path.basename(f.path) for f in await pfam.list_files())
-    assert names == ["Pfam-A.hmm", "Pfam-A.hmm.gz"], names
-    for name in names:
-        local = str(await (await pfam_file(pfam, name)).download())
-        actual = await asyncio.to_thread(md5_of, local, name.endswith(".gz"))
+    # Downloading the ~1.5 GiB files needs more memory than the default test pod has.
+    hasher = traitar_pfam_md5s.override(resources=flyte.Resources(cpu=1, memory="8Gi", disk="20Gi"))
+    md5s = await hasher(pfam=pfam)
+    assert sorted(md5s) == ["Pfam-A.hmm", "Pfam-A.hmm.gz"], sorted(md5s)
+    for name, actual in md5s.items():
         assert actual == PFAM_MD5, f"{name}: md5 {actual}, expected {PFAM_MD5}"
 
 

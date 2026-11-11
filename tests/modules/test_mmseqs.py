@@ -2,10 +2,10 @@
 
 The cases and expected md5s are upstream's mmseqs/createdb, mmseqs/cluster,
 mmseqs/linclust, mmseqs/createtsv, mmseqs/createindex,
-mmseqs/tsv2exprofiledb and mmseqs/easysearch tests (modules commit 9a1cc9f, MMseqs2 18.8cc5c). The
+mmseqs/tsv2exprofiledb, mmseqs/easysearch and mmseqs/easycluster tests (modules commit 9a1cc9f, MMseqs2 18.8cc5c). The
 clustering tests run on 2 CPUs, as upstream's did: a clustering result has one
 data file per thread, and upstream lists ``.0`` and ``.1``. So does the
-easy-search test, whose hits' order follows the thread count.
+easy-search and easy-cluster tests, whose output order follows the thread count.
 """
 
 import asyncio
@@ -24,6 +24,7 @@ from flyte_bio.modules.mmseqs import (
     mmseqs_createindex,
     mmseqs_createtsv,
     mmseqs_databases,
+    mmseqs_easycluster_cmd,
     mmseqs_easysearch_cmd,
     mmseqs_linclust_cmd,
     mmseqs_taxonomy,
@@ -263,6 +264,22 @@ async def test_mmseqs_easysearch_contigs() -> None:
     await assert_md5(hits, "98a6e138ad41ed04366808799fd6a4b8", label="test_scaffolds.tsv")
 
 
+@env.task
+async def test_mmseqs_easycluster_proteome() -> None:
+    # upstream case: mmseqs/easycluster "mmseqs/easycluster - sarscov2 - proteome"
+    proteome = await fixture("genomics/sarscov2/genome/proteome.fasta")
+    results = await two_cpu_task(mmseqs_easycluster_cmd)(sequence=proteome, prefix="test", args="--remove-tmp-files 1")
+    expected = {
+        "test_rep_seq.fasta": "8918b8bc645bc3bde7974375c92ef539",
+        "test_all_seqs.fasta": "3abefc5bf87ad04b54a147a6c35af375",
+        "test_cluster.tsv": "1cad5ce35cf71f8c438fd3ec5a786946",
+    }
+    for name, md5 in expected.items():
+        found = await results.get_file(name)
+        assert found is not None, f"easy-cluster wrote no {name}"
+        await assert_md5(found, md5, label=name)
+
+
 tests = [
     test_mmseqs_createdb_contigs,
     test_mmseqs_createdb_gzipped_proteome,
@@ -273,4 +290,5 @@ tests = [
     test_mmseqs_createindex_sarscov2,
     test_mmseqs_tsv2exprofiledb_sarscov2,
     test_mmseqs_easysearch_contigs,
+    test_mmseqs_easycluster_proteome,
 ]

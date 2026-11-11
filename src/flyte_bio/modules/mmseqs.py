@@ -36,6 +36,10 @@ Exposes:
   ``<name>_db_seq_h`` and ``<name>_db_aln`` databases added.
 - :func:`mmseqs_easysearch` — search a FASTA's sequences against a target
   database in one step (``easy-search``): the hits as ``<prefix>.tsv``.
+- :func:`mmseqs_easycluster` — cluster a FASTA's sequences in one step
+  (``easy-cluster``): the representatives ``<prefix>_rep_seq.fasta``, every
+  sequence grouped by cluster ``<prefix>_all_seqs.fasta``, and the
+  representative-member pairs ``<prefix>_cluster.tsv``.
 
 As upstream, createindex and tsv2exprofiledb return their input directory
 with the new files beside the database, which is copied into the output (so
@@ -46,6 +50,8 @@ Every tool but createdb and tsv2exprofiledb runs with ``--threads`` set to the t
 clustering result has one data file per thread, so its file list follows the
 CPU count. Temporary files go to a scratch directory outside the outputs.
 """
+
+from dataclasses import dataclass
 
 import flyte
 from flyte.extras import shell
@@ -296,6 +302,27 @@ mmseqs_easysearch_cmd = shell.create(
     """,
 )
 
+mmseqs_easycluster_cmd = shell.create(
+    name="mmseqs_easycluster",
+    image=MMSEQS_IMAGE,
+    resources=CLUSTER_RESOURCES,
+    inputs={"sequence": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        SEQ=({{inputs.sequence}})
+        P={{inputs.prefix}}
+        ARGS={{inputs.args}}
+        OUT={{outputs.results}}
+        W=$(mktemp -d); cd "$W"
+        ln -s "${{SEQ[0]}}" "$(basename "${{SEQ[0]}}")"
+
+        mmseqs easy-cluster "$(basename "${{SEQ[0]}}")" "$P" tmp1 $ARGS --threads $TASK_CPUS || exit 1
+        mv "${{P}}_rep_seq.fasta" "${{P}}_all_seqs.fasta" "${{P}}_cluster.tsv" "$OUT"/
+    """,
+)
+
 # One image per environment: mmseqs databases needs wget too.
 mmseqs_env = flyte.TaskEnvironment.from_task(
     "mmseqs_tools",
@@ -307,6 +334,7 @@ mmseqs_env = flyte.TaskEnvironment.from_task(
     mmseqs_createindex_cmd.as_task(),
     mmseqs_tsv2exprofiledb_cmd.as_task(),
     mmseqs_easysearch_cmd.as_task(),
+    mmseqs_easycluster_cmd.as_task(),
 )
 mmseqs_download_env = flyte.TaskEnvironment.from_task("mmseqs_download", mmseqs_databases_cmd.as_task())
 env = flyte.TaskEnvironment(name="mmseqs", depends_on=[mmseqs_env, mmseqs_download_env])
@@ -403,3 +431,27 @@ async def mmseqs_easysearch(
     if found is None:
         raise FileNotFoundError(f"mmseqs easy-search wrote no {prefix}.tsv")
     return found
+
+
+@dataclass
+class MmseqsEasyclusterResult:
+    representatives: File  # <prefix>_rep_seq.fasta: one sequence per cluster
+    fasta: File  # <prefix>_all_seqs.fasta: every sequence, grouped by cluster
+    tsv: File  # <prefix>_cluster.tsv: representative, member pairs
+
+
+async def mmseqs_easycluster(sequence: File, prefix: str = "sample", args: str = "") -> MmseqsEasyclusterResult:
+    """Cluster the sequences of ``sequence`` (``easy-cluster``)."""
+    results = await mmseqs_easycluster_cmd(sequence=sequence, prefix=prefix, args=args)
+
+    async def pick(name: str) -> File:
+        found = await results.get_file(name)
+        if found is None:
+            raise FileNotFoundError(f"mmseqs easy-cluster wrote no {name}")
+        return found
+
+    return MmseqsEasyclusterResult(
+        representatives=await pick(f"{prefix}_rep_seq.fasta"),
+        fasta=await pick(f"{prefix}_all_seqs.fasta"),
+        tsv=await pick(f"{prefix}_cluster.tsv"),
+    )

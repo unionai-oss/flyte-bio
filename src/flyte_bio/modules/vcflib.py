@@ -1,6 +1,7 @@
 """vcflib — VCF manipulation with vcflib.
 
-Exposes :func:`vcflib_vcffilter` and :func:`vcflib_vcffixup`.
+Exposes :func:`vcflib_vcffilter`, :func:`vcflib_vcffixup` and
+:func:`vcflib_vcfuniq`.
 
 :func:`vcflib_vcffilter` filters a VCF's records by INFO-field
 expressions (``vcffilter -f``) and/or genotypes by genotype-field expressions
@@ -17,7 +18,12 @@ and pipes the result into ``bcftools view``, whose ``--output-type`` (in
 ``args2``) sets the output, ``<prefix>.<extension>`` (upstream's default
 prefix is ``<id>.fixed``); with ``--write-index`` in ``args2`` the index lands
 beside it. It runs on upstream's bcftools + vcflib image; :data:`env`
-aggregates both images' environments.
+aggregates the tools' environments.
+
+:func:`vcflib_vcfuniq` drops consecutive duplicate records (same position,
+REF and ALT) from a position-sorted VCF and bgzips the result to
+``<prefix>.vcf.gz`` (upstream's default prefix is ``<id>.uniq``); ``args``
+go to vcfuniq, ``bgzip_args`` to bgzip.
 """
 
 from dataclasses import dataclass
@@ -105,9 +111,32 @@ vcflib_vcffixup_cmd = shell.create(
     """,
 )
 
+vcflib_vcfuniq_cmd = shell.create(
+    name="vcflib_vcfuniq",
+    image=VCFLIB_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"vcf": File, "tbi": File | None, "prefix": str, "args": str, "bgzip_args": str},
+    defaults={"args": "", "bgzip_args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        set -o pipefail
+        VCF=({inputs.vcf})
+        shopt -s nullglob; TBI=({inputs.tbi}); shopt -u nullglob
+        P={inputs.prefix}
+        ARGS={inputs.args}; BGZIP_ARGS={inputs.bgzip_args}
+        OUT={outputs.results}
+        W=$(mktemp -d); cd "$W"
+        NAME=$(basename "${VCF[0]}")
+        ln -s "${VCF[0]}" "$NAME"
+        if [ ${#TBI[@]} -gt 0 ]; then ln -s "${TBI[0]}" "$NAME.tbi"; fi
+        vcfuniq $ARGS "$NAME" | bgzip -c $BGZIP_ARGS > "$OUT/$P.vcf.gz" || exit 1
+    """,
+)
+
 vcffilter_env = flyte.TaskEnvironment.from_task("vcflib_vcffilter", vcflib_vcffilter_cmd.as_task())
+vcfuniq_env = flyte.TaskEnvironment.from_task("vcflib_vcfuniq", vcflib_vcfuniq_cmd.as_task())
 vcffixup_env = flyte.TaskEnvironment.from_task("vcflib_vcffixup", vcflib_vcffixup_cmd.as_task())
-env = flyte.TaskEnvironment(name="vcflib", depends_on=[vcffilter_env, vcffixup_env])
+env = flyte.TaskEnvironment(name="vcflib", depends_on=[vcffilter_env, vcffixup_env, vcfuniq_env])
 
 
 async def vcflib_vcffilter(
@@ -179,3 +208,16 @@ async def vcflib_vcffixup(
         raise FileNotFoundError(f"vcffixup wrote no {prefix}.{extension}")
     index = await results.get_file(f"{prefix}.{extension}.csi") or await results.get_file(f"{prefix}.{extension}.tbi")
     return VcffixupResult(vcf=output, index=index, results=results)
+
+
+async def vcflib_vcfuniq(
+    vcf: File, tbi: File | None = None, prefix: str = "sample.uniq", args: str = "", bgzip_args: str = ""
+) -> File:
+    """``vcf`` without consecutive duplicate records: ``<prefix>.vcf.gz``."""
+    if vcf.name == f"{prefix}.vcf.gz":
+        raise ValueError("Input and output names are the same, set prefix to disambiguate!")
+    results = await vcflib_vcfuniq_cmd(vcf=vcf, tbi=tbi, prefix=prefix, args=args, bgzip_args=bgzip_args)
+    output = await results.get_file(f"{prefix}.vcf.gz")
+    if output is None:
+        raise FileNotFoundError(f"vcfuniq wrote no {prefix}.vcf.gz")
+    return output

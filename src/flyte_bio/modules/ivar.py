@@ -16,6 +16,11 @@ Exposes:
   base qualities ``<prefix>.qual.txt``.
 - :func:`ivar_variants` — the variant calls ``<prefix>.tsv``; with a GFF of
   the reference's features, each call's amino-acid change too.
+- :func:`ivar_trim` — a sorted, indexed BAM with its amplicon primers (from
+  a primer BED) soft-clipped and low-quality ends trimmed: ``<prefix>.bam``
+  (unsorted, as iVar writes it) and iVar's log ``<prefix>.ivar.log``. The BAM,
+  its index and the BED are staged by name, so the BAM's ``@PG`` command line
+  matches upstream's.
 
 The reference (and its ``.fai`` for ivar_variants) is staged in a working
 directory by name, so samtools can index the FASTA beside it if needed.
@@ -123,7 +128,36 @@ ivar_variants_cmd = shell.create(
     """,
 )
 
-env = flyte.TaskEnvironment.from_task("ivar", ivar_consensus_cmd.as_task(), ivar_variants_cmd.as_task())
+ivar_trim_cmd = shell.create(
+    name="ivar_trim",
+    image=IVAR_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"bam": File, "bai": File, "bed": File, "prefix": str, "args": str},
+    defaults={"args": ""},
+    outputs={"results": Dir},
+    script=r"""
+        BAM=({inputs.bam}); BAI=({inputs.bai}); BED=({inputs.bed})
+        P={inputs.prefix}
+        ARGS={inputs.args}
+        OUT={outputs.results}
+        W=$(mktemp -d); cd "$W"
+        NAME=$(basename "${BAM[0]}")
+        ln -s "${BAM[0]}" "$NAME"
+        ln -s "${BAI[0]}" "$NAME.bai"
+        ln -s "${BED[0]}" "$(basename "${BED[0]}")"
+        ivar trim \
+            $ARGS \
+            -i "$NAME" \
+            -b "$(basename "${BED[0]}")" \
+            -p "$P" \
+            > "$P.ivar.log" || exit 1
+        mv "$P.bam" "$P.ivar.log" "$OUT"/
+    """,
+)
+
+env = flyte.TaskEnvironment.from_task(
+    "ivar", ivar_consensus_cmd.as_task(), ivar_variants_cmd.as_task(), ivar_trim_cmd.as_task()
+)
 
 
 async def pick_file(results: Dir, name: str, tool: str) -> File:
@@ -189,4 +223,19 @@ async def ivar_variants(
     return IvarVariantsResult(
         tsv=await pick_file(results, f"{prefix}.tsv", "ivar variants"),
         mpileup=await pick_file(results, f"{prefix}.mpileup", "samtools mpileup") if save_mpileup else None,
+    )
+
+
+@dataclass
+class IvarTrimResult:
+    bam: File  # <prefix>.bam
+    log: File  # <prefix>.ivar.log
+
+
+async def ivar_trim(bam: File, bai: File, bed: File, prefix: str = "sample", args: str = "") -> IvarTrimResult:
+    """``bam`` (sorted, indexed by ``bai``) with the primers in ``bed`` trimmed from its reads."""
+    results = await ivar_trim_cmd(bam=bam, bai=bai, bed=bed, prefix=prefix, args=args)
+    return IvarTrimResult(
+        bam=await pick_file(results, f"{prefix}.bam", "ivar trim"),
+        log=await pick_file(results, f"{prefix}.ivar.log", "ivar trim"),
     )

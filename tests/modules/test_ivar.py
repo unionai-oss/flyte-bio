@@ -11,9 +11,13 @@ sorted: samtools mpileup stops at its first out-of-order read, and the
 snapshot is of iVar's consensus of that empty pileup (a header and blank
 sequence). The module, as upstream, takes iVar's status for the pipeline's,
 so these tests reproduce it.
+
+The trim case is upstream's ivar/trim test at the same commit: the trimmed
+BAM's md5 (its ``@PG`` line records the staged input names, kept as
+upstream's) and that the log exists.
 """
 
-from flyte_bio.modules.ivar import ivar_consensus, ivar_variants
+from flyte_bio.modules.ivar import ivar_consensus, ivar_trim, ivar_variants
 from tests.framework import assert_md5, env, fixture
 
 BAM = "genomics/sarscov2/illumina/bam/test.paired_end.bam"
@@ -90,10 +94,24 @@ async def test_ivar_variants_with_gff_with_mpileup() -> None:
     await assert_md5(result.mpileup, MPILEUP_MD5, label="test.mpileup")
 
 
+@env.task
+async def test_ivar_trim() -> None:
+    # upstream case: ivar/trim "test-ivar-trim"
+    result = await ivar_trim(
+        await fixture(SORTED_BAM),
+        await fixture(SORTED_BAM + ".bai"),
+        await fixture("genomics/sarscov2/genome/bed/test.bed"),
+        prefix="test",
+    )
+    await assert_md5(result.bam, "0b6d8da44f8257e29d1c14590dbbf95b", label="test.bam")
+    assert result.log.name == "test.ivar.log", result.log.name
+
+
 tests = [
     test_ivar_consensus,
     test_ivar_consensus_mpileup,
     test_ivar_variants_no_gff_no_mpileup,
     test_ivar_variants_no_gff_with_mpileup,
     test_ivar_variants_with_gff_with_mpileup,
+    test_ivar_trim,
 ]

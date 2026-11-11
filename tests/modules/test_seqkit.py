@@ -32,6 +32,7 @@ from flyte_bio.modules.seqkit import (
     seqkit_rmdup,
     seqkit_seq,
     seqkit_sliding,
+    seqkit_sort,
     seqkit_split2,
     seqkit_stats,
 )
@@ -345,6 +346,38 @@ async def test_seqkit_sliding_fastq() -> None:
     await assert_md5(windows, "59f475cac6d2c372ce2d3a1e3c40305b", label="test.fastq")
 
 
+# upstream cases: seqkit/sort, with the test config's gzip ``-n``.
+@env.task
+async def test_seqkit_sort_genome_fasta() -> None:
+    out = await seqkit_sort(await fixture(GENOME + "genome.fasta"), prefix="test", gzip_args="-n")
+    assert name_of(out) == "test.fasta", f"expected test.fasta, got {name_of(out)}"
+    await assert_md5(out, "483f4a5dfe60171c86ee9b7e6dff908b", label="test.fasta")
+
+
+@env.task
+async def test_seqkit_sort_genome_fasta_gz() -> None:
+    out = await seqkit_sort(await fixture(GENOME + "genome.fasta.gz"), prefix="test", gzip_args="-n")
+    assert name_of(out) == "test.fasta.gz", f"expected test.fasta.gz, got {name_of(out)}"
+    await assert_gunzipped_md5(out, "483f4a5dfe60171c86ee9b7e6dff908b", label="test.fasta.gz")
+
+
+@env.task
+async def test_seqkit_sort_fastq_gz() -> None:
+    out = await seqkit_sort(await fixture(FASTQ + "test_1.fastq.gz"), prefix="test", gzip_args="-n")
+    assert name_of(out) == "test.fastq.gz", f"expected test.fastq.gz, got {name_of(out)}"
+    await assert_gunzipped_md5(out, "80d9fd1976648214f44e42bc3d705972", label="test.fastq.gz")
+
+
+@env.task
+async def test_seqkit_sort_name_conflict_fails() -> None:
+    try:
+        await seqkit_sort(await fixture(FASTQ + "test_1.fastq.gz"), prefix="test_1", gzip_args="-n")
+    except ValueError as e:
+        assert "Input and output names are the same" in str(e), str(e)
+    else:
+        raise AssertionError("seqkit_sort accepted an output name equal to its input's")
+
+
 tests = [
     test_seqkit_stats_single_end,
     test_seqkit_stats_paired_end,
@@ -377,4 +410,8 @@ tests = [
     test_seqkit_head_paired_fastq_gz,
     test_seqkit_sliding_fasta,
     test_seqkit_sliding_fastq,
+    test_seqkit_sort_genome_fasta,
+    test_seqkit_sort_genome_fasta_gz,
+    test_seqkit_sort_fastq_gz,
+    test_seqkit_sort_name_conflict_fails,
 ]

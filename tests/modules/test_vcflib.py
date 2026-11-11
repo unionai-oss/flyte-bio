@@ -6,6 +6,9 @@ The case is upstream's vcflib/vcffilter test (modules commit 9a1cc9f, vcflib
 
 The vcffixup cases are upstream's vcflib/vcffixup tests at the same commit:
 the outputs' names, and the bgzipped VCF's ``variantsMD5``.
+
+The vcfuniq case is upstream's vcflib/vcfuniq test at the same commit, which
+snapshots the output's decompressed md5 (bgzip writes no dates or names).
 """
 
 import gzip
@@ -13,8 +16,8 @@ import hashlib
 
 from flyte.io import File
 
-from flyte_bio.modules.vcflib import vcflib_vcffilter, vcflib_vcffixup
-from tests.framework import env, fixture
+from flyte_bio.modules.vcflib import vcflib_vcffilter, vcflib_vcffixup, vcflib_vcfuniq
+from tests.framework import assert_gunzipped_md5, env, fixture
 
 VCF = "genomics/sarscov2/illumina/vcf/test.vcf.gz"
 
@@ -51,4 +54,12 @@ async def test_vcflib_vcffixup() -> None:
     assert names == ("test.fixed.bcf.gz", "test.fixed.bcf.gz.csi"), f"wrote {names}"
 
 
-tests = [test_vcflib_vcffilter_depth, test_vcflib_vcffixup]
+@env.task
+async def test_vcflib_vcfuniq() -> None:
+    # upstream case: vcflib/vcfuniq "test-vcflib-vcfuniq"
+    result = await vcflib_vcfuniq(await fixture(VCF), tbi=await fixture(VCF + ".tbi"), prefix="test.uniq")
+    assert result.name == "test.uniq.vcf.gz", f"wrote {result.name}"
+    await assert_gunzipped_md5(result, "8e722884ffb75155212a3fc053918766", label="test.uniq.vcf.gz")
+
+
+tests = [test_vcflib_vcffilter_depth, test_vcflib_vcffixup, test_vcflib_vcfuniq]

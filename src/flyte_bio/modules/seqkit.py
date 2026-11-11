@@ -43,6 +43,11 @@ Exposes:
   file, with the step and window in ``args`` (e.g. ``-s 2 -W 5``). As
   upstream, the output is ``<prefix>.fasta`` for an uncompressed FASTA-named
   input and ``<prefix>.fastq`` otherwise, uncompressed.
+- :func:`seqkit_sort` — ``seqkit sort`` of one FASTA/FASTQ file (by ID
+  unless ``args`` says otherwise, e.g. ``--by-length``). As upstream, the
+  output is ``<prefix>.fasta`` for a FASTA-named input and ``<prefix>.fastq``
+  otherwise, gzipped by ``gzip -c <gzip_args>`` (``<prefix>.<ext>.gz``) when
+  the input is; a prefix that would overwrite the input is an error.
 
 All pass the task's CPUs as ``--threads``. ``args`` is split on whitespace
 without shell quote removal, so write ``-p A``, not ``-p 'A'``; patterns are
@@ -278,6 +283,30 @@ seqkit_sliding_cmd = shell.create(
     """,
 )
 
+seqkit_sort_cmd = shell.create(
+    name="seqkit_sort",
+    image=SEQKIT_IMAGE,
+    resources=DEFAULT_RESOURCES,
+    inputs={"fastx": File, "filename": str, "args": str, "gzip_args": str},
+    defaults={"args": "", "gzip_args": ""},
+    outputs={"results": Dir},
+    script=rf"""
+        {TASK_LIMITS}
+        set -o pipefail
+        IN=({{inputs.fastx}})
+        NAME={{inputs.filename}}
+        ARGS={{inputs.args}}
+        GZIP_ARGS={{inputs.gzip_args}}
+        OUT={{outputs.results}}
+        set -f
+        if [[ $NAME == *.gz ]]; then
+            seqkit sort --threads $TASK_CPUS $ARGS "${{IN[0]}}" | gzip -c $GZIP_ARGS > "$OUT/$NAME" || exit 1
+        else
+            seqkit sort --threads $TASK_CPUS $ARGS "${{IN[0]}}" > "$OUT/$NAME" || exit 1
+        fi
+    """,
+)
+
 env = flyte.TaskEnvironment.from_task(
     "seqkit",
     seqkit_stats_cmd.as_task(),
@@ -289,6 +318,7 @@ env = flyte.TaskEnvironment.from_task(
     seqkit_grep_cmd.as_task(),
     seqkit_head_cmd.as_task(),
     seqkit_sliding_cmd.as_task(),
+    seqkit_sort_cmd.as_task(),
 )
 
 
@@ -419,3 +449,14 @@ async def seqkit_sliding(fastx: File, prefix: str = "sample", args: str = "") ->
     filename = f"{prefix}.{extension}"
     results = await seqkit_sliding_cmd(fastx=fastx, filename=filename, args=args)
     return await pick(results, filename, "seqkit sliding")
+
+
+async def seqkit_sort(fastx: File, prefix: str = "sample", args: str = "", gzip_args: str = "") -> File:
+    """``seqkit sort`` of ``fastx``: ``<prefix>.fasta`` or ``<prefix>.fastq``, plus ``.gz`` for a gzipped input."""
+    name = file_name(fastx)
+    extension = "fasta" if SEQ_FASTA_NAME.fullmatch(name) else "fastq"
+    filename = f"{prefix}.{extension}" + (".gz" if name.endswith(".gz") else "")
+    if filename == name:
+        raise ValueError('Input and output names are the same, use "prefix" to disambiguate!')
+    results = await seqkit_sort_cmd(fastx=fastx, filename=filename, args=args, gzip_args=gzip_args)
+    return await pick(results, filename, "seqkit sort")
