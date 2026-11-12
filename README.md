@@ -53,6 +53,13 @@ env = flyte.TaskEnvironment(
 )
 ```
 
+Flyte builds your task's image when you run or deploy. The default builder
+(`image.builder: local`) uses Docker on your machine and pushes to a registry
+your cluster can pull from; on Union you can set `image.builder: remote` to
+build on the cluster instead. To skip building, point `image=` at a prebuilt
+image that has flyte-bio installed. The tools' own containers are prebuilt
+and pinned, so they never need building.
+
 ### Call a tool
 
 Tools are ordinary async calls inside your task:

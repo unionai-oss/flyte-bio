@@ -68,6 +68,15 @@ Rules that keep tasks correct:
     the FASTA.
   - **A script whose last command is `[ test ] && cmd`** exits non-zero when
     the test is false; end it with `true`.
+- **Images:** use a pinned, prebuilt container when one exists (Seqera
+  Wave, `quay.io/biocontainers`), so users never build anything. For a tool
+  that has none, `shell.create` also accepts a `flyte.Image`, for example
+  `flyte.Image.from_debian_base().with_apt_packages("bash", ...)` or a
+  micromamba base with a pinned conda install. It's built on first use with
+  the user's configured builder: Docker and a registry with the default
+  local builder, or Union's remote builder. The image needs `bash` at
+  `/bin/bash` and no custom `ENTRYPOINT`. Say in the module docstring that
+  its image is built.
 - **Environments:** one image per `TaskEnvironment`. A family whose tools use
   different images has one environment per image and an aggregate `env` (see
   `gatk4.py`). Add the module's `env` to `flyte_bio.modules.env` in
